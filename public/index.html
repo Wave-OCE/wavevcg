@@ -4,32 +4,110 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VALORANT Broadcast Production Tool</title>
+    <!--
+      Oswald for the condensed uppercase labels, IBM Plex for body and for the
+      fields. Loaded from Google, and login.html loads the same two.
+
+      The fallbacks are not decoration: this runs at venues, and a dashboard
+      that needs the internet to be legible is a dashboard that fails on the
+      one night it matters. Losing the fetch costs the letterforms and nothing
+      else - every size, weight and letterspacing below is set in CSS.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
     <link rel="stylesheet" href="/styles.css" />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ff4655'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%236db7e8'/%3E%3C/svg%3E"
     />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <div>
-          <h1>VALORANT Broadcast Tool</h1>
-          <p class="brand-sub">Match lookup for graphics production</p>
-        </div>
-      </div>
+    <!--
+      The shell is a rail and a page beside it.
 
-      <nav class="tabs" role="tablist" aria-label="Sections">
-        <button type="button" class="tab" role="tab" data-tab="lookup" aria-selected="true">Match lookup</button>
-        <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Graphics dashboard</button>
-        <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner graphic</button>
-        <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
-        <button type="button" class="tab" role="tab" data-tab="global" aria-selected="false">Global</button>
-        <button type="button" class="tab" role="tab" data-tab="account" aria-selected="false">Account</button>
-        <!-- Shown only to administrators; see account.js. -->
-        <button type="button" class="tab" role="tab" data-tab="admin" aria-selected="false" hidden>Admin</button>
-      </nav>
+      Four of the five rail buttons ARE tab buttons - they carry .tab and
+      data-tab, so dashboard.js wires them by the same querySelectorAll it
+      always did, and account.js still finds .tab[data-tab="admin"] to hide.
+      Only Graphics is a group rather than a panel, and shell.js is the small
+      amount of glue that costs.
+    -->
+    <div class="shell">
+      <aside class="rail" id="rail">
+        <div class="rail-brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="rail-wordmark">VCT BROADCAST</span>
+        </div>
+
+        <nav class="rail-nav" role="tablist" aria-label="Sections">
+          <button type="button" class="rail-item tab" role="tab" data-tab="lookup" aria-selected="true" title="Match lookup">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="4.2" /><line x1="10.2" y1="10.2" x2="14" y2="14" /></svg>
+            </span>
+            <span class="rail-label">Match lookup</span>
+          </button>
+          <button type="button" class="rail-item rail-group" data-section="graphics" aria-selected="false" title="Graphics">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.4" y="2.6" width="13.2" height="10.8" rx="1.6" /><line x1="1.4" y1="6" x2="14.6" y2="6" /></svg>
+            </span>
+            <span class="rail-label">Graphics</span>
+          </button>
+          <button type="button" class="rail-item tab" role="tab" data-tab="global" aria-selected="false" title="Global">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2" /><line x1="1.8" y1="8" x2="14.2" y2="8" /><line x1="8" y1="1.8" x2="8" y2="14.2" /></svg>
+            </span>
+            <span class="rail-label">Global</span>
+          </button>
+          <button type="button" class="rail-item tab" role="tab" data-tab="account" aria-selected="false" title="Account">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5.6" r="2.9" /><path d="M2.6 14c0-2.9 2.4-4.4 5.4-4.4s5.4 1.5 5.4 4.4" /></svg>
+            </span>
+            <span class="rail-label">Account</span>
+          </button>
+          <!-- Shown only to administrators; see account.js. -->
+          <button type="button" class="rail-item tab" role="tab" data-tab="admin" aria-selected="false" hidden title="Admin">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.8" y="1.8" width="5" height="5" /><rect x="9.2" y="1.8" width="5" height="5" /><rect x="1.8" y="9.2" width="5" height="5" /><rect x="9.2" y="9.2" width="5" height="5" /></svg>
+            </span>
+            <span class="rail-label">Admin</span>
+          </button>
+        </nav>
+
+        <div class="rail-foot">
+          <button type="button" class="rail-toggle" id="rail-toggle" aria-expanded="true">
+            <span class="rail-toggle-icon" aria-hidden="true"></span>
+            <span class="rail-label">Collapse</span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="shell-main">
+        <header class="topbar">
+          <div class="page-id">
+            <h1 class="page-title" id="page-title">Match lookup</h1>
+            <p class="page-sub" id="page-sub">Find a finished game and send it to a graphic</p>
+          </div>
+
+          <!--
+            One strip per section that has more than one screen. Every .tab in
+            here is a real tab; the Global strip switches sections INSIDE one
+            panel and so is made of .subtab instead - see shell.js.
+          -->
+          <nav class="subtabs" data-for="graphics" role="tablist" aria-label="Graphics" hidden>
+            <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
+            <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
+            <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
+          </nav>
+
+          <nav class="subtabs" data-for="global" aria-label="Global" hidden>
+            <button type="button" class="subtab" data-view="ged-shared" aria-selected="true">Shared settings</button>
+            <button type="button" class="subtab" data-view="wed-teams" aria-selected="false">Team library</button>
+            <button type="button" class="subtab" data-view="sed-aliases" aria-selected="false">Player library</button>
+            <button type="button" class="subtab" data-view="tracker-login-panel" aria-selected="false">tracker.gg</button>
+          </nav>
 
       <!--
         Who is signed in, and whose production is on screen.
@@ -833,6 +911,8 @@
         </section>
       </div>
     </main>
+      </div>
+    </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
@@ -843,5 +923,7 @@
     <script src="/select-dashboard.js" type="module"></script>
     <script src="/global-dashboard.js" type="module"></script>
     <script src="/lobby-dashboard.js" type="module"></script>
+    <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->
+    <script src="/shell.js" type="module"></script>
   </body>
 </html>

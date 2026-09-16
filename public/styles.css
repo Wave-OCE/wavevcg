@@ -1,22 +1,82 @@
 /* VALORANT Broadcast Production Tool - dark control-room theme. */
 
+/*
+ * Three colours mean three different things, and keeping them apart is the
+ * point of this palette rather than a preference about hues.
+ *
+ *   --accent   what you have SELECTED, and what is staged in preview
+ *   --on-air   what an audience can see right now
+ *   --warn     preview has drifted from air
+ *
+ * They used to be one colour. The accent WAS VALORANT red, which is also the
+ * on-air lamp, which is also a team colour - so "this row is selected" and
+ * "this is on a stream in front of people" were the same red, and the only
+ * thing telling them apart was which shape it had been painted on. An operator
+ * glancing at the desk mid-map should never have to work that out.
+ *
+ * --team-red keeps #ff4655: team colours belong to the broadcast, not the desk.
+ */
 :root {
   --bg: #0e1116;
   --bg-panel: #161b22;
   --bg-raised: #1c232d;
   --bg-input: #0b0f14;
+  /* Transport rows sit BELOW the panel they drive, never on it. */
+  --bg-sunken: #12171e;
+  --bg-inset: #0f141a;
+  --rail: #0b0e13;
+
   --border: #262d38;
+  --border-soft: #1f262f;
+  --border-mid: #2a323d;
   --border-strong: #38414f;
+  --border-raised: #4a5560;
+
   --text: #e8eaed;
+  --text-soft: #cfd5dd;
   --text-dim: #99a2b0;
   --text-faint: #6b7482;
-  --accent: #ff4655;
-  --accent-dim: #8a2630;
+  --text-ghost: #4f5967;
+
+  --accent: #6db7e8;
+  --accent-ink: #08121a;
+  --accent-dim: #3d6d8e;
+  --accent-wash: #1a2836;
+
+  --on-air: #c9424f;
+  --danger: #d97c86;
+  --danger-wash: #231a1c;
+  --danger-edge: #4d3338;
+
   --team-red: #ff4655;
   --team-blue: #29d3b1;
-  --warn: #f2b33d;
-  --radius: 10px;
-  --mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+
+  --warn: #d8b96d;
+  --warn-wash: #221d10;
+  --warn-edge: #6b5a2a;
+
+  /* The gap between stacked rows on a graphic tab. A token because the take
+     bar has to cancel it exactly - see .cue-bar:has(+ .take-bar). */
+  --stack-gap: 12px;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-pill: 10px;
+
+  /*
+   * Oswald carries the condensed uppercase labels, IBM Plex everything else.
+   * Each stack ends somewhere real - the faces come from Google (see
+   * index.html) and a venue with no internet still has to get a legible
+   * dashboard. Losing the fetch costs the letterforms and nothing else: every
+   * size, weight and letterspacing below is set here.
+   */
+  --display: "Oswald", "Haettenschweiler", "Arial Narrow", "Segoe UI", sans-serif;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", "Consolas", monospace;
+
+  --rail-w: 190px;
+  --rail-w-collapsed: 60px;
+  --topbar-h: 52px;
 }
 
 * {
@@ -37,50 +97,249 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
+  font-family: var(--sans);
+  font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The label voice: condensed, uppercase, letterspaced, quiet.
+ *
+ * Every field label, panel heading and column head. This is what makes the
+ * density legible - at 9.5px a lowercase sans is mush, and the same size in
+ * Oswald caps is still a label.
+ */
+.rail-wordmark,
+.page-title,
+.panel-title,
+.subhead,
+.field > span,
+.g-field > span,
+.login-field span,
+.routing span,
+.whoami-target > span,
+.lobby-col-label,
+.cue-state,
+.prog-state,
+.setting-label,
+.panel-subhead,
+th {
+  font-family: var(--display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 /* ------------------------------------------------------------- topbar --- */
 
-.topbar {
+/* =============================================================== shell ===
+ *
+ * A rail, and a page beside it. The rail names the five sections; the strip in
+ * the header names the screens inside whichever one is open.
+ *
+ * Both are ordinary tab buttons underneath - see shell.js. Nothing here knows
+ * what a tab does.
+ */
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex: none;
+  width: var(--rail-w);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--rail);
+  border-right: 1px solid var(--border);
+}
+
+/* Collapsed is a width and some hidden labels, not a second set of rules. */
+body.rail-collapsed .rail {
+  width: var(--rail-w-collapsed);
+}
+
+body.rail-collapsed .rail-label,
+body.rail-collapsed .rail-wordmark {
+  display: none;
+}
+
+body.rail-collapsed .rail-brand,
+body.rail-collapsed .rail-item,
+body.rail-collapsed .rail-toggle {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.rail-brand {
+  flex: none;
+  height: var(--topbar-h);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.rail-wordmark {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.rail-item:hover {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+
+/* The section you are in. A wash rather than a fill: the rail says where you
+   are, and a solid accent block there competes with the on-air lamp below. */
+.rail-item.is-current {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+
+.rail-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+
+.rail-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding: 10px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.rail-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.rail-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.rail-toggle-icon {
+  width: 9px;
+  height: 9px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  margin-left: 3px;
+}
+
+body.rail-collapsed .rail-toggle-icon {
+  transform: rotate(-135deg);
+  margin: 0 3px 0 0;
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------- page header --- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 14px;
   flex-wrap: wrap;
-  padding: 14px 22px;
+  min-height: var(--topbar-h);
+  padding: 0 18px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.page-id {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 7px 0;
 }
 
-.brand-mark {
-  width: 10px;
-  height: 30px;
-  border-radius: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 14px rgba(255, 70, 85, 0.5);
-}
-
-.brand h1 {
+.page-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
-.brand-sub {
-  margin: 0;
-  font-size: 12px;
+.page-sub {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.2;
   color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
 }
 
 .routing {
@@ -105,12 +364,16 @@ select,
 textarea,
 input[type="text"] {
   background: var(--bg-input);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-sm);
   color: var(--text);
-  padding: 7px 10px;
-  font-family: inherit;
-  font-size: 13px;
+  padding: 7px 9px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+::placeholder {
+  color: #5b6472;
 }
 
 textarea {
@@ -124,6 +387,13 @@ input[type="text"]:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* A field being typed into, as opposed to one merely tabbed to. */
+select:focus,
+textarea:focus,
+input[type="text"]:focus {
+  border-color: var(--accent-dim);
 }
 
 /* ------------------------------------------------------------ banners --- */
@@ -152,8 +422,8 @@ button:focus-visible {
 .layout {
   display: grid;
   grid-template-columns: 300px 360px minmax(0, 1fr);
-  gap: 16px;
-  padding: 16px 22px 40px;
+  gap: 12px;
+  padding: 14px 18px 40px;
   align-items: start;
 }
 
@@ -167,19 +437,19 @@ button:focus-visible {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 13px 14px;
 }
 
 .panel-title {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin: 0 0 14px;
-  font-size: 12px;
-  font-weight: 700;
+  gap: 8px;
+  margin: 0 0 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text);
 }
 
 .step {
@@ -188,8 +458,8 @@ button:focus-visible {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-wash);
+  color: var(--accent);
   font-size: 11px;
 }
 
@@ -265,7 +535,7 @@ button:focus-visible {
 
 .segmented input:checked + span {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .segmented input:focus-visible + span {
@@ -287,16 +557,25 @@ button:focus-visible {
   margin-bottom: 14px;
 }
 
-.field span {
-  font-size: 10px;
-  letter-spacing: 0.09em;
+.field > span {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
 
+/*
+ * Monospace, and not as an affectation.
+ *
+ * Practically everything typed into this tool has to match something exactly -
+ * a Riot ID and its tagline, a match id, a hex colour, a URL - and the failure
+ * when it does not is silent. A face that distinguishes l from 1 and O from 0
+ * is worth more here than one that sets prose nicely.
+ */
 .field input {
-  font-size: 15px;
-  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 7px 9px;
 }
 
 .field-help {
@@ -306,13 +585,22 @@ button:focus-visible {
 }
 
 .btn {
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 9px 14px;
-  font: inherit;
-  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  white-space: nowrap;
+  background: var(--bg-raised);
+  color: var(--text-soft);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-raised);
 }
 
 .btn:disabled {
@@ -323,7 +611,8 @@ button:focus-visible {
 .btn-primary {
   width: 100%;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -559,7 +848,7 @@ button:focus-visible {
 .match-item[aria-current="true"] {
   border-color: var(--accent);
   border-left-color: var(--accent);
-  background: rgba(255, 70, 85, 0.1);
+  background: var(--accent-wash);
 }
 
 .match-queue {
@@ -840,7 +1129,7 @@ pre {
 }
 
 .error {
-  background: rgba(255, 70, 85, 0.1);
+  background: var(--danger-wash);
   border: 1px solid var(--accent-dim);
   border-radius: 8px;
   padding: 12px;
@@ -904,43 +1193,84 @@ pre {
 
 /* ============================================================== tabs === */
 
-.tabs {
+/*
+ * The strip of screens inside the open section.
+ *
+ * Underlined rather than filled. The rail already carries a wash for "where you
+ * are", and a second filled indicator a few pixels away turns the header into
+ * two competing claims about what is current.
+ */
+.subtabs {
   display: flex;
-  gap: 4px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 3px;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
-.tab {
-  background: none;
+.subtabs::-webkit-scrollbar {
+  display: none;
+}
+
+.subtabs .tab,
+.subtabs .subtab {
+  position: relative;
+  padding: 0 11px;
   border: 0;
-  border-radius: 6px;
+  background: none;
   color: var(--text-dim);
   cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  padding: 7px 16px;
+  white-space: nowrap;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
-.tab:hover {
+.subtabs .tab:hover,
+.subtabs .subtab:hover {
   color: var(--text);
 }
 
-.tab[aria-selected="true"] {
+.subtabs .tab[aria-selected="true"],
+.subtabs .subtab[aria-selected="true"] {
+  color: var(--text);
+}
+
+.subtabs .tab::after,
+.subtabs .subtab::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+}
+
+.subtabs .tab[aria-selected="true"]::after,
+.subtabs .subtab[aria-selected="true"]::after {
   background: var(--accent);
-  color: #fff;
-  font-weight: 600;
+}
+
+/* One of Global's four sections, while another is the chosen one.
+   A class and not [hidden]: global-dashboard.js owns the hidden attribute on the
+   tracker panel for the permission check, and two owners for one attribute is a race. */
+.is-off-view {
+  display: none !important;
 }
 
 /* ================================================ graphics dashboard === */
 
 .graphic-tab {
-  padding: 16px 22px 40px;
+  padding: 14px 18px 40px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--stack-gap);
 }
 
 .graphic-toolbar {
@@ -1158,7 +1488,7 @@ pre {
 
 .cue-state.is-live .cue-dot {
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(255, 70, 85, 0.18);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .btn-cue {
@@ -1279,8 +1609,17 @@ pre {
 .editor-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.85fr) minmax(330px, 1fr) minmax(330px, 1fr);
-  gap: 16px;
+  gap: var(--stack-gap);
   align-items: start;
+}
+
+/* Global shows one of its sections at a time now (see shell.js), so its grid
+   is a column rather than three. Capped: the team and player libraries are
+   tables and want room, but a settings form spread across a 2560px monitor is
+   a form nobody can follow from label to control. */
+#tab-global .editor-grid {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 1080px;
 }
 
 /* Multi-column rather than a grid, because these three panels are wildly
@@ -1465,7 +1804,7 @@ pre {
    one row in this panel that is asking the operator a question. */
 .alias-pending {
   border-left: 3px solid var(--accent);
-  background: rgba(255, 70, 85, 0.06);
+  background: var(--accent-wash);
 }
 
 .alias-actions {
@@ -1737,7 +2076,7 @@ body.tab-graphic #key-warning {
 .stage-pip.is-current .stage-pip-num {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 /* --------------------------------------------------------------- logos --- */
@@ -2009,8 +2348,8 @@ body.tab-graphic #key-warning {
 
 /* A toggle that stays pressed, unlike the momentary buttons around it. */
 .btn.is-active {
-  border-color: var(--accent, #ff4655);
-  color: var(--accent, #ff4655);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ------------------------------------------------------------- sign in --- */
@@ -2106,8 +2445,8 @@ body.tab-graphic #key-warning {
   padding: 9px 11px;
   font-size: 13px;
   color: var(--text);
-  background: rgba(255, 70, 85, 0.12);
-  border-left: 3px solid var(--accent);
+  background: var(--danger-wash);
+  border-left: 3px solid var(--danger);
   border-radius: 4px;
 }
 
@@ -2235,10 +2574,21 @@ body.is-guest .topbar::after {
   gap: 7px;
 }
 
+/*
+ * Wraps, because the row grows with the account.
+ *
+ * An administrator who also holds the tracker permission carries five buttons
+ * beside the name, and nowrap pushed the last of them straight out through the
+ * side of the panel. It reports no overflow of its own - a flex row does not
+ * scroll, it simply gets wider than its parent - so nothing measured it and
+ * only a screenshot showed it. Labels stay on one line and the ROW breaks
+ * instead, which is the way round that keeps a button readable.
+ */
 .access-row,
 .admin-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 9px 11px;
   background: var(--bg-raised);
@@ -2333,18 +2683,19 @@ body.is-guest .topbar::after {
 .btn-small.is-active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .btn-danger {
   background: transparent;
-  border-color: var(--accent-dim);
-  color: #ff8a94;
+  border-color: var(--danger-edge);
+  color: var(--danger);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--accent-dim);
-  color: #fff;
+  background: var(--danger-wash);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* The two server switches. Three states, so the row says which it is in. */
@@ -2594,8 +2945,8 @@ label.is-off {
 /* Lit only while something is staged, so the eye is drawn to it exactly when
    there is a decision to make. */
 .take-bar.is-staged {
-  border-color: var(--accent, #ff4655);
-  box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--accent, #ff4655) 40%, transparent);
+  border-color: var(--warn-edge);
+  box-shadow: inset 0 1px 0 0 color-mix(in srgb, var(--warn) 40%, transparent);
 }
 
 .prog-state {
@@ -2617,50 +2968,88 @@ label.is-off {
   opacity: 0.45;
 }
 
-/* The one thing on this page that means "an audience can see this". Red, and
-   the only red dot in the dashboard. */
+/*
+ * The one thing on this page that means "an audience can see this".
+ *
+ * On --on-air and NOT on --accent, which is the whole reason that token was
+ * split out. The accent used to be red, so this rule read correctly by
+ * accident; the day the accent became blue it would have quietly turned the
+ * on-air lamp blue too, and nothing would have failed.
+ */
 .prog-state.is-live {
-  color: var(--accent, #ff4655);
+  color: var(--on-air);
 }
 
 .prog-state.is-live .prog-dot {
-  background: var(--accent, #ff4655);
+  background: var(--on-air);
   opacity: 1;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #ff4655) 25%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--on-air) 25%, transparent);
 }
 
+/*
+ * Raised and neutral rather than accent-filled.
+ *
+ * The take is the most consequential button on the page, and the instinct is to
+ * paint it the loudest colour. That is backwards here: the accent marks what is
+ * SELECTED, and a permanent accent block beside a preview that already matches
+ * air is a button an operator learns to stop seeing. The bar lights amber when
+ * there is actually something to send - that is the signal, not the button.
+ */
 .btn-take {
-  background: var(--accent, #ff4655);
-  border-color: var(--accent, #ff4655);
-  color: #fff;
-  font-weight: 700;
+  background: var(--bg-raised);
+  border-color: var(--border-raised);
+  color: var(--text);
+  font-weight: 600;
   letter-spacing: 0.03em;
+}
+
+.btn-take:hover:not(:disabled) {
+  border-color: var(--text-faint);
+  background: #2a323d;
 }
 
 .btn-take:disabled {
   opacity: 0.45;
 }
 
+/* Amber, deliberately: it is neither "selected" nor "on air" but "there is a
+   decision waiting", and it is the only thing on the desk that means that. */
 .staged-note {
-  font-size: 11px;
-  font-weight: 600;
+  padding: 3px 9px;
+  border: 1px solid var(--warn-edge);
+  border-radius: 12px;
+  background: var(--warn-wash);
+  font-size: 10.5px;
+  font-weight: 500;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--accent, #ff4655);
+  color: var(--warn);
 }
 
 /* Play, while it is running. Same treatment as the music lamp - a transport
    control that is currently doing something, rather than one that would. */
 #w-play.is-active {
-  border-color: var(--accent, #ff4655);
-  color: var(--accent, #ff4655);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-/* The cue bar loses its bottom corners where a take bar sits under it, so the
-   two read as one control surface split into preview and program halves. */
+/*
+ * The cue bar loses its bottom corners where a take bar sits under it, so the
+ * two read as one control surface split into preview and program halves.
+ *
+ * The take bar then has to climb back INTO it. Both are flex children of
+ * .graphic-tab, so the column gap pushes them apart no matter what their
+ * margins say - which left the take bar floating twelve pixels below a squared
+ * -off edge with no top border of its own, its top side simply open. Measured,
+ * not noticed: it looked like a deliberate pair of bars until the numbers came
+ * back. Cancelling the gap is what the original rule assumed it already had.
+ */
 .cue-bar:has(+ .take-bar) {
   margin-bottom: 0;
   border-radius: 8px 8px 0 0;
+}
+
+.cue-bar:has(+ .take-bar) + .take-bar {
+  margin-top: calc(-1 * var(--stack-gap));
 }
 
 /*
@@ -2668,15 +3057,15 @@ label.is-off {
  *
  * Both sit in the same control surface a few pixels apart, and one of them
  * means an audience can see this. Red belongs to that one alone - see
- * .prog-state.is-live - so the cue bar's own lamp takes the neutral accent
- * instead. Two identical indicators meaning opposite things is the mistake this
+ * .prog-state.is-live - so preview takes the accent, which is what the accent
+ * is for. Two identical indicators meaning opposite things is the mistake this
  * rule exists to prevent.
  */
 .cue-bar .cue-state.is-live {
-  color: var(--ok, #58c98b);
+  color: var(--accent);
 }
 
 .cue-bar .cue-state.is-live .cue-dot {
-  background: var(--ok, #58c98b);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #58c98b) 22%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
