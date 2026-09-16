@@ -48,6 +48,7 @@ import {
   accessLevel,
   adminCounts,
   canOpenTrackerLogin,
+  can,
   isSnowflake,
   usernameProblem,
   canEdit,
@@ -57,6 +58,13 @@ import {
   publicUser,
 } from './auth.js';
 import { makeMediaOwners, makeSessionRegistry } from './sessions.js';
+import {
+  canEditTournament,
+  canViewTournament,
+  isTournamentOwner,
+  makeTournamentStore,
+  tournamentLevel,
+} from './tournaments.js';
 import { LOG_LEVELS, captureConsole, makeLogger, safeUrl as safeLogUrl } from './log.js';
 import { makeCompanionHub } from './companion.js';
 import { BUS_KEYS, CUE_WRAP, busName } from './buses.js';
@@ -910,6 +918,20 @@ const users = makeUserStore(path.join(STATE_DIR, 'users.json'));
 const logins = makeSessionStore(path.join(STATE_DIR, 'logins.json'));
 await users.load();
 await logins.load();
+
+/*
+ * Tournaments.
+ *
+ * Server-wide rather than per-session, because it is the index a request is
+ * resolved THROUGH - a store that lived inside a session bundle could not be
+ * consulted to decide which bundle to open. Same reason users.json is here.
+ *
+ * Nothing routes to a tournament yet and no graphic reads one. At this stage it
+ * is a record and a membership list, and the feature is inert until the stage
+ * that gives a tournament a workspace.
+ */
+const tournaments = makeTournamentStore(path.join(STATE_DIR, 'tournaments.json'));
+await tournaments.load();
 
 /*
  * The first administrator, from the environment.
@@ -2995,6 +3017,139 @@ async function handleAuth(pathname, req, res) {
 }
 
 /**
+ * A tournament as a browser may see it.
+ *
+ * Members are resolved to usernames here rather than in the browser, because
+ * the alternative is shipping the whole account list to every page that wants
+ * to draw a membership row - and `visibleSessions` already exists precisely to
+ * avoid doing that.
+ *
+ * `level` is the CALLER's, folded in by `forUser`, so a page never has to work
+ * out its own access from a members map.
+ */
+const publicTournament = (tournament) => ({
+  ...tournament,
+  members: Object.entries(tournament.members ?? {}).map(([id, level]) => ({
+    id,
+    level,
+    // An account that has been deleted leaves no member behind - forgetUser
+    // sweeps them - so an unknown id here means a record edited by hand.
+    username: users.byId(id)?.username ?? '(unknown account)',
+  })),
+});
+
+/**
+ * Tournaments: make one, configure it, decide who works on it.
+ *
+ * Two routes and an action verb, the same shape as the admin panel and the
+ * lobby control route, rather than a REST surface per verb. The gate differs
+ * per action and is stated at each one:
+ *
+ *   create   the `manageTournaments` capability. A fact about the account.
+ *   update   editor or owner ON THAT TOURNAMENT. Not the capability - somebody
+ *            can be handed a tournament to run without being able to start one.
+ *   member   owner. Deciding who else is in is the owner's alone.
+ *   archive  owner.
+ *
+ * Note what `manageTournaments` deliberately does NOT do: it grants access to
+ * nothing that already exists. Holding it lets you create; being a member lets
+ * you work. An operator with no capability at all can still run every
+ * tournament they have been added to, which is the common case - most people
+ * who touch a broadcast never start a competition.
+ */
+async function handleTournaments(pathname, req, res, ctx) {
+  const user = ctx.user;
+  if (!user) return unauthorised(res, 401, 'Sign in first.');
+
+  if (req.method === 'GET' && pathname === '/api/tournaments') {
+    return sendJson(res, 200, {
+      tournaments: tournaments.forUser(user.id).map(publicTournament),
+      mayCreate: can(user, 'manageTournaments'),
+    });
+  }
+
+  if (req.method !== 'POST' || pathname !== '/api/tournaments') {
+    return unauthorised(res, 404, 'No such tournament route.');
+  }
+
+  return handleWrite(res, async () => {
+    const body = await readJsonBody(req);
+    const action = String(body?.action ?? '').trim().toLowerCase();
+
+    /*
+     * Every action but `create` names a tournament, and every one of them has
+     * to answer "may this caller touch THIS one" before anything else.
+     *
+     * Resolved once, here, rather than in each branch. A missing tournament and
+     * one the caller cannot see give the same answer on purpose: "no such
+     * tournament" for both, so the route cannot be used to discover which
+     * competitions exist on this server.
+     */
+    const target = () => {
+      const found = tournaments.byId(body?.id);
+      const level = tournamentLevel(found, user.id);
+      if (!found || !canViewTournament(level)) throw new ProviderError(404, 'No such tournament.');
+      return { tournament: found, level };
+    };
+
+    switch (action) {
+      case 'create': {
+        if (!can(user, 'manageTournaments')) {
+          throw new ProviderError(403, 'You cannot create tournaments.', 'An administrator can grant this on the Admin tab.');
+        }
+        const made = tournaments.create({ name: body?.name, createdBy: user.id });
+        log.info('tournament', `${user.username} created "${made.name || 'Untitled tournament'}"`, { tournament: made.id });
+        return { tournament: publicTournament(made), tournaments: tournaments.forUser(user.id).map(publicTournament) };
+      }
+
+      case 'update': {
+        const { tournament, level } = target();
+        if (!canEditTournament(level)) throw new ProviderError(403, 'You have view-only access to this tournament.');
+        if (tournament.archivedAt) {
+          throw new ProviderError(409, 'This tournament is archived.', 'Reopen it before changing its settings.');
+        }
+        const saved = tournaments.update(tournament.id, body?.fields);
+        return { tournament: publicTournament(saved) };
+      }
+
+      case 'member': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may change who is on a tournament.');
+
+        const who = users.byId(body?.userId);
+        // Checked before the store, so the message can say what is wrong. The
+        // store's own guard stays: it is what makes the rule true rather than
+        // merely enforced here.
+        if (!who) throw new ProviderError(400, 'No such account.');
+        if (who.disabled) throw new ProviderError(400, 'That account is disabled.');
+
+        const saved = tournaments.setMember(tournament.id, who.id, body?.level);
+        log.info(
+          'tournament',
+          `${user.username} ${body?.level ? `made ${who.username} ${body.level} on` : `removed ${who.username} from`} "${saved.name || 'Untitled tournament'}"`,
+          { tournament: saved.id },
+        );
+        return { tournament: publicTournament(saved) };
+      }
+
+      case 'archive': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may archive a tournament.');
+        const wanted = body?.archived !== false;
+        const saved = tournaments.setArchived(tournament.id, wanted);
+        log.info('tournament', `${user.username} ${wanted ? 'archived' : 'reopened'} "${saved.name || 'Untitled tournament'}"`, {
+          tournament: saved.id,
+        });
+        return { tournament: publicTournament(saved), tournaments: tournaments.forUser(user.id).map(publicTournament) };
+      }
+
+      default:
+        throw new ProviderError(400, 'Unknown tournament action.', 'One of: create, update, member, archive.');
+    }
+  });
+}
+
+/**
  * The account pages: who am I, change my password, rotate my key, share my
  * session. All of it is about the *caller's own* account - there is no id
  * parameter anywhere in here, so no amount of guessing reaches somebody else's.
@@ -3522,6 +3677,27 @@ async function handleAdmin(pathname, req, res, ctx) {
         // aliases with them, and it is the one action here that cannot be undone.
         log.warn('admin', `${ctx.user.username} deleted the account "${target.username}" and all of its state`);
         logins.destroyFor(id);
+
+        /*
+         * Detached from every tournament, never deleting one.
+         *
+         * Deleting a PERSON must not delete a COMPETITION. Several people work
+         * on one tournament and the workspace is the shared thing, so an
+         * account leaving the roster is not a reason to take a tournament with
+         * it. A tournament whose last owner is deleted is left ownerless and
+         * reported here - a state an administrator can see and repair, where
+         * the alternative cannot be undone.
+         */
+        const detached = tournaments.forgetUser(id);
+        if (detached.touched) {
+          log.info('tournament', `${target.username} was on ${detached.touched} tournament(s), and is no longer`);
+        }
+        for (const orphan of detached.orphaned) {
+          log.warn('tournament', `"${tournaments.byId(orphan)?.name || orphan}" has no owner left`, {
+            tournament: orphan,
+          });
+        }
+
         await sessions.destroy(id);
         await users.remove(id);
         return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
@@ -3820,6 +3996,35 @@ async function route(req, res) {
   if (pathname.startsWith('/api/account/')) {
     if (req.method === 'POST' && looksCrossSite(req)) return unauthorised(res, 415, 'Send JSON.');
     return handleAccount(pathname, req, res, ctx);
+  }
+
+  /*
+   * Tournaments, above the bundle check and therefore above the session write
+   * gate below - the same position the account routes hold, for the same
+   * reason: none of this is about a session.
+   *
+   * Putting them below would have tied them to one, and the failure would have
+   * been quiet and confusing: an operator viewing a colleague's production as a
+   * viewer would find themselves unable to rename their OWN tournament, because
+   * `canEdit(ctx.level)` was answering a question nobody asked. A tournament
+   * write is gated on the capability and on membership of THAT tournament, and
+   * on nothing else.
+   *
+   * A session key cannot reach here, and there is deliberately NO check for one
+   * in this block. KEYED_ROUTES above already refuses every path that is not on
+   * it, and that list is the whole mechanism - "a list rather than a rule so
+   * that every new route forces the question". A second check here would be
+   * unreachable today and actively misleading tomorrow: somebody who decided a
+   * key SHOULD reach a tournament route would add it to the list, watch nothing
+   * change, and have no way to find out why.
+   *
+   * The question the list forces, answered: no. A key shows a graphic and feeds
+   * it a lobby; administering a competition is further from a graphic than
+   * operating the desk is, and the desk is already out of bounds.
+   */
+  if (pathname === '/api/tournaments' || pathname.startsWith('/api/tournaments/')) {
+    if (req.method === 'POST' && looksCrossSite(req)) return unauthorised(res, 415, 'Send JSON.');
+    return handleTournaments(pathname, req, res, ctx);
   }
 
   if (!ctx.bundle) {
