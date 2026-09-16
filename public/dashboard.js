@@ -60,6 +60,7 @@ const els = {
     select: $('tab-select'),
     // No preview and no stream of its own - see index.html.
     global: $('tab-global'),
+    tournament: $('tab-tournament'),
     account: $('tab-account'),
     admin: $('tab-admin'),
   },

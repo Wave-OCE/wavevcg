@@ -1613,11 +1613,12 @@ pre {
   align-items: start;
 }
 
-/* Global shows one of its sections at a time now (see shell.js), so its grid
-   is a column rather than three. Capped: the team and player libraries are
-   tables and want room, but a settings form spread across a 2560px monitor is
-   a form nobody can follow from label to control. */
-#tab-global .editor-grid {
+/* Global and Tournament show one of their sections at a time (see shell.js), so
+   their grids are a column rather than three. Capped: the team and player
+   libraries are tables and want room, but a settings form spread across a
+   2560px monitor is a form nobody can follow from label to control. */
+#tab-global .editor-grid,
+#tab-tournament .editor-grid {
   grid-template-columns: minmax(0, 1fr);
   max-width: 1080px;
 }
@@ -2715,6 +2716,72 @@ body.is-guest .topbar::after {
 .admin-row.is-off .admin-name {
   color: var(--text-faint);
   text-decoration: line-through;
+}
+
+/* ------------------------------------------------------------ tournament --- */
+
+/*
+ * The bar above the Tournament page's cards.
+ *
+ * Above the editor grid rather than inside it, for the same reason the graphics
+ * toolbar is: it says WHICH tournament everything below is about, so it must
+ * not be something a sub-tab can hide. It wraps, because it grows with the data
+ * - a long competition name plus two buttons plus a pill is already wider than
+ * a narrow window, and a flex row does not report its own overflow, it just
+ * gets wider than its parent. See the admin-row note in CLAUDE.md.
+ */
+.tourney-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--stack-gap);
+}
+
+.tourney-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Shrinkable, so a long name squeezes the select rather than the buttons. */
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.tourney-pick > span {
+  font-family: var(--display);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.tourney-pick > select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tourney-note {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.tourney-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.tourney-add > select {
+  flex: 1 1 140px;
+  min-width: 0;
 }
 
 .admin-list {

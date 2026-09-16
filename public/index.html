@@ -55,6 +55,12 @@
             </span>
             <span class="rail-label">Match setup</span>
           </button>
+          <button type="button" class="rail-item tab" role="tab" data-tab="tournament" aria-selected="false" hidden title="Tournament">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4.4 2.2h7.2v3.4a3.6 3.6 0 0 1-7.2 0z" /><path d="M4.4 3.3H2.6v1.2a2 2 0 0 0 1.9 2" /><path d="M11.6 3.3h1.8v1.2a2 2 0 0 1-1.9 2" /><line x1="8" y1="9.2" x2="8" y2="12" /><line x1="5.4" y1="13.8" x2="10.6" y2="13.8" /></svg>
+            </span>
+            <span class="rail-label">Tournament</span>
+          </button>
           <button type="button" class="rail-item rail-group" data-section="graphics" aria-selected="false" title="Graphics">
             <span class="rail-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.4" y="2.6" width="13.2" height="10.8" rx="1.6" /><line x1="1.4" y1="6" x2="14.6" y2="6" /></svg>
@@ -106,6 +112,11 @@
             <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
             <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
             <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
+          </nav>
+
+          <nav class="subtabs" data-for="tournament" aria-label="Tournament" hidden>
+            <button type="button" class="subtab" data-view="tou-settings" aria-selected="true">Settings</button>
+            <button type="button" class="subtab" data-view="tou-access" aria-selected="false">Access</button>
           </nav>
 
           <nav class="subtabs" data-for="global" aria-label="Global" hidden>
@@ -747,6 +758,56 @@
       No preview and no event stream of its own: this page edits shared values
       and the graphics that follow them repaint on their own connections.
     -->
+    <!--
+      The tournament this production belongs to.
+
+      Two sections behind one strip, the same shape as Global: Settings is what
+      the competition IS, Access is who may work on it. Both are filled by
+      tournament-dashboard.js, which also owns `hidden` on each - there is
+      nothing to show before a tournament has been picked, and shell.js hides a
+      sub-tab whose panel is hidden rather than offering a button that reveals
+      an empty box.
+    -->
+    <main class="graphic-tab" id="tab-tournament" role="tabpanel" hidden>
+      <div class="tourney-bar">
+        <label class="tourney-pick">
+          <span>Tournament</span>
+          <select id="tou-select"></select>
+        </label>
+        <button type="button" class="btn btn-small" id="tou-new" hidden>New tournament</button>
+        <button type="button" class="btn btn-small" id="tou-archive" hidden>Archive</button>
+        <span class="pill" id="tou-state" hidden></span>
+        <span class="tourney-note" id="tou-note"></span>
+      </div>
+
+      <div class="editor-grid">
+        <section class="panel" id="tou-settings" hidden>
+          <h2 class="panel-title">Settings</h2>
+          <div class="g-grid" id="tou-fields"></div>
+          <p class="field-help" id="tou-saved"></p>
+        </section>
+
+        <section class="panel" id="tou-access" hidden>
+          <h2 class="panel-title">Access</h2>
+          <p class="field-help">
+            Who may work on this tournament. An owner decides this; an editor runs the
+            production; a viewer can look and change nothing. Being on this list is what
+            grants access - it is not implied by administering the server.
+          </p>
+          <div class="access-list" id="tou-members"></div>
+          <div class="tourney-add" id="tou-add" hidden>
+            <select id="tou-add-who"></select>
+            <select id="tou-add-level">
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+              <option value="owner">Owner</option>
+            </select>
+            <button type="button" class="btn btn-small" id="tou-add-go">Add</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
     <main class="graphic-tab" id="tab-global" role="tabpanel" hidden>
       <div class="editor-grid">
         <section class="panel" id="ged-shared"></section>
@@ -997,6 +1058,7 @@
     <script src="/select-dashboard.js" type="module"></script>
     <script src="/global-dashboard.js" type="module"></script>
     <script src="/lobby-dashboard.js" type="module"></script>
+    <script type="module" src="/tournament-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->
     <script src="/shell.js" type="module"></script>
   </body>

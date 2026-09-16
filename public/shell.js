@@ -7,25 +7,21 @@
  * of them are on screen, which rail item looks current, and what the heading
  * says.
  *
- * Four of the five rail items ARE tab buttons. That is deliberate: it means
+ * All the rail items but one ARE tab buttons. That is deliberate: it means
  * dashboard.js wires them for free, and account.js still finds
  * .tab[data-tab="admin"] to hide from non-administrators. Graphics is the one
  * exception - it names three panels rather than one, so it is a plain button
  * and the mapping below is the whole cost of that.
  *
  * ---------------------------------------------------------------------------
- * Why Global's strip is a different kind of thing
+ * Two kinds of strip, which look identical and are not
  * ---------------------------------------------------------------------------
  *
- * Graphics' three entries are three panels, so its strip is three real tabs.
- * Global is ONE panel holding four sections, so its strip switches sections
- * inside it. Those two look identical and are not, hence .tab against .subtab.
- *
- * The section switch toggles a CLASS rather than `hidden`, because
- * global-dashboard.js owns `hidden` on the tracker panel - it hides it when the
- * server has tracker.gg off or the account lacks the permission. Two owners for
- * one attribute is a race; a class and an attribute compose, and either one
- * hiding is enough.
+ * Graphics' three entries are three separate PANELS, so its strip is three real
+ * tabs and dashboard.js switches them. Global and Tournament are each ONE panel
+ * holding several sections, so their strips switch sections inside it and this
+ * file does the work. Hence .tab against .subtab: a strip that looks the same
+ * to an operator and is wired somewhere completely different.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -38,6 +34,7 @@ const SECTION_OF = {
   winner: 'graphics',
   select: 'graphics',
   global: 'global',
+  tournament: 'tournament',
   account: 'account',
   admin: 'admin',
 };
@@ -55,6 +52,7 @@ const PAGE = {
   winner: ['Winner splash', 'The end-of-series sequence'],
   select: ['Agent select', 'The draft strip'],
   global: ['Global', 'Settings and libraries shared by every graphic'],
+  tournament: ['Tournament', 'The competition, and who may work on it'],
   account: ['Account', 'Your keys, your sessions, and who may reach them'],
   admin: ['Admin', 'Server-wide switches, accounts and the log'],
 };
@@ -109,38 +107,56 @@ for (const item of railItems) {
   });
 }
 
-// ----------------------------------------------------- global's sub-views ---
+// ----------------------------------------------------------- sub-views ---
 
-const globalStrip = document.querySelector('.subtabs[data-for="global"]');
-const globalPanels = [...document.querySelectorAll('#tab-global .editor-grid > .panel')];
+/*
+ * A strip that switches SECTIONS inside one panel, as opposed to Graphics'
+ * strip, which switches between three real tabs. Global was the only one; the
+ * Tournament page is the second, so the machinery is a loop over a table rather
+ * than a copy.
+ *
+ * The section switch toggles a CLASS rather than `hidden`, because the
+ * dashboards own `hidden` on some of these panels - global-dashboard.js hides
+ * the tracker panel when the server has tracker.gg off, and
+ * tournament-dashboard.js hides its panels when there is no tournament to show.
+ * Two owners for one attribute is a race; a class and an attribute compose, and
+ * either one hiding is enough.
+ */
+const SUBVIEWS = [
+  { section: 'global', panels: '#tab-global .editor-grid > .panel', first: 'ged-shared' },
+  { section: 'tournament', panels: '#tab-tournament .editor-grid > .panel', first: 'tou-settings' },
+];
 
-function showGlobalView(view) {
-  for (const panel of globalPanels) panel.classList.toggle('is-off-view', panel.id !== view);
-  for (const button of globalStrip?.querySelectorAll('.subtab') ?? []) {
-    button.setAttribute('aria-selected', String(button.dataset.view === view));
+for (const { section, panels, first } of SUBVIEWS) {
+  const strip = document.querySelector(`.subtabs[data-for="${section}"]`);
+  const found = [...document.querySelectorAll(panels)];
+  if (!strip || !found.length) continue;
+
+  const show = (view) => {
+    for (const panel of found) panel.classList.toggle('is-off-view', panel.id !== view);
+    for (const button of strip.querySelectorAll('.subtab')) {
+      button.setAttribute('aria-selected', String(button.dataset.view === view));
+    }
+  };
+  for (const button of strip.querySelectorAll('.subtab')) {
+    button.addEventListener('click', () => show(button.dataset.view));
   }
-}
-
-if (globalStrip) {
-  for (const button of globalStrip.querySelectorAll('.subtab')) {
-    button.addEventListener('click', () => showGlobalView(button.dataset.view));
-  }
-  showGlobalView('ged-shared');
+  show(first);
 
   /*
    * A sub-tab for a panel the account may not open would be a button that
-   * reveals nothing. global-dashboard.js decides that asynchronously, after a
-   * fetch, so watch the panel rather than racing it.
+   * reveals nothing. The dashboards decide that asynchronously, after a fetch,
+   * so watch the panel rather than racing it.
    */
-  const tracker = $('tracker-login-panel');
-  const trackerTab = globalStrip.querySelector('.subtab[data-view="tracker-login-panel"]');
-  if (tracker && trackerTab) {
+  for (const button of strip.querySelectorAll('.subtab')) {
+    const panel = $(button.dataset.view);
+    if (!panel) continue;
     const sync = () => {
-      trackerTab.hidden = tracker.hidden;
+      button.hidden = panel.hidden;
       // Never strand the operator on a tab that just disappeared.
-      if (tracker.hidden && trackerTab.getAttribute('aria-selected') === 'true') showGlobalView('ged-shared');
+      if (panel.hidden && button.getAttribute('aria-selected') === 'true') show(first);
     };
-    new MutationObserver(sync).observe(tracker, { attributes: true, attributeFilter: ['hidden'] });
+    new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
     sync();
   }
 }

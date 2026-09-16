@@ -172,6 +172,32 @@ export function makeFields(state, onChange) {
   }
 
   /**
+   * A calendar date, held as the `YYYY-MM-DD` the input itself produces.
+   *
+   * Stored as typed rather than as a timestamp, and that is the whole reason
+   * this is not a textField with a pattern. A tournament starts on a DATE, not
+   * at an instant; turning "the 4th" into an epoch would silently pick a
+   * timezone and then show somebody the 3rd. The string has no timezone to get
+   * wrong.
+   *
+   * `change` rather than `input`, unlike every other control here. A date input
+   * emits `input` for each part as it is filled, so a half-typed year arrives as
+   * a real edit - and on a field that queues a save, that means writing 0002 to
+   * the server on the way to 2026.
+   *
+   * Blank is a value, not a failure: an end date nobody has set yet is the
+   * normal state of every tournament still running.
+   */
+  function dateField(label, path) {
+    const input = el('input', null, { type: 'date' });
+    bind(input, () => {
+      input.value = get(path) ?? '';
+    });
+    input.addEventListener('change', () => set(path, input.value));
+    return field(label, input);
+  }
+
+  /**
    * A select over {key, label} options. Unlike selectField there is no blank
    * entry: these fields always hold one of the listed values.
    */
@@ -394,6 +420,7 @@ export function makeFields(state, onChange) {
     textField,
     urlField,
     numberField,
+    dateField,
     choiceField,
     selectField,
     colourField,
