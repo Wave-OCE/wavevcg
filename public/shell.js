@@ -173,3 +173,73 @@ setCollapsed(startCollapsed);
 
 railToggle?.addEventListener('click', () => setCollapsed(!document.body.classList.contains('rail-collapsed')));
 
+// ---------------------------------------------------- graphics: the cards ---
+
+/*
+ * Which settings cards are on screen, per graphic.
+ *
+ * The three graphics tabs carried four or five editor cards each, all open at
+ * once, and an operator scrolled past the ones they were not using to reach the
+ * one they were. These bars group them: Data / Animation / Style and so on, one
+ * group at a time.
+ *
+ * What it never touches is the transport. The toolbar, the cue bar and the take
+ * bar all sit ABOVE the preview and stay put, so nothing an operator needs
+ * mid-map can end up behind a click. Only the editors below the preview group.
+ *
+ * Hiding is safe here in a way it would not be everywhere: the only thing these
+ * tabs measure is the preview iframe, which is never in a group. A card that is
+ * shut is still bound and still live - it is a card without a seat, not a card
+ * that stopped working.
+ *
+ * The choice is remembered per graphic, because it is per graphic that it
+ * matters: you live in Data during a match and in Style before one, and the
+ * winner splash's answer has nothing to do with the scoreboard's.
+ */
+const CARDS_KEY = 'vct.cards.';
+
+function showCardGroup(tab, group) {
+  const bar = document.querySelector(`.card-tabs[data-cards="${tab}"]`);
+  const grid = document.querySelector(`.editor-grid[data-cards="${tab}"]`);
+  if (!bar || !grid) return;
+
+  let shown = 0;
+  for (const panel of grid.querySelectorAll(':scope > .panel')) {
+    const off = panel.dataset.group !== group;
+    panel.classList.toggle('is-off-view', off);
+    if (!off) shown += 1;
+  }
+  for (const button of bar.querySelectorAll('.card-tab')) {
+    button.setAttribute('aria-selected', String(button.dataset.group === group));
+  }
+
+  // How many survived, so one card does not stretch itself across three
+  // columns' worth of window. CSS reads it; see .editor-grid[data-visible].
+  grid.dataset.visible = String(Math.min(shown, 3));
+
+  try {
+    localStorage.setItem(CARDS_KEY + tab, group);
+  } catch {
+    // Same as the rail: a browser with storage denied still gets working tabs.
+  }
+}
+
+for (const bar of document.querySelectorAll('.card-tabs')) {
+  const tab = bar.dataset.cards;
+  const groups = [...bar.querySelectorAll('.card-tab')].map((b) => b.dataset.group);
+
+  for (const button of bar.querySelectorAll('.card-tab')) {
+    button.addEventListener('click', () => showCardGroup(tab, button.dataset.group));
+  }
+
+  // A remembered group that no longer exists (a group renamed, a card moved)
+  // would leave every card shut and the bar pointing at nothing.
+  let start = groups[0];
+  try {
+    const saved = localStorage.getItem(CARDS_KEY + tab);
+    if (saved && groups.includes(saved)) start = saved;
+  } catch {
+    start = groups[0];
+  }
+  showCardGroup(tab, start);
+}

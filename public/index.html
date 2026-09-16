@@ -437,16 +437,36 @@
         </div>
       </section>
 
-      <!-- The two rosters are the pair that has to stay side by side; everything
-           else is settings, so they share a column that packs itself. -->
-      <div class="editor-grid">
-        <div class="editor-side">
-          <section class="panel" id="ed-match"></section>
-          <section class="panel" id="ed-anim"></section>
-          <section class="panel" id="ed-style"></section>
-        </div>
-        <section class="panel" id="ed-left"></section>
-        <section class="panel" id="ed-right"></section>
+      <!--
+        Which settings are on screen.
+
+        Every card is still here and still live - this chooses which of them
+        is worth the room. The transport above the preview never moves, so a
+        group being shut can never put a button an operator needs mid-map
+        behind a click.
+      -->
+      <nav class="card-tabs" data-cards="graphic" aria-label="Settings groups">
+        <span class="card-tabs-label">Settings</span>
+        <button type="button" class="card-tab" data-group="data" aria-selected="true">Data</button>
+        <button type="button" class="card-tab" data-group="animation" aria-selected="false">Animation</button>
+        <button type="button" class="card-tab" data-group="style" aria-selected="false">Style</button>
+        <span class="card-tabs-gap"></span>
+        <span class="card-tabs-note">the two rosters sit under Data</span>
+      </nav>
+
+      <!--
+        Flat, where it used to be a packed column beside the two rosters.
+
+        That column existed to stack three settings cards next to the rosters
+        without wasting the width. Grouping retires it: the three are never on
+        screen together any more, so there is nothing left to pack.
+      -->
+      <div class="editor-grid" data-cards="graphic">
+        <section class="panel" id="ed-match" data-group="data"></section>
+        <section class="panel" id="ed-left" data-group="data"></section>
+        <section class="panel" id="ed-right" data-group="data"></section>
+        <section class="panel" id="ed-anim" data-group="animation"></section>
+        <section class="panel" id="ed-style" data-group="style"></section>
       </div>
     </main>
 
@@ -543,11 +563,29 @@
         </div>
       </section>
 
-      <div class="editor-grid">
-        <section class="panel" id="wed-content"></section>
-        <section class="panel" id="wed-seq"></section>
-        <section class="panel" id="wed-audio"></section>
-        <section class="panel" id="wed-style"></section>
+      <!--
+        Which settings are on screen.
+
+        Every card is still here and still live - this chooses which of them
+        is worth the room. The transport above the preview never moves, so a
+        group being shut can never put a button an operator needs mid-map
+        behind a click.
+      -->
+      <nav class="card-tabs" data-cards="winner" aria-label="Settings groups">
+        <span class="card-tabs-label">Settings</span>
+        <button type="button" class="card-tab" data-group="data" aria-selected="true">Data</button>
+        <button type="button" class="card-tab" data-group="sequence" aria-selected="false">Sequence</button>
+        <button type="button" class="card-tab" data-group="music" aria-selected="false">Music</button>
+        <button type="button" class="card-tab" data-group="style" aria-selected="false">Style</button>
+        <span class="card-tabs-gap"></span>
+        <span class="card-tabs-note">one card each</span>
+      </nav>
+
+      <div class="editor-grid" data-cards="winner">
+        <section class="panel" id="wed-content" data-group="data"></section>
+        <section class="panel" id="wed-seq" data-group="sequence"></section>
+        <section class="panel" id="wed-audio" data-group="music"></section>
+        <section class="panel" id="wed-style" data-group="style"></section>
       </div>
     </main>
 
@@ -658,11 +696,28 @@
         </div>
       </section>
 
-      <div class="editor-grid">
-        <section class="panel" id="sed-teams"></section>
-        <section class="panel" id="sed-roster"></section>
-        <section class="panel" id="sed-anim"></section>
-        <section class="panel" id="sed-style"></section>
+      <!--
+        Which settings are on screen.
+
+        Every card is still here and still live - this chooses which of them
+        is worth the room. The transport above the preview never moves, so a
+        group being shut can never put a button an operator needs mid-map
+        behind a click.
+      -->
+      <nav class="card-tabs" data-cards="select" aria-label="Settings groups">
+        <span class="card-tabs-label">Settings</span>
+        <button type="button" class="card-tab" data-group="roster" aria-selected="true">Roster</button>
+        <button type="button" class="card-tab" data-group="animation" aria-selected="false">Animation</button>
+        <button type="button" class="card-tab" data-group="style" aria-selected="false">Style</button>
+        <span class="card-tabs-gap"></span>
+        <span class="card-tabs-note">teams and the ten seats sit under Roster</span>
+      </nav>
+
+      <div class="editor-grid" data-cards="select">
+        <section class="panel" id="sed-teams" data-group="roster"></section>
+        <section class="panel" id="sed-roster" data-group="roster"></section>
+        <section class="panel" id="sed-anim" data-group="animation"></section>
+        <section class="panel" id="sed-style" data-group="style"></section>
       </div>
     </main>
 
