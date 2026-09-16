@@ -56,6 +56,9 @@ const now = () => Date.now();
 
 const stamp = (value) => (Number.isFinite(value) ? value : 0);
 
+/** An opaque identifier or key: a bounded string, or blank. */
+const text = (value, max) => String(value ?? '').slice(0, max);
+
 /**
  * One tournament.
  *
@@ -76,6 +79,39 @@ function cleanTournament(input) {
     id: SAFE_ID.test(String(source.id ?? '')) ? String(source.id) : '',
     ...sanitiseTournamentFields(source, emptyTournament()),
     members,
+
+    /*
+     * The key in this tournament's OBS and webhook URLs.
+     *
+     * Self-minting, like the account key it replaces: a workspace that could
+     * exist without one would be a browser source with nothing to put in it,
+     * and there is no moment in a tournament's life where "no key yet" is a
+     * state anybody wants.
+     */
+    sessionKey: text(source.sessionKey, 64) || randomUUID(),
+
+    /*
+     * The Companion control channel's key, and deliberately NOT self-minting -
+     * the opposite of the line above, exactly as on an account.
+     *
+     * A key that opens a graphic is one thing; a key that operates the desk is
+     * another. Every tournament minting a live remote control for its own
+     * broadcast on first load - one nobody asked for and nobody knows exists -
+     * is the kind of surprise a permission-shaped thing must never spring. So
+     * the socket refuses every tournament until somebody asks for one.
+     */
+    controlKey: text(source.controlKey, 64),
+
+    /*
+     * The account whose workspace this was, before tournaments owned them.
+     *
+     * Written once by tools/migrate-tournaments.mjs and never again. It is what
+     * makes that runner idempotent - a second run finds the tournament already
+     * standing for this account and skips it, rather than making a duplicate -
+     * and it stays afterwards because "where did this workspace come from" is a
+     * question somebody asks once a season and cannot otherwise answer.
+     */
+    migratedFrom: text(source.migratedFrom, 64),
     createdAt: stamp(source.createdAt) || now(),
     createdBy: String(source.createdBy ?? '').slice(0, 64),
     /*
