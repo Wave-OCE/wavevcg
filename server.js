@@ -3441,6 +3441,19 @@ async function handleAdmin(pathname, req, res, ctx) {
         if (typeof body?.password === 'string' && body.password) changes.password = body.password;
         if (body?.role === 'admin' || body?.role === 'user') changes.role = body.role;
         if (typeof body?.disabled === 'boolean') changes.disabled = body.disabled;
+
+        /*
+         * Capabilities arrive as a partial object - the panel sends only the
+         * toggle that moved - and auth.js patches rather than replaces, so an
+         * absent key preserves rather than clearing. Nothing is validated
+         * against the schema here on purpose: sanitiseCapabilities drops keys
+         * it does not recognise and treats anything but `true` as false, and a
+         * second check in this file is a second thing to forget to update.
+         */
+        if (body?.capabilities && typeof body.capabilities === 'object') {
+          changes.capabilities = body.capabilities;
+        }
+        // The single-permission spelling, still accepted for one season.
         if (typeof body?.trackerLogin === 'boolean') changes.trackerLogin = body.trackerLogin;
 
         if (changes.role === 'user' || changes.disabled === true) {

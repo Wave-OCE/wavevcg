@@ -29,6 +29,10 @@ import { randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from 'no
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { can, capabilitiesFor, sanitiseCapabilities } from './public/capability-schema.js';
+
+export { CAPABILITY_FIELDS, CAPABILITY_KEYS, can } from './public/capability-schema.js';
+
 const scrypt = promisify(scryptCb);
 
 /*
@@ -153,6 +157,29 @@ function cleanUser(input) {
   for (const [id, level] of Object.entries(source.grants ?? {})) {
     if (GRANTS.includes(level)) grants[text(id, '', 64)] = level;
   }
+
+  /*
+   * The legacy read, and it gets exactly one chance to run.
+   *
+   * This function is an allowlist - see the note further down - so anything it
+   * does not name is dropped on the next load and erased on the next write.
+   * Every record written before capabilities existed carries `trackerLogin` at
+   * the top level and no `capabilities` at all, and the FIRST login after this
+   * deploys is the moment that record gets rewritten.
+   *
+   * So if this fallback were missing, or landed a commit later than the field
+   * it feeds, every account's tracker permission would be cleared silently: no
+   * error, nothing in the log, and afterwards no way to tell which accounts had
+   * held it. Reading the old field beside the new one costs nothing, and it is
+   * not a thing that can be got wrong twice.
+   *
+   * An explicit `capabilities.trackerLogin: false` still wins over a stale
+   * top-level `true`, because the new field is the one somebody edited.
+   */
+  const capabilities = sanitiseCapabilities(source.capabilities, {
+    trackerLogin: source.trackerLogin === true,
+  });
+
   return {
     id: text(source.id, '', 64),
     username: text(source.username, '', 32),
@@ -195,19 +222,32 @@ function cleanUser(input) {
     controlKey: text(source.controlKey, '', 64),
     disabled: source.disabled === true,
     /*
-     * May this account open a tracker.gg Cloudflare solve?
+     * Per-account permissions. Defined in public/capability-schema.js, which
+     * carries the reasoning: permissions default closed, the opposite of the
+     * server switches in settings-schema.js, and `adminImplied` is stated per
+     * capability rather than inherited.
      *
-     * Off unless it says otherwise, which is the opposite of how the server
-     * switches in settings-schema.js treat a missing value - and deliberately
-     * so. Those are features, and a feature that arrives switched off on every
-     * server that upgrades is a nasty surprise. This is a permission, and a
-     * permission that arrives switched *on* because the field was absent is a
-     * worse one. Permissions default closed.
-     *
-     * What it opens is an interactive keyboard and mouse on a real browser on
-     * the production machine, so it is not implied by having an account.
+     * This used to be a single `trackerLogin` boolean right here. It stayed one
+     * field for a year and adding a second would have meant a fifth edit in a
+     * fifth file, so the shape moved into a schema the way every other field in
+     * this project already had.
      */
-    trackerLogin: source.trackerLogin === true,
+    capabilities,
+
+    /*
+     * The old name for capabilities.trackerLogin, mirrored rather than dropped.
+     *
+     * Kept for one season, and it buys two things. A build that predates the
+     * schema still reads this tree correctly, so the change is reversible by
+     * deploying backwards rather than by restoring a backup. And any call site
+     * the migration missed keeps working instead of reading undefined and
+     * quietly denying somebody a permission they hold.
+     *
+     * It is a MIRROR, never a second source of truth: it is written from
+     * `capabilities` and never read back into it except by the legacy read
+     * above. Retire it once nothing reads it - which is a grep, not a guess.
+     */
+    trackerLogin: capabilities.trackerLogin === true,
 
     /*
      * The Discord identity, when there is one.
@@ -255,11 +295,13 @@ export const hasCredential = (user) => Boolean((user?.salt && user?.hash) || use
 /**
  * May this account open a tracker.gg login session?
  *
- * Admins always may. Not a favour - they can set their own flag on the Admin
- * tab in two clicks, so refusing them would be theatre, and it means a server
- * can never reach a state where nobody is able to clear a challenge.
+ * Now one capability among several rather than a rule of its own, but kept as a
+ * named function because four enforcement sites call it and a name says what it
+ * guards where `can(user, 'trackerLogin')` would only say how. The admin bypass
+ * moved with it: it is `adminImplied: true` in the schema, stated there with the
+ * argument for why it applies to this one and not to the others.
  */
-export const canOpenTrackerLogin = (user) => Boolean(user) && (user.role === 'admin' || user.trackerLogin === true);
+export const canOpenTrackerLogin = (user) => can(user, 'trackerLogin');
 
 /** What may be sent to a browser. Never the hash, never the salt. */
 export const publicUser = (user, { includeKey = false, includeControlKey = false } = {}) => ({
@@ -270,9 +312,21 @@ export const publicUser = (user, { includeKey = false, includeControlKey = false
   createdAt: user.createdAt,
   lastLoginAt: user.lastLoginAt,
   grants: { ...user.grants },
-  // The stored flag and what it works out to. The admin panel edits the first;
-  // every other page wants the second, and computing it in three places is how
-  // two of them end up disagreeing.
+
+  /*
+   * The stored flags and what they work out to. The admin panel edits the
+   * first; every other page wants the second, and computing it in three places
+   * is how two of them end up disagreeing.
+   *
+   * `may` is the resolved answer, so it already has adminImplied folded in - a
+   * page asking "do I get the Tournament section" reads `may.manageTournaments`
+   * and never has to know that a role can stand in for a flag.
+   */
+  capabilities: { ...user.capabilities },
+  may: capabilitiesFor(user),
+
+  // The single-permission spelling of the two above, kept for one season
+  // alongside the mirror in cleanUser. Same retirement: a grep, not a guess.
   trackerLogin: user.trackerLogin === true,
   mayOpenTrackerLogin: canOpenTrackerLogin(user),
 
@@ -550,7 +604,30 @@ export function makeUserStore(filePath) {
       }
       if (changes.role !== undefined && ROLES.includes(changes.role)) user.role = changes.role;
       if (changes.disabled !== undefined) user.disabled = changes.disabled === true;
-      if (changes.trackerLogin !== undefined) user.trackerLogin = changes.trackerLogin === true;
+      /*
+       * Capabilities, as a patch rather than a replacement.
+       *
+       * The admin panel sends only what it toggled, so an absent key must mean
+       * "leave it alone" and never "turn it off" - otherwise editing one
+       * permission silently clears every other one the account holds.
+       * sanitiseCapabilities takes the current set as its fallback for exactly
+       * that, and it still cannot turn anything on by omission.
+       *
+       * The `trackerLogin` branch below is the old single-permission spelling.
+       * Both write through `capabilities`, so there is one source of truth
+       * whichever shape the caller sends - a second branch assigning the mirror
+       * directly is how the two would drift.
+       */
+      if (changes.capabilities !== undefined) {
+        user.capabilities = sanitiseCapabilities(changes.capabilities, user.capabilities);
+      }
+      if (changes.trackerLogin !== undefined) {
+        user.capabilities = sanitiseCapabilities(
+          { trackerLogin: changes.trackerLogin === true },
+          user.capabilities,
+        );
+      }
+      user.trackerLogin = user.capabilities.trackerLogin === true;
 
       /*
        * The Discord link, as one atomic change.

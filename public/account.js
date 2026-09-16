@@ -14,6 +14,7 @@
 
 import { el } from './fields.js';
 import { SETTING_FIELDS } from './settings-schema.js';
+import { CAPABILITY_FIELDS } from './capability-schema.js';
 import { COMPANION_GRAPHICS, companionVariables } from './companion-schema.js';
 import { SESSION_ID, account, refreshAccount, switchTo } from './session.js';
 
@@ -626,30 +627,39 @@ function paintUsers(list) {
       );
 
       /*
-       * The tracker.gg solve permission.
+       * One button per capability, built from the schema rather than written
+       * out. The tracker.gg permission used to be hand-written here and was the
+       * only one; a second would have meant a second copy of this block, and
+       * that is how the button, the sanitiser and the server check drift apart.
        *
-       * Its own control rather than something implied by the role, because what
-       * it opens is an interactive keyboard on a real browser on the production
-       * machine - a bigger thing than an account is otherwise worth. Off by
-       * default; admins have it regardless, so the button says so instead of
-       * offering a toggle that would do nothing.
+       * A capability implied by the role shows what it is rather than offering
+       * a toggle that would do nothing - the button reads "(admin)" and is
+       * disabled, which is the existing behaviour generalised.
+       *
+       * Only turning one ON asks for confirmation. Taking a permission away is
+       * the safe direction and does not need a dialog in front of it.
        */
-      const tracker = el(
-        'button',
-        `btn btn-small${user.mayOpenTrackerLogin ? ' is-active' : ''}`,
-        { type: 'button', title: 'Whether this account may open a tracker.gg Cloudflare login on the server' },
-        user.role === 'admin' ? 'Tracker login (admin)' : user.trackerLogin ? 'Tracker login on' : 'Tracker login off',
-      );
-      tracker.disabled = user.role === 'admin';
-      tracker.addEventListener('click', () =>
-        act(
-          `${user.username} ${user.trackerLogin ? 'can no longer' : 'can now'} open a tracker login`,
-          { action: 'update', trackerLogin: !user.trackerLogin },
-          user.trackerLogin
-            ? null
-            : `Let ${user.username} open a tracker.gg login?\n\nThat gives them an interactive browser session on this server while a solve is running.`,
-        ),
-      );
+      const capabilities = CAPABILITY_FIELDS.map((field) => {
+        const held = user.capabilities?.[field.key] === true;
+        const byRole = field.adminImplied && user.role === 'admin';
+        const resolved = user.may?.[field.key] === true;
+
+        const button = el(
+          'button',
+          `btn btn-small${resolved ? ' is-active' : ''}`,
+          { type: 'button', title: field.help },
+          byRole ? `${field.short} (admin)` : `${field.short} ${held ? 'on' : 'off'}`,
+        );
+        button.disabled = byRole;
+        button.addEventListener('click', () =>
+          act(
+            `${user.username} ${held ? 'can no longer' : 'can now'} ${field.label}`,
+            { action: 'update', capabilities: { [field.key]: !held } },
+            held ? null : `Let ${user.username} ${field.label}?\n\n${field.help}`,
+          ),
+        );
+        return button;
+      });
 
       const signOut = el('button', 'btn btn-small', { type: 'button' }, 'Sign out');
       signOut.addEventListener('click', () => act(`${user.username} signed out everywhere`, { action: 'sign-out' }));
@@ -693,7 +703,7 @@ function paintUsers(list) {
         ),
       );
 
-      row.append(disable, promote, tracker, unlink, signOut, remove);
+      row.append(disable, promote, ...capabilities, unlink, signOut, remove);
       return row;
     }),
   );
