@@ -54,6 +54,7 @@ const els = {
   tabs: [...document.querySelectorAll('.tab')],
   panels: {
     lookup: $('tab-lookup'),
+    setup: $('tab-setup'),
     graphic: $('tab-graphic'),
     winner: $('tab-winner'),
     select: $('tab-select'),

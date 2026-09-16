@@ -33,6 +33,7 @@ const $ = (id) => document.getElementById(id);
 /** Which rail item lights up for a given tab. */
 const SECTION_OF = {
   lookup: 'lookup',
+  setup: 'setup',
   graphic: 'graphics',
   winner: 'graphics',
   select: 'graphics',
@@ -49,6 +50,7 @@ const SECTION_OF = {
  */
 const PAGE = {
   lookup: ['Match lookup', 'Find a finished game and send it to a graphic'],
+  setup: ['Match setup', 'Stage the lobby for GStack to collect'],
   graphic: ['Post match', 'The end-of-map scoreboard'],
   winner: ['Winner splash', 'The end-of-series sequence'],
   select: ['Agent select', 'The draft strip'],

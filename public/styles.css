@@ -1627,6 +1627,30 @@ pre {
    instead of leaving a hole under the short one. It also picks its own column
    count from the width it is given, so it needs no breakpoint of its own: one
    stack as a sidebar, two or three once it spans the grid. */
+/* --------------------------------------------------------- match setup ---
+ *
+ * One panel on a page of its own, so it gets a reading width rather than the
+ * full span of a broadcast monitor.
+ */
+.setup-tab {
+  max-width: 860px;
+}
+
+/* Three buttons, where .watch-actions is a two-column grid built for the
+   post-match panel's two. Scoped rather than changed: that panel still wants
+   its pair side by side. */
+#lobby-panel .watch-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* .btn-primary is width:100% because it is the full-width submit inside the
+   search form. Left alone it makes every button in this row claim a line of
+   its own, which is what the stack in the first screenshot was. */
+#lobby-panel .watch-actions .btn {
+  width: auto;
+}
+
 /* ------------------------------------------------- the settings groups ---
  *
  * Which editor cards are on screen, under the preview. See shell.js for why
