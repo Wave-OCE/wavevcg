@@ -82,6 +82,7 @@ const els = {
 
   editors: {
     content: $('wed-content'),
+    sides: $('wed-sides'),
     teams: $('wed-teams'),
     seq: $('wed-seq'),
     audio: $('wed-audio'),
@@ -378,6 +379,7 @@ function teamPicker(half) {
     state[half].teamId = team.id;
     queueSave();
     buildContentEditor();
+    buildTeamsEditor();
     toast(`Filled the ${half} team from "${team.name}"`);
   });
 
@@ -576,10 +578,6 @@ function buildContentEditor() {
 
     ...WINNER_STAGES.flatMap(sceneSection),
 
-    subhead('Teams'),
-    teamBlock('left'),
-    teamBlock('right'),
-
     subhead('Event'),
     logoField('Event logo', 'eventLogo'),
     help(
@@ -587,6 +585,26 @@ function buildContentEditor() {
         'feed between cues. Where it lands is under Style: by default it is part of the winner and score scenes, ' +
         'arriving with them, rather than a mark in the corner.',
     ),
+  );
+}
+
+/*
+ * The two sides of the series, in their own card.
+ *
+ * Lifted out of Content, which was carrying three scenes, both teams and the
+ * event logo in one column. It stays in the Data group beside Content - these
+ * are the two halves of "what does this graphic say", and an operator setting
+ * up a series wants both.
+ *
+ * Rebuilt together with Content rather than on its own, and that is not
+ * belt-and-braces: the winner note in Content reads the team's NAME, so a team
+ * picked here changes a sentence over there.
+ */
+function buildTeamsEditor() {
+  els.editors.sides.replaceChildren(
+    title('Teams'),
+    teamBlock('left'),
+    teamBlock('right'),
   );
 }
 
@@ -789,6 +807,7 @@ async function teamAction(body) {
   window.dispatchEvent(new CustomEvent('teams-changed', { detail: library }));
   buildTeamEditor();
   buildContentEditor();
+  buildTeamsEditor();
   return payload;
 }
 
@@ -1086,6 +1105,7 @@ els.resetBtn.addEventListener('click', async () => {
 function buildAll() {
   buildStagePips();
   buildContentEditor();
+  buildTeamsEditor();
   buildTeamEditor();
   buildSeqEditor();
   buildAudioEditor();
@@ -1127,6 +1147,10 @@ async function start() {
 
 start().catch((error) => {
   els.editors.content.replaceChildren(el('p', 'empty', {}, `Could not load the winner graphic: ${error.message}`));
+  // Nothing was built, so the Teams card beside this one would sit there as an
+  // empty bordered box next to the explanation. One message reads better than
+  // a message and a mystery.
+  els.editors.sides.hidden = true;
 });
 
 // ------------------------------------------------------------- the take ---

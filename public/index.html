@@ -578,11 +578,14 @@
         <button type="button" class="card-tab" data-group="music" aria-selected="false">Music</button>
         <button type="button" class="card-tab" data-group="style" aria-selected="false">Style</button>
         <span class="card-tabs-gap"></span>
-        <span class="card-tabs-note">one card each</span>
+        <span class="card-tabs-note">content and teams sit under Data</span>
       </nav>
 
       <div class="editor-grid" data-cards="winner">
         <section class="panel" id="wed-content" data-group="data"></section>
+        <!-- "wed-teams" is the Global tab's team library, also built by
+             winner-dashboard.js. These are the two sides of THIS series. -->
+        <section class="panel" id="wed-sides" data-group="data"></section>
         <section class="panel" id="wed-seq" data-group="sequence"></section>
         <section class="panel" id="wed-audio" data-group="music"></section>
         <section class="panel" id="wed-style" data-group="style"></section>
