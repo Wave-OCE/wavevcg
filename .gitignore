@@ -7,3 +7,5 @@ tools/probe-output/
 .state/
 CLAUDE.md
 public/riot.txt
+# Screenshots written by the suites in tools/tests.
+tools/tests/*.png
