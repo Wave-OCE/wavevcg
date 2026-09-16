@@ -141,9 +141,19 @@ export function redact(value, depth = 0) {
       // The header a token exchange is sent under. It carries the client secret
       // on the way out and a bearer token on the way back, and it matched none
       // of the tests above - 'authorization' contains neither 'token' nor
-      // 'secret', and the 'key' test is an exact one.
+      // 'secret'.
       lowered.includes('authorization') ||
-      lowered === 'key'
+      // A substring, for the same reason 'token' is one. This was an exact
+      // match on 'key' and it failed open for `controlKey`, which is a
+      // credential that opens the desk and which `publicUser` carries - so any
+      // meta object holding one put it straight into the ring buffer the admin
+      // panel renders in a browser, and redaction happens on the way IN, so
+      // there is no fixing it afterwards. The exact test was also a standing
+      // trap for every future credential: an event key, an API key, anything
+      // named `<thing>Key` sailed past it with nothing failing. Hiding a field
+      // that did not need hiding costs nothing, which is this function's own
+      // stated rule.
+      lowered.includes('key')
     ) {
       out[name] = '<hidden>';
     } else if (lowered === 'url' || lowered === 'path') {

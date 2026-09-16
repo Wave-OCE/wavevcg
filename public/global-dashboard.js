@@ -144,7 +144,15 @@ async function start() {
   build();
 
   // Another dashboard, or the game feed, may move any of this.
-  onState('global', ({ state: next }) => {
+  //
+  // The handler takes the state itself, not an envelope around it: live.js has
+  // already unwrapped `.state` off the frame before it calls a listener. This
+  // was the only one of thirteen onState call sites that destructured, so
+  // `next` was always undefined, `state` became undefined, build() bailed on
+  // its own guard, and the next keystroke in any Global control threw inside
+  // writePath - where live.js catches and swallows it. The visible symptom was
+  // that the Global tab did not follow another dashboard's edits at all.
+  onState('global', (next) => {
     if (saveTimer) return; // mid-edit; our own save is about to land
     state = next;
     build();

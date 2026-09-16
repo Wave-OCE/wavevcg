@@ -1436,14 +1436,33 @@ export function makeAliasStore(filePath) {
       let added = 0;
       let updated = 0;
 
+      /*
+       * Merged into a draft, and swapped in only once the cap below has passed.
+       *
+       * The cap is still tested after the merge - that part is deliberate and is
+       * unchanged. What was wrong is that it threw having ALREADY rewritten the
+       * live array. This function does not persist on the throw path, but the
+       * next roster webhook calls seen(), which does - so a rejected import
+       * showed the operator a 400 that read like their own mistake and then
+       * wrote the over-cap library to disk a minute later anyway, with nothing
+       * connecting the two. Folding several operators' files into one library is
+       * precisely the case that exceeds the cap, so this is the normal path and
+       * not an edge.
+       *
+       * Entries are shallow-copied because the merge below writes through to
+       * them. That copy is what makes the rollback free, and it carries `seenAt`
+       * and `rejected` across untouched - which the docblock above promises.
+       */
+      const draft = players.map((entry) => ({ ...entry }));
+
       for (const row of rows) {
         const wanted = aliasKey(row);
-        const existing = players.find((entry) => aliasKey(entry) === wanted);
+        const existing = draft.find((entry) => aliasKey(entry) === wanted);
 
         if (!existing) {
           // seenAt 0 reads as "never seen at this desk", which is true, and
           // sorts it below anybody this operator has actually had in a lobby.
-          players.push({ ...row, seenAt: 0 });
+          draft.push({ ...row, seenAt: 0 });
           added += 1;
           continue;
         }
@@ -1455,11 +1474,12 @@ export function makeAliasStore(filePath) {
 
       // Checked after the merge rather than before: the cap is about what the
       // library ends up holding, and an import that mostly updates adds nothing.
-      const named = players.filter((entry) => entry.alias).length;
+      const named = draft.filter((entry) => entry.alias).length;
       if (named > ALIAS_LIMIT) {
         throw new Error(`That would take the player library to ${named} names, over the ${ALIAS_LIMIT} limit.`);
       }
 
+      players = draft;
       if (added || updated) persist();
       return { added, updated, players: this.list() };
     },
