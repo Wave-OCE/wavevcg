@@ -693,7 +693,7 @@ export function makeCompanionHub({ ownerForKey, bundleFor, enabled, log, maxConn
 
   function install(connection, owner, bundle) {
     live.set(connection, owner.id);
-    log.info('companion', `control channel open for ${owner.username}`, { session: owner.id });
+    log.info('companion', `control channel open for ${owner.name || owner.id}`, { tournament: owner.id });
 
     /*
      * The last projection sent, per graphic. A push happens only against a
@@ -776,7 +776,7 @@ export function makeCompanionHub({ ownerForKey, bundleFor, enabled, log, maxConn
           return;
         }
         // A bug in an op must not take a live control channel down.
-        log.error('companion', `operation "${message.op}" failed: ${error.message}`, { session: owner.id });
+        log.error('companion', `operation "${message.op}" failed: ${error.message}`, { tournament: owner.id });
         connection.sendJson({ type: 'error', op: message.op, message: 'That operation failed. The server log has the detail.' });
       }
     });
@@ -837,7 +837,7 @@ export function makeCompanionHub({ ownerForKey, bundleFor, enabled, log, maxConn
       const target = busName(message.bus);
       const result = entry.ops[op](bus.of(target), message.value, bus);
 
-      log.info('companion', `${name}.${op} (${target})`, { session: owner.id });
+      log.info('companion', `${name}.${op} (${target})`, { tournament: owner.id });
 
       /*
        * The answer is the graphic that was touched, and only that one.
@@ -860,7 +860,7 @@ export function makeCompanionHub({ ownerForKey, bundleFor, enabled, log, maxConn
       live.delete(connection);
       clearInterval(clockTick);
       for (const stop of unsubscribes) stop();
-      log.info('companion', `control channel closed for ${owner.username} (${reason})`, { session: owner.id });
+      log.info('companion', `control channel closed for ${owner.name || owner.id} (${reason})`, { tournament: owner.id });
     });
 
     /*
@@ -876,7 +876,7 @@ export function makeCompanionHub({ ownerForKey, bundleFor, enabled, log, maxConn
       // So a future purpose-built Companion module can negotiate rather than
       // sniff the shape of what it gets.
       protocol: COMPANION_PROTOCOL,
-      session: owner.username,
+      session: owner.name || owner.id,
       graphics: Object.keys(GRAPHICS),
       winnerScenes: WINNER_STAGES.map((stage) => stage.label),
     });

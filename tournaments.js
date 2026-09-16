@@ -277,6 +277,96 @@ export function makeTournamentStore(filePath) {
       return { ...tournament, members: { ...tournament.members } };
     },
 
+    /**
+     * The tournament an OBS source or a webhook is pointing at.
+     *
+     * This is the lookup that used to live on the account store, and moving it
+     * is most of what "the key names a workspace" means. A bare `?key=` has to
+     * resolve to exactly one workspace with no other information in the request -
+     * there is no cookie on an OBS browser source and no person behind it - which
+     * is why the key had to move onto the tournament rather than stay on a person
+     * who may be running three.
+     */
+    bySessionKey: (key) => {
+      const wanted = String(key ?? '');
+      if (!wanted) return null;
+      return tournaments.find((t) => t.sessionKey === wanted) ?? null;
+    },
+
+    byControlKey: (key) => {
+      const wanted = String(key ?? '');
+      // Never matches the blank field of a tournament that has not minted one.
+      if (!wanted) return null;
+      return tournaments.find((t) => t.controlKey && t.controlKey === wanted) ?? null;
+    },
+
+    /**
+     * The same, with an explanation when it fails.
+     *
+     * The overwhelmingly likely mistake is pasting the session key, because both
+     * are UUIDs that appear on the same page, and "that is the other key" is
+     * unguessable from outside a stream deck.
+     */
+    resolveControlKey(key) {
+      const wanted = String(key ?? '');
+      if (!wanted) return { owner: null, hint: 'No control key was sent.' };
+
+      const owner = tournaments.find((t) => t.controlKey && t.controlKey === wanted);
+      if (owner) return { owner: { ...owner, members: { ...owner.members } } };
+
+      if (tournaments.some((t) => t.sessionKey === wanted)) {
+        return {
+          owner: null,
+          hint:
+            'That is the OBS session key, not the control key. They are different on purpose - ' +
+            'copy the one from the Companion panel on the Tournament page.',
+        };
+      }
+      return { owner: null, hint: 'That control key matches no tournament. It may have been rotated.' };
+    },
+
+    /**
+     * Which tournament a dashboard opens on when the URL does not say.
+     *
+     * The newest this account can see. Somebody on one tournament always gets
+     * it; somebody on several gets the one they most likely just made, and the
+     * picker is how they say otherwise - the URL carries `?session=` from then
+     * on, so this only ever decides a first load.
+     *
+     * Null is a real answer and the pages have to handle it: an account on no
+     * tournament at all is the ordinary state of somebody who has just been
+     * given a login and not yet been added to anything.
+     */
+    defaultFor(userId) {
+      const mine = this.forUser(userId);
+      return mine.find((t) => !t.archivedAt) ?? mine[0] ?? null;
+    },
+
+    /** New OBS key. Every browser source and webhook pointing here stops working. */
+    rotateSessionKey(id) {
+      const tournament = find(id);
+      if (!tournament) throw new Error('No such tournament.');
+      tournament.sessionKey = randomUUID();
+      persist();
+      return { ...tournament, members: { ...tournament.members } };
+    },
+
+    /**
+     * Mint or withdraw the Companion control key.
+     *
+     * `false` withdraws, which is not the same as rotating: a withdrawn key
+     * leaves the tournament unable to be driven by a stream deck at all, which
+     * is the state every tournament starts in.
+     */
+    setControlKey(id, wanted) {
+      const tournament = find(id);
+      if (!tournament) throw new Error('No such tournament.');
+      const had = Boolean(tournament.controlKey);
+      tournament.controlKey = wanted === false ? '' : randomUUID();
+      persist();
+      return { tournament: { ...tournament, members: { ...tournament.members } }, had };
+    },
+
     /** Drop a tournament entirely. The caller is responsible for its workspace. */
     remove(id) {
       const before = tournaments.length;

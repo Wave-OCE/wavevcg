@@ -115,8 +115,22 @@ export function refreshAccount() {
 export async function targetKey() {
   const data = await account();
   if (!data) return '';
-  if (!SESSION_ID || SESSION_ID === data.user.id) return data.user.sessionKey ?? '';
-  return data.sessions?.find((entry) => entry.id === SESSION_ID)?.sessionKey ?? '';
+  /*
+   * The key belongs to the TOURNAMENT this page is looking at.
+   *
+   * This used to fall back to `data.user.sessionKey` when no session was named,
+   * because a production was an account and your own key was always the right
+   * answer. There is no such fallback now - a person has no key of their own,
+   * and inventing one would hand OBS a URL that resolves to nothing.
+   *
+   * With no `?session=` the server picks a default tournament, and the list
+   * below is in the same order, so the first entry is that same one. An account
+   * on no tournament gets '', and the panels that show an OBS URL say so rather
+   * than printing a blank.
+   */
+  const list = data.sessions ?? [];
+  const wanted = SESSION_ID ? list.find((entry) => entry.id === SESSION_ID) : list[0];
+  return wanted?.sessionKey ?? '';
 }
 
 /**

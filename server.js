@@ -45,14 +45,11 @@ import { makeTrackerBrowser } from './browser.js';
 import {
   PASSWORD_MIN,
   SESSION_TTL_MS,
-  accessLevel,
   adminCounts,
   canOpenTrackerLogin,
   can,
   isSnowflake,
   usernameProblem,
-  canEdit,
-  canView,
   makeSessionStore,
   makeUserStore,
   publicUser,
@@ -955,7 +952,29 @@ if (ADMIN_USERNAME && ADMIN_PASSWORD) {
     adminNote = `${users.count} account${users.count === 1 ? '' : 's'} (${ADMIN_USERNAME} already exists)`;
   } else {
     try {
-      await users.create({ username: ADMIN_USERNAME, password: ADMIN_PASSWORD, role: 'admin' });
+      /*
+       * The first administrator, and the only account that is handed
+       * manageTournaments rather than being given it by somebody.
+       *
+       * Without this a fresh install deadlocks, and it is worth spelling out
+       * because every step of it looks right on its own. Permissions default
+       * closed, so the new admin has no capabilities. manageTournaments is
+       * adminImplied: false, deliberately, because administering accounts and
+       * operating a broadcast are different powers. So the administrator cannot
+       * create a tournament - and nobody else exists to create one for them, or
+       * to grant them the capability. A server with an admin, no production, and
+       * no way to make one.
+       *
+       * This is the same argument that made ADMIN_USERNAME exist at all: there
+       * is no "create the first account" page because a route that hands out an
+       * admin to whoever reaches it first is a race a stranger can win, so the
+       * environment - which only somebody who already owns the machine can set -
+       * is where the first grant belongs. The bootstrap grants the capability;
+       * it does not create a tournament, because what the first competition is
+       * called is not something an environment variable should guess.
+       */
+      const first = await users.create({ username: ADMIN_USERNAME, password: ADMIN_PASSWORD, role: 'admin' });
+      await users.update(first.id, { capabilities: { manageTournaments: true } });
       adminNote = `created administrator "${ADMIN_USERNAME}"`;
     } catch (error) {
       adminNote = `could not create "${ADMIN_USERNAME}": ${error.message}`;
@@ -987,7 +1006,7 @@ const sessions = makeSessionRegistry({
  * it.
  */
 const companion = makeCompanionHub({
-  ownerForKey: (key) => users.resolveControlKey(key),
+  ownerForKey: (key) => tournaments.resolveControlKey(key),
   bundleFor: (id) => sessions.get(id),
   enabled: companionOn,
   log,
@@ -1290,7 +1309,7 @@ function installSession(bundle) {
    * behaviour: it is the state telling the truth about itself, and the
    * dashboard reads preview.
    */
-  const session = bundle.userId;
+  const session = bundle.tournamentId;
 
   const stopAutoHide = installAutoHide(bundle.graphics.program, { session });
 
@@ -1558,11 +1577,25 @@ async function handleApi(pathname, params, ctx) {
     case '/api/teams':
       return { teams: teams.list() };
 
-    case '/api/media':
-      // Your own uploads, not the server's. The files are shared - the list of
-      // them is not, or every dashboard's picker would be a window into every
-      // other production's artwork.
-      return { media: mediaOwners.filter(ctx.owner?.id, await media.list()) };
+    case '/api/media': {
+      /*
+       * This tournament's uploads, plus your own. The files are shared - the
+       * list of them is not, or every picker would be a window into every other
+       * production's artwork.
+       *
+       * Both axes, matching the claim on upload. One alone gets it wrong in
+       * opposite directions: filtering only by tournament hides the logo you
+       * uploaded last season and want again, and filtering only by person hides
+       * the one your colleague uploaded to the tournament you are both working
+       * on. Neither failure raises anything - the bytes still serve and every
+       * saved graphic still renders - so it reads as artwork going missing.
+       */
+      const all = await media.list();
+      const mine = new Set(mediaOwners.filter(ctx.user?.id, all).map((entry) => entry.name));
+      const here = mediaOwners.filter(ctx.owner?.id, all);
+      for (const entry of here) mine.add(entry.name);
+      return { media: all.filter((entry) => mine.has(entry.name)) };
+    }
 
     case '/api/account': {
       const { gameName, tagLine } = splitRiotId(params.get('riotId'));
@@ -2274,28 +2307,48 @@ async function contextFor(req, url) {
   const key = url.searchParams.get('key');
   if (key) {
     req.rlViaKey = true;
-    const owner = users.bySessionKey(key);
-    if (!owner || owner.disabled) {
-      // Worth a line of its own: a key that names nobody is either a rotated
-      // one still sitting in an OBS source, or somebody guessing.
-      log.warn('auth', 'a request arrived with a session key that matches no account', { path: safeLogUrl(req.url) });
+    const owner = tournaments.bySessionKey(key);
+    if (!owner) {
+      /*
+       * Worth a line of its own, and worth more now than it used to be.
+       *
+       * Before the cutover this meant a rotated key still sitting in an OBS
+       * source, or somebody guessing. It now also means a key from BEFORE
+       * migration day - every one of those stopped resolving the moment the
+       * runner re-keyed, which was the deliberate choice. This warn line is
+       * how somebody finds out that the browser source which has gone black is
+       * carrying an old key rather than a broken one.
+       */
+      log.warn('auth', 'a request arrived with a session key that matches no tournament', {
+        path: safeLogUrl(req.url),
+      });
       return { user: null, owner: null, bundle: null, level: null, viaKey: true };
     }
-    req.rlUser = owner.username;
+    req.rlUser = owner.name || 'tournament';
     return { user: null, owner, bundle: await sessions.get(owner.id), level: 'owner', viaKey: true };
   }
 
   const user = userFor(req);
   if (!user) return { user: null, owner: null, bundle: null, level: null, viaKey: false };
 
-  // Whose production. Absent, it is your own - which is what every dashboard
-  // asks for until somebody picks a shared session out of the target selector.
+  /*
+   * Which production. Absent, the newest tournament this account can see.
+   *
+   * "Your own" is no longer a thing a request can mean - nobody owns a
+   * production any more, they are members of tournaments that own them - so the
+   * default had to become a choice rather than an identity. It only ever
+   * decides a first load: the picker writes `?session=` into the URL and every
+   * request after that says which.
+   *
+   * Null is a real answer. An account on no tournament is the ordinary state of
+   * somebody who has just been given a login, and the pages handle it.
+   */
   const wanted = (url.searchParams.get('session') ?? '').trim();
-  const owner = wanted ? users.byId(wanted) : user;
-  if (!owner || owner.disabled) return { user, owner: null, bundle: null, level: null, viaKey: false };
+  const owner = wanted ? tournaments.byId(wanted) : tournaments.defaultFor(user.id);
+  if (!owner) return { user, owner: null, bundle: null, level: null, viaKey: false };
 
-  const level = accessLevel(user, owner);
-  if (!canView(level)) return { user, owner, bundle: null, level: null, viaKey: false };
+  const level = tournamentLevel(owner, user.id);
+  if (!canViewTournament(level)) return { user, owner, bundle: null, level: null, viaKey: false };
 
   return { user, owner, bundle: await sessions.get(owner.id), level, viaKey: false };
 }
@@ -2534,32 +2587,35 @@ function noteLoginFailure(from) {
  * somebody's live broadcast are different powers, and an admin who needs to
  * drive a production is granted access to it like anybody else.
  */
+/**
+ * The productions this account can reach, for the topbar selector.
+ *
+ * Tournaments now, not accounts. The row keeps the same shape so the pages did
+ * not all have to change at once, with one rename that could not be avoided:
+ * `username` became `name`, because it is a competition's name and calling it a
+ * username would have been a lie that read fine right up until somebody
+ * wondered whose account "Champions Tour" was.
+ */
 const visibleSessions = (user) =>
-  users
-    .list()
-    .filter((owner) => !owner.disabled && canView(accessLevel(user, owner)))
-    .map((owner) => {
-      const level = accessLevel(user, owner);
-      return {
-        id: owner.id,
-        username: owner.username,
-        level,
-        live: sessions.has(owner.id),
-        // Editors get the key, viewers do not. An editor can already put things
-        // on air through the dashboard, so withholding the OBS URL would only
-        // stop them setting up the browser source for the show they are running.
-        // A viewer writing nothing must not be handed a webhook.
-        ...(canEdit(level) ? { sessionKey: owner.sessionKey } : {}),
-      };
-    })
-    .sort((a, b) => (a.level === 'owner' ? -1 : b.level === 'owner' ? 1 : a.username.localeCompare(b.username)));
+  tournaments.forUser(user.id).map((tournament) => ({
+    id: tournament.id,
+    name: tournament.name || 'Untitled tournament',
+    level: tournament.level,
+    archived: Boolean(tournament.archivedAt),
+    live: sessions.has(tournament.id),
+    // Editors get the key, viewers do not. An editor can already put things on
+    // air through the dashboard, so withholding the OBS URL would only stop
+    // them setting up the browser source for the show they are running. A
+    // viewer writing nothing must not be handed a webhook.
+    ...(canEditTournament(tournament.level) ? { sessionKey: tournament.sessionKey } : {}),
+  }));
 
-/** Accounts that could be granted access, for the Access panel's picker. */
+/** Accounts that could be added to a tournament, for the Access panel's picker. */
 const grantableUsers = (user) =>
   users
     .list()
     .filter((other) => other.id !== user.id && !other.disabled)
-    .map((other) => ({ id: other.id, username: other.username, level: user.grants?.[other.id] ?? '' }))
+    .map((other) => ({ id: other.id, username: other.username }))
     .sort((a, b) => a.username.localeCompare(b.username));
 
 // ---------------------------------------------------------------- routes ---
@@ -3027,8 +3083,16 @@ async function handleAuth(pathname, req, res) {
  * `level` is the CALLER's, folded in by `forUser`, so a page never has to work
  * out its own access from a members map.
  */
-const publicTournament = (tournament) => ({
+const publicTournament = (tournament, { includeControlKey = false } = {}) => ({
   ...tournament,
+  /*
+   * The control key travels only when it is asked for, and it is asked for only
+   * by the owner who just minted it. It opens the desk - show, hide, next, swap
+   * - so it must not ride along in a list every member of every tournament
+   * fetches on page load, the way the session key does.
+   */
+  controlKey: includeControlKey ? tournament.controlKey : undefined,
+  hasControlKey: Boolean(tournament.controlKey),
   members: Object.entries(tournament.members ?? {}).map(([id, level]) => ({
     id,
     level,
@@ -3143,8 +3207,59 @@ async function handleTournaments(pathname, req, res, ctx) {
         return { tournament: publicTournament(saved), tournaments: tournaments.forUser(user.id).map(publicTournament) };
       }
 
+      /*
+       * A new OBS key. Every browser source and webhook pointing at this
+       * tournament stops working, which is why it is owner-only and why it is
+       * said at info: somebody will ask why the graphics went black.
+       */
+      case 'rotate-key': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may re-key a tournament.');
+        const saved = tournaments.rotateSessionKey(tournament.id);
+        log.info('tournament', `${user.username} made a new session key for "${saved.name}" - its OBS and webhook URLs changed`, {
+          tournament: saved.id,
+        });
+        return { tournament: publicTournament(saved) };
+      }
+
+      /*
+       * Mint, replace or withdraw the Companion control key.
+       *
+       * Its own action rather than a flag on rotate-key, which is the whole
+       * reason there are two keys: this one drops a stream deck and leaves
+       * every browser source alone, and that one re-points OBS and leaves the
+       * stream deck running. One button doing both would take the graphics off
+       * air to fix a control channel.
+       */
+      case 'control-key': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may change the control key.');
+        const clearing = String(body?.mode ?? '') === 'clear';
+        const { tournament: saved, had } = tournaments.setControlKey(tournament.id, clearing ? false : true);
+
+        log.info(
+          'tournament',
+          clearing
+            ? `${user.username} withdrew the Companion control key for "${saved.name}"`
+            : `${user.username} ${had ? 'made a new' : 'created a'} Companion control key for "${saved.name}"`,
+          { tournament: saved.id },
+        );
+
+        /*
+         * Every open channel for this tournament, dropped.
+         *
+         * Not optional and not cosmetic. A socket authenticates once, at the
+         * handshake, so one already open holds no credential to re-check -
+         * without this, revoking a leaked key would leave the leak connected
+         * until somebody restarted the server.
+         */
+        companion.closeForOwner(saved.id, clearing ? 'The control key was withdrawn.' : 'The control key changed.');
+
+        return { tournament: publicTournament(saved), controlKey: saved.controlKey };
+      }
+
       default:
-        throw new ProviderError(400, 'Unknown tournament action.', 'One of: create, update, member, archive.');
+        throw new ProviderError(400, 'Unknown tournament action.', 'One of: create, update, member, archive, rotate-key, control-key.');
     }
   });
 }
@@ -3288,73 +3403,19 @@ async function handleAccount(pathname, req, res, ctx) {
      * has. Destructive on purpose and never automatic: it is the thing to press
      * when a key has been on a stream, and the cost is walking round OBS.
      */
-    case '/api/account/key':
-      return handleWrite(res, async () => {
-        await users.rotateSessionKey(user.id);
-        // Worth a line at info: every OBS source and both webhooks for this
-        // account have just stopped working, and somebody will ask why.
-        log.info('account', `${user.username} made a new session key - their OBS and webhook URLs changed`);
-        return { user: publicUser(users.byId(user.id), { includeKey: true }) };
-      });
-
     /*
-     * Mint, replace or withdraw the Companion control key.
+     * The OBS key, the control key and sharing have all left this file.
      *
-     * Its own route rather than a flag on /api/account/key, which is the whole
-     * reason there are two keys: rotating this one drops a stream deck and
-     * leaves every browser source alone, and rotating that one re-points OBS
-     * and leaves the stream deck running. One button doing both would take the
-     * graphics off air to fix a control channel.
+     * They were about the caller's own account because a production WAS an
+     * account. A key now names a tournament and access to one is membership of
+     * it, so all three live on /api/tournaments where the thing they describe
+     * lives - and, importantly, where they can be owner-only. On this route
+     * they could only ever have been "yours", which is no longer a question a
+     * key can answer.
+     *
+     * What stays here is what is genuinely personal: your password, and your
+     * Discord link.
      */
-    case '/api/account/control-key':
-      return handleWrite(res, async () => {
-        const body = await readJsonBody(req);
-        const clearing = String(body?.action ?? '') === 'clear';
-
-        if (clearing) {
-          await users.clearControlKey(user.id);
-          log.info('account', `${user.username} withdrew their Companion control key`);
-        } else {
-          const had = Boolean(user.controlKey);
-          await users.rotateControlKey(user.id);
-          // At info either way: one of these is a new door and the other has
-          // just stopped somebody's stream deck working mid-show.
-          log.info('account', `${user.username} ${had ? 'made a new' : 'created a'} Companion control key`);
-        }
-
-        /*
-         * Every open channel for this account, dropped.
-         *
-         * Not optional and not cosmetic. A socket authenticates once, at the
-         * handshake, so one that is already open holds no credential to
-         * re-check - and without this, revoking a leaked key would leave the
-         * leak connected until somebody restarted the server.
-         */
-        companion.closeForOwner(user.id, clearing ? 'The control key was withdrawn.' : 'The control key changed.');
-
-        return { user: publicUser(users.byId(user.id), { includeKey: true, includeControlKey: true }) };
-      });
-
-    case '/api/account/grant':
-      return handleWrite(res, async () => {
-        const body = await readJsonBody(req);
-        const granteeId = String(body?.userId ?? '');
-        const level = String(body?.level ?? '');
-        if (granteeId === user.id) throw new ProviderError(400, 'You already own this session.');
-        if (!users.byId(granteeId)) throw new ProviderError(404, 'No such account.');
-
-        // Held on the owner, so revoking is one write and deleting an account
-        // cannot leave a grant pointing at nobody.
-        const updated = await users.setGrant(user.id, granteeId, level);
-        log.info(
-          'account',
-          level
-            ? `${user.username} gave ${users.byId(granteeId)?.username} ${level} access to their graphics`
-            : `${user.username} revoked ${users.byId(granteeId)?.username}'s access`,
-        );
-        return { user: publicUser(updated, { includeKey: true }), grantable: grantableUsers(updated) };
-      });
-
     default:
       return unauthorised(res, 404, `No such route: ${pathname}`);
   }
@@ -3658,7 +3719,18 @@ async function handleAdmin(pathname, req, res, ctx) {
         // A disabled account's dashboards should stop working now, not when
         // their cookie happens to expire.
         if (changes.disabled === true || changes.password) logins.destroyFor(id);
-        if (changes.disabled === true) sessions.dispose(id);
+        /*
+         * Disabling a person no longer stops a production.
+         *
+         * It used to call sessions.dispose(id), which stops the auto-hide
+         * timer, both winner sequence drivers and both agent-select clocks -
+         * fine when the workspace WAS that account, and wrong now that it is a
+         * tournament several people work on. Disabling one guest would have
+         * frozen the draft clock on a show they are not even working.
+         *
+         * Dropping their logins, directly above, is what disabling means: they
+         * lose access. Everything they had access to keeps running.
+         */
         return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
       }
 
@@ -3698,7 +3770,19 @@ async function handleAdmin(pathname, req, res, ctx) {
           });
         }
 
-        await sessions.destroy(id);
+        /*
+         * No sessions.destroy(id) any more, and this is the single most
+         * destructive line the cutover removed.
+         *
+         * It was an rm -rf of the workspace directory, which was right when a
+         * workspace belonged to one account and is catastrophic now: removing
+         * one operator from the roster would have deleted a tournament several
+         * people were running, with no undo and no backup route. forgetUser
+         * above detaches them; the competition stays.
+         *
+         * Deleting a tournament is a separate, deliberate act on the Tournament
+         * page, which is where somebody doing it knows what they are deleting.
+         */
         await users.remove(id);
         return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
       }
@@ -4043,7 +4127,9 @@ async function route(req, res) {
      * URL of a save is exactly the case a per-handler check gets wrong by
      * omission when somebody adds the eleventh write route.
      */
-    if (!canEdit(ctx.level)) return unauthorised(res, 403, 'You have view-only access to this session.');
+    if (!canEditTournament(ctx.level)) {
+      return unauthorised(res, 403, 'You have view-only access to this tournament.');
+    }
 
     return handlePost(pathname, req, res, ctx, url.searchParams);
   }
@@ -4259,7 +4345,7 @@ async function handlePost(pathname, req, res, ctx, params) {
          */
         bundle.rehearsal.set('winner', run);
 
-        log.debug('preview', `winner rehearsal ${run ? 'started' : 'stopped'}`, { session: ctx.owner?.id });
+        log.debug('preview', `winner rehearsal ${run ? 'started' : 'stopped'}`, { tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)" });
         return { graphic: 'winner', running: run, state: bundle.winner.preview.state };
       });
 
@@ -4277,7 +4363,7 @@ async function handlePost(pathname, req, res, ctx, params) {
         // graphic and changed their mind actually wants.
         if (String(body?.action ?? '') === 'revert') {
           const state = bus.revert();
-          log.info('air', `${which} preview reverted to what is on air`, { session: ctx.owner?.id });
+          log.info('air', `${which} preview reverted to what is on air`, { tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)" });
           return { graphic: which, action: 'revert', revision: bus.preview.revision, state };
         }
 
@@ -4289,7 +4375,7 @@ async function handlePost(pathname, req, res, ctx, params) {
          * is exactly what somebody asks about after a show.
          */
         log.info('air', `${which} taken to program${replayed ? ' (replayed)' : ' (data only)'}`, {
-          session: ctx.owner?.id,
+          tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)",
         });
         return { graphic: which, action: 'take', replayed, revision: bus.program.revision, state };
       });
@@ -4382,7 +4468,7 @@ async function handlePost(pathname, req, res, ctx, params) {
         // At debug: a lobby produces ten of these, and one line each is noise
         // right up until the moment you need every one of them.
         log.debug('feed', `roster: ${result.applied} applied`, {
-          session: ctx.owner?.id,
+          tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)",
           reset: result.reset,
           locked: selectAir.state.slots.filter((slot) => slot.locked).length,
         });
@@ -4435,7 +4521,7 @@ async function handlePost(pathname, req, res, ctx, params) {
         // events around it are not.
         if (result.entered || result.left) {
           log.info('feed', `agent select ${result.entered ? 'started' : 'ended'}`, {
-            session: ctx.owner?.id,
+            tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)",
             map: selectAir.state.mapName || '-',
           });
         }
@@ -4511,7 +4597,7 @@ async function handlePost(pathname, req, res, ctx, params) {
         const fresh = matchFeed.receive(matchId);
         // Once per match, so info is the right level - and the id is the whole
         // point of the line, which is why it is not redacted.
-        log.info('feed', `match id ${fresh ? 'received' : 're-sent'}: ${matchId}`, { session: ctx.owner?.id });
+        log.info('feed', `match id ${fresh ? 'received' : 're-sent'}: ${matchId}`, { tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)" });
 
         return { matchId, fresh };
       });
@@ -4543,7 +4629,7 @@ async function handlePost(pathname, req, res, ctx, params) {
         // Debug, for the same reason the roster hook is: a lobby produces ten of
         // these and one line each is noise until the moment you need every one.
         log.debug('feed', `lobby: ${result.applied} applied`, {
-          session: ctx.owner?.id,
+          tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)",
           seats: lobby.state.incoming.seats.filter((seat) => seat.seen).length,
         });
 
@@ -4565,12 +4651,12 @@ async function handlePost(pathname, req, res, ctx, params) {
 
         switch (action) {
           case 'stage':
-            log.info('feed', 'lobby staged', { session: ctx.owner?.id });
+            log.info('feed', 'lobby staged', { tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)" });
             return lobby.stage();
           case 'swap':
             return lobby.swap();
           case 'clear':
-            log.info('feed', 'lobby cleared', { session: ctx.owner?.id });
+            log.info('feed', 'lobby cleared', { tournament: ctx.owner?.id, who: ctx.user?.username ?? "(key)" });
             return lobby.clear();
           default:
             throw new ProviderError(400, 'Unknown lobby action.', 'One of: stage, swap, clear.');
@@ -4596,7 +4682,24 @@ async function handlePost(pathname, req, res, ctx, params) {
         // Recorded against the account that uploaded it so the media browser
         // shows your own files rather than the whole server's. The bytes stay
         // shared - see makeMediaOwners.
-        await mediaOwners.claim(ctx.owner?.id ?? ctx.user?.id, saved.name);
+        /*
+         * Claimed by the tournament AND by the person who uploaded it.
+         *
+         * Two axes because there are two honest answers to "whose logo is
+         * this". It belongs to the competition, so everybody working on that
+         * tournament should find it in their picker - which one axis alone
+         * could not give, and the symptom would have read as "my colleague's
+         * upload vanished". And it belongs to whoever uploaded it, so it
+         * follows them to their next tournament rather than being stranded in
+         * a season that has finished.
+         *
+         * It also settles an asymmetry that was only ever invisible by
+         * accident: the claim used `ctx.owner?.id ?? ctx.user?.id` while the
+         * listing filtered on `ctx.owner?.id` alone. Those were the same value
+         * while a workspace was a person. They are not any more.
+         */
+        await mediaOwners.claim(ctx.owner?.id, saved.name);
+        if (ctx.user?.id) await mediaOwners.claim(ctx.user.id, saved.name);
         log.info('media', `${ctx.user?.username ?? 'somebody'} uploaded ${saved.name}`, { bytes: saved.bytes });
         return saved;
       });
@@ -4669,6 +4772,18 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     companion.closeAll('The graphics server is shutting down.');
     logins.flush();
     mediaOwners.flush();
+    /*
+     * The tournament index, added here in the same commit that made anything
+     * depend on it.
+     *
+     * flushSession below covers a bundle's seven stores and its own comment
+     * records the bug from when that list was six and one was missed. This is
+     * the server-wide half of the same hazard, and losing it loses a
+     * tournament's membership list and its keys - which is not reconstructable
+     * from anything else on disk, unlike a graphic that would simply reload
+     * from its last save.
+     */
+    tournaments.flush();
     void Promise.all(sessions.list().map((id) => flushSession(sessions.peek(id))))
       .catch(() => {})
       .then(() => browser?.close())
@@ -4784,12 +4899,12 @@ server.listen(PORT, HOST, () => {
    * key - and a room full of control keys does nothing while the switch is off.
    */
   {
-    const withKeys = users.list().filter((entry) => entry.controlKey && !entry.disabled).length;
+    const withKeys = tournaments.list().filter((entry) => entry.controlKey).length;
     console.log(
       `  Companion       ${
         !companionOn()
           ? 'switched off by an administrator'
-          : `ws://${shown}:${PORT}${COMPANION_PATH}  (${withKeys} account${withKeys === 1 ? '' : 's'} with a control key)`
+          : `ws://${shown}:${PORT}${COMPANION_PATH}  (${withKeys} tournament${withKeys === 1 ? '' : 's'} with a control key)`
       }`,
     );
   }

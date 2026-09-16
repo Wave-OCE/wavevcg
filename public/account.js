@@ -146,20 +146,42 @@ function facts(target, rows) {
 function paintTopbar() {
   if (!me) return;
 
-  const current = SESSION_ID || me.user.id;
+  /*
+   * With no ?session= the server opens a default tournament, and this list is
+   * in the same order - so the first entry IS that default, and the selector
+   * shows what the page is actually looking at rather than nothing.
+   */
+  const current = SESSION_ID || me.sessions[0]?.id || '';
   els.target.replaceChildren(
     ...me.sessions.map((entry) =>
       el(
         'option',
         null,
         { value: entry.id, selected: entry.id === current ? 'selected' : null },
-        entry.id === me.user.id ? `${entry.username} (yours)` : `${entry.username} - ${entry.level}`,
+        `${entry.name}${entry.archived ? ' - archived' : ''} - ${entry.level}`,
       ),
     ),
   );
 
-  const guest = current !== me.user.id;
   const mine = me.sessions.find((entry) => entry.id === current);
+
+  /*
+   * The on-air safety cue, redefined - and this needs a human decision, so it
+   * is flagged in the handover rather than quietly settled here.
+   *
+   * It used to mean "the production on screen is not mine", computed as
+   * `current !== me.user.id`. Nobody owns a production any more, so that test
+   * has no meaning: taken literally everybody is a guest all the time, the
+   * border becomes permanent, and a warning that is always on stops being read
+   * - which loses the one cue on this dashboard that stops somebody airing a
+   * graphic on the wrong stream.
+   *
+   * The nearest honest reading is kept: you are a guest on a tournament you do
+   * not own. An owner running their own competition sees a clean page, and
+   * anybody operating somebody else's sees the border, which is the behaviour
+   * the cue was built for.
+   */
+  const guest = Boolean(mine) && mine.level !== 'owner';
   // replaceChildren rather than textContent, because a text assignment cannot
   // carry the mark beside the name. textContent still reads as the username, so
   // anything asserting on it is unaffected.
@@ -171,7 +193,7 @@ function paintTopbar() {
   // Only worth a selector when there is somewhere to go.
   els.target.parentElement.hidden = me.sessions.length < 2;
   document.body.classList.toggle('is-guest', guest);
-  document.body.dataset.guestNote = guest ? `Operating ${mine?.username ?? 'another'}'s production` : '';
+  document.body.dataset.guestNote = guest ? `${mine.level} on ${mine.name}` : '';
 
   if (els.adminTab) els.adminTab.hidden = me.user.role !== 'admin';
 }
@@ -194,7 +216,15 @@ function paintAccount() {
     ['Last signed in', when(me.user.lastLoginAt)],
   ]);
 
-  els.key.textContent = me.user.sessionKey ?? '-';
+  /*
+   * The key of the tournament on screen, not of this account.
+   *
+   * An account has no key any more. Somebody on no tournament gets a line
+   * saying so rather than a blank box, because a blank box beside a "copy"
+   * button reads as a bug.
+   */
+  const here = me.sessions.find((entry) => entry.id === (SESSION_ID || me.sessions[0]?.id));
+  els.key.textContent = here?.sessionKey ?? (me.sessions.length ? 'view-only - no key' : 'no tournament yet');
   els.note.textContent = `Passwords must be at least ${me.passwordMin} characters.`;
   paintGrants();
   paintDiscord();
@@ -341,36 +371,28 @@ function paintDiscord() {
  * on the server there is nobody to show, and saying so is better than an empty
  * box.
  */
+/**
+ * Sharing moved to the Tournament page, and this panel says so.
+ *
+ * Access used to be a grant on YOUR account - you let somebody into your
+ * graphics - so it belonged beside your password. It is now membership of a
+ * tournament, decided by that tournament's owner, so it belongs on the page
+ * that describes the tournament. Leaving a second control here would have meant
+ * two places that disagree about who may operate a show.
+ *
+ * The panel is left in place with a pointer rather than deleted outright: an
+ * operator who knows where this lived deserves to be told where it went, not to
+ * find a section quietly missing.
+ */
 function paintGrants() {
-  if (!me.grantable.length) {
-    els.grants.replaceChildren(
-      el('p', 'field-help', {}, 'There are no other accounts yet. An administrator can make one on the Admin tab.'),
-    );
-    return;
-  }
-
   els.grants.replaceChildren(
-    ...me.grantable.map((other) => {
-      const row = el('div', 'access-row');
-      row.append(el('span', 'access-name', {}, other.username));
-
-      for (const [level, label] of [['', 'No access'], ['viewer', 'Viewer'], ['editor', 'Editor']]) {
-        const button = el('button', `btn btn-small${other.level === level ? ' is-active' : ''}`, { type: 'button' }, label);
-        button.addEventListener('click', async () => {
-          try {
-            const payload = await post('/api/account/grant', { userId: other.id, level });
-            me.grantable = payload.grantable;
-            me.user = payload.user;
-            paintGrants();
-            toast(level ? `${other.username} can now ${level === 'editor' ? 'operate' : 'watch'} your graphics` : `${other.username} no longer has access`);
-          } catch (error) {
-            toast(error.message);
-          }
-        });
-        row.append(button);
-      }
-      return row;
-    }),
+    el(
+      'p',
+      'field-help',
+      {},
+      'Access is per tournament now. Open the Tournament page and use its Access tab - ' +
+        'whoever owns a tournament decides who may work on it.',
+    ),
   );
 }
 
@@ -410,9 +432,10 @@ els.rotate.addEventListener('click', async () => {
   if (!window.confirm(warning)) return;
 
   try {
-    const payload = await post('/api/account/key', {});
-    me.user = payload.user;
-    els.key.textContent = me.user.sessionKey;
+    const id = SESSION_ID || me.sessions[0]?.id;
+    if (!id) throw new Error('There is no tournament to re-key.');
+    const payload = await post('/api/tournaments', { action: 'rotate-key', id });
+    els.key.textContent = payload.tournament.sessionKey;
     await refreshAccount();
     toast('New key made - re-copy the OBS and webhook URLs');
   } catch (error) {

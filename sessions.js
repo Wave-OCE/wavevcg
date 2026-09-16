@@ -62,10 +62,10 @@ const STORES = [
 ];
 
 /**
- * A user id is a UUID we generated, so it is already safe in a path - but it
- * arrives here having passed through a cookie and a JSON file, and "it cannot
- * happen" is how directory traversal happens. One regexp is cheaper than being
- * wrong.
+ * A tournament id is a UUID we generated, so it is already safe in a path - but
+ * it arrives here having passed through a query string and a JSON file, and "it
+ * cannot happen" is how directory traversal happens. One regexp is cheaper than
+ * being wrong.
  */
 const SAFE_ID = /^[a-z0-9-]{1,64}$/i;
 
@@ -75,14 +75,29 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
   /** @type {Map<string, Promise<object>>} */
   const opening = new Map();
 
-  const dirFor = (userId) => path.join(root, 'users', String(userId));
+  /**
+   * Where a workspace lives.
+   *
+   * This one line is the cutover. It was `users/<userId>`, because a production
+   * belonged to the person who owned it; it is `tournaments/<tournamentId>`
+   * because a production belongs to the competition and people are members of
+   * it. Everything else in this file is unchanged - a bundle never cared who
+   * the id belonged to, only that it was one - which is why the change lands
+   * here and not in ten places.
+   *
+   * `tools/migrate-tournaments.mjs` is what moves the directories to match.
+   * There is no fallback to the old path on purpose: a reader that quietly
+   * tried `users/<id>` too would turn a half-finished migration into a server
+   * that works for some workspaces and serves silent defaults for the rest.
+   */
+  const dirFor = (tournamentId) => path.join(root, 'tournaments', String(tournamentId));
 
-  async function open(userId) {
-    const id = String(userId);
+  async function open(tournamentId) {
+    const id = String(tournamentId);
     if (!SAFE_ID.test(id)) throw new Error('Bad session id.');
 
     const dir = dirFor(id);
-    const bundle = { userId: id, dir, teardown: [] };
+    const bundle = { tournamentId: id, dir, teardown: [] };
 
     for (const [key, make, file] of STORES) {
       bundle[key] = make(path.join(dir, file));
