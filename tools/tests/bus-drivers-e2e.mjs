@@ -22,6 +22,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -68,13 +70,13 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  await login.json();
+  /*
+   * Signing in is no longer enough to have a production: the stores these
+   * drivers run against belong to a tournament, and an account on none of them
+   * is refused with "No such session." So the suite makes one, and every
+   * request below lands on it as the only production this account can see.
+   */
+  const { cookie } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Bus drivers');
   const H = { 'Content-Type': 'application/json', Cookie: cookie };
 
   const get = async (route, bus) => (await (await fetch(`${BASE}${route}?bus=${bus}`, { headers: { Cookie: cookie } })).json()).state;

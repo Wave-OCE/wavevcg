@@ -12,6 +12,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { addMember, makeAccount, makeTournament, openAsAdmin, signIn } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -98,14 +100,13 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const me = (await login.json()).user;
-  const key = me.sessionKey;
+  /*
+   * The key belongs to a tournament, so one has to exist before there is
+   * anything to point a webhook at. Not setup noise - this is the real order of
+   * operations now, and a suite that skipped it would assert against a state no
+   * operator is ever in.
+   */
+  const { cookie, key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Match id');
 
   const hook = (body, headers = {}, k = key) =>
     fetch(`${BASE}/api/match-id?key=${encodeURIComponent(k)}`, { method: 'POST', headers, body });
@@ -183,18 +184,19 @@ try {
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ action: 'create', username: 'second', password: 'another-long-password', role: 'user' }),
   });
-  const login2 = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'second', password: 'another-long-password' }),
-  });
-  const second = (await login2.json()).user;
+  /*
+   * The isolation under test is between two PRODUCTIONS, and a production is a
+   * tournament now rather than an account. So the second one is a second
+   * tournament - which is also the shape the real failure would take, since two
+   * people sharing one tournament are supposed to see the same feed.
+   */
+  const secondTournament = await makeTournament(BASE, cookie, 'Someone else');
 
-  if (!second?.sessionKey) {
-    ok('a second account was made', false, JSON.stringify(second));
+  if (!secondTournament?.key) {
+    ok('a second production was made', false, JSON.stringify(secondTournament));
   } else {
-    ok('a second account was made', true);
-    const other = await collect(`${BASE}/api/events?key=${encodeURIComponent(second.sessionKey)}`, 'matchFeed', 600, async () => {
+    ok('a second production was made', true);
+    const other = await collect(`${BASE}/api/events?key=${encodeURIComponent(secondTournament.key)}`, 'matchFeed', 600, async () => {
       await hook('11112222-3333-4444-5555-666677778888', { 'Content-Type': 'text/plain' }, key);
     });
     const leaked = other.some((f) => f.state?.matchId);

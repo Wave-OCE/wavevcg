@@ -31,7 +31,7 @@
 import { el, grid, help, makeFields, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
-import { account } from './session.js';
+import { account, refreshAccount } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -235,8 +235,25 @@ if (els.pick) {
     );
     els.addGo.disabled = free.length === 0;
     els.addWho.disabled = free.length === 0;
+
+    /*
+     * Two different empties, said differently.
+     *
+     * This used to say "everybody is already on this" whenever the list came
+     * out short, which is true when there are other accounts and they are all
+     * members - and an affirmative lie when there are no other accounts at all,
+     * or when the page simply has a stale copy. An owner reading it would stop
+     * looking for the person they were trying to add.
+     */
     if (!free.length) {
-      els.addWho.replaceChildren(el('option', null, {}, 'everybody is already on this'));
+      els.addWho.replaceChildren(
+        el(
+          'option',
+          null,
+          {},
+          people.length ? 'everybody is already on this' : 'no other accounts yet',
+        ),
+      );
     }
   }
 
@@ -344,7 +361,7 @@ if (els.pick) {
        */
       if (els.tab) els.tab.hidden = !all.length && !mayCreate;
 
-      if (mayCreate && !people.length) await loadPeople();
+      if (mayCreate) await loadPeople();
       paint();
     } catch {
       // A failed fetch leaves the page as it was rather than blanking it. There
@@ -361,6 +378,16 @@ if (els.pick) {
    * account list shipped to somebody who cannot use it.
    */
   async function loadPeople() {
+    /*
+     * Refetched, not read from the copy taken at boot.
+     *
+     * account() caches, so an account an administrator made AFTER this page
+     * loaded never appeared in the picker - and because the empty list read as
+     * "everybody is already on this", the page affirmatively told an owner
+     * there was nobody left to add. Refetching costs one request on a panel
+     * somebody opens twice a season.
+     */
+    me = (await refreshAccount()) ?? me;
     people = (me?.grantable ?? []).map((entry) => ({ id: entry.id, username: entry.username }));
   }
 
@@ -424,6 +451,10 @@ if (els.pick) {
     } catch (error) {
       toast(error.message);
     }
+  });
+
+  window.addEventListener('app-tab', (event) => {
+    if (event.detail === 'tournament' && me) void load(current?.id ?? null);
   });
 
   account().then(async (data) => {

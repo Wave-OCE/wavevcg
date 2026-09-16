@@ -127,9 +127,24 @@ try {
   r = await alex('/api/tournaments');
   ok('6. the capability shows up on the list route', r.json?.mayCreate === true);
 
-  // An administrator does NOT get this one implicitly - adminImplied is false.
-  r = await boss('/api/tournaments');
-  ok('7. an administrator is not implicitly able to create', r.json?.mayCreate === false);
+  /*
+   * An administrator does NOT get this one implicitly - adminImplied is false.
+   *
+   * Asked of a SECOND administrator, not of boss. boss is the one the
+   * ADMIN_USERNAME bootstrap creates, and that bootstrap grants
+   * manageTournaments deliberately - otherwise a fresh install has an admin who
+   * cannot make a tournament and nobody to make one for them. Asking boss would
+   * test the bootstrap and call it an implication, which is how an assertion
+   * ends up green for the wrong reason.
+   */
+  const chief = agent();
+  await boss('/api/admin/users', json({ action: 'create', username: 'chief', password: 'another-long-password', role: 'admin' }));
+  await signIn(chief, 'chief', 'another-long-password');
+  r = await chief('/api/tournaments');
+  ok('7. an administrator is not implicitly able to create', r.json?.mayCreate === false, JSON.stringify(r.json?.mayCreate));
+
+  r = await chief('/api/tournaments', json({ action: 'create', name: 'By fiat' }));
+  ok('7b. ...and is refused when they try', r.status === 403, String(r.status));
 
   // ------------------------------------------------------------ creating ---
 

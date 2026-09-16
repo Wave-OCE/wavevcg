@@ -19,6 +19,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -64,13 +66,14 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const key = (await login.json()).user.sessionKey;
+  /*
+   * The game webhook is pointed at a key, and a key names a TOURNAMENT now
+   * rather than the account that signed in - the login response carries none.
+   * So the production has to be made before there is a feed to post into, and
+   * the cookie below edits that same one because it is the only tournament
+   * this account can see.
+   */
+  const { cookie, key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Global sync');
   const H = { 'Content-Type': 'application/json', Cookie: cookie };
 
   const read = async (route, bus = 'preview') =>

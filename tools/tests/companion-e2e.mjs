@@ -10,7 +10,10 @@
  *   - Updates are targeted: a winner op sends winner keys and nothing else.
  *   - Ordinary editing is silent. This is the cue-counter lesson: a control
  *     channel that repainted on every keystroke would be useless.
- *   - One account's channel never sees another's graphics.
+ *   - One TOURNAMENT's channel never sees another's graphics. A control key
+ *     names a production, not a person, so the isolation that matters is
+ *     between productions - two people on the same tournament are supposed to
+ *     drive the same desk.
  *   - Rotating the key drops the socket that the old key opened.
  *   - No secret reaches the log.
  */
@@ -21,6 +24,8 @@ import path from 'node:path';
 import { connect } from 'node:net';
 
 import { fileURLToPath } from 'node:url';
+
+import { makeTournament, signIn } from './harness.mjs';
 
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
@@ -169,34 +174,49 @@ try {
     }
   }
 
-  // ------------------------------------------------------------- accounts ---
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const sessionKey = (await login.json()).user.sessionKey;
+  // --------------------------------------------------------- productions ---
+  /*
+   * Both keys belong to a TOURNAMENT now, so one has to exist before there is
+   * anything to point either a browser source or a stream deck at. A person
+   * carries neither key.
+   */
+  const { cookie } = await signIn(BASE, 'boss', 'a-long-enough-password');
+  const first = await makeTournament(BASE, cookie, 'Companion');
+  const sessionKey = first.key;
 
   const JSON_POST = { 'Content-Type': 'application/json', Cookie: cookie };
-  const me = async () => (await (await fetch(`${BASE}/api/account/me`, { headers: { Cookie: cookie } })).json()).user;
 
-  // A second account, for the isolation checks.
-  await fetch(`${BASE}/api/admin/users`, {
-    method: 'POST',
-    headers: JSON_POST,
-    body: JSON.stringify({ action: 'create', username: 'second', password: 'another-long-password' }),
-  });
-  const login2 = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'second', password: 'another-long-password' }),
-  });
-  const cookie2 = (login2.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
+  /*
+   * Every dashboard-side read and write says which production it means.
+   *
+   * Without `?session=` the server picks the newest tournament this account can
+   * see, and this suite makes a second one half way through - so a bare URL
+   * would quietly start answering about the other production from that point
+   * on, and the isolation assertions would be reading the board they were
+   * meant to be proving untouched.
+   */
+  const on = (tournamentId, pathAndQuery) =>
+    `${BASE}${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}session=${encodeURIComponent(tournamentId)}`;
+
+  /** A tournament as its owner sees it, which is where hasControlKey lives. */
+  const tournamentNow = async (id) => {
+    const payload = await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: cookie } })).json();
+    return payload.tournaments.find((t) => t.id === id);
+  };
+
+  /** Mint, re-mint or withdraw a tournament's control key. Owner-only. */
+  const controlKeyFor = async (id, mode) =>
+    (
+      await fetch(`${BASE}/api/tournaments`, {
+        method: 'POST',
+        headers: JSON_POST,
+        body: JSON.stringify({ action: 'control-key', id, ...(mode ? { mode } : {}) }),
+      })
+    ).json();
 
   // ------------------------------------------------------- default closed ---
-  const before = await me();
-  ok('an account starts with no control key', before.hasControlKey === false, JSON.stringify(before.hasControlKey));
+  const before = await tournamentNow(first.id);
+  ok('a tournament starts with no control key', before.hasControlKey === false, JSON.stringify(before.hasControlKey));
   ok('and the value is not sent either', !before.controlKey, 'a key existed before it was asked for');
 
   const blank = await handshake('?key=');
@@ -215,13 +235,11 @@ try {
   );
 
   // ------------------------------------------------------------ minting ---
-  const minted = await (
-    await fetch(`${BASE}/api/account/control-key`, { method: 'POST', headers: JSON_POST, body: '{}' })
-  ).json();
-  const controlKey = minted.user.controlKey;
+  const minted = await controlKeyFor(first.id);
+  const controlKey = minted.controlKey;
   ok('minting returns a control key', Boolean(controlKey) && controlKey.length > 20, String(controlKey));
   ok('which is not the session key', controlKey !== sessionKey, 'THE TWO KEYS ARE THE SAME');
-  ok('and the account now reports having one', (await me()).hasControlKey === true);
+  ok('and the tournament now reports having one', (await tournamentNow(first.id)).hasControlKey === true);
 
   const junk = await handshake('?key=not-a-real-key-at-all');
   ok('a key that names nobody is refused', statusOf(junk) === 403, String(statusOf(junk)));
@@ -234,7 +252,9 @@ try {
   const hello = await a.next((m) => m.type === 'hello');
   ok('the server says hello first', Boolean(hello), JSON.stringify(a.seen[0]));
   ok('and names a protocol version', hello?.protocol === 1, String(hello?.protocol));
-  ok('and names the account', hello?.session === 'boss', String(hello?.session));
+  // The channel belongs to a production, so what it names is the tournament -
+  // which is also the thing an operator with two decks needs told apart.
+  ok('and names the production', hello?.session === 'Companion', String(hello?.session));
 
   /*
    * State on connect is load-bearing, not a nicety: Companion's module blanks
@@ -257,11 +277,11 @@ try {
    * leak.
    */
   const graphicState = async () =>
-    (await (await fetch(`${BASE}/api/graphic?bus=preview`, { headers: { Cookie: cookie } })).json()).state;
+    (await (await fetch(on(first.id, '/api/graphic?bus=preview'), { headers: { Cookie: cookie } })).json()).state;
   const graphicAir = async () =>
-    (await (await fetch(`${BASE}/api/graphic?bus=program`, { headers: { Cookie: cookie } })).json()).state;
+    (await (await fetch(on(first.id, '/api/graphic?bus=program'), { headers: { Cookie: cookie } })).json()).state;
   const winnerAir = async () =>
-    (await (await fetch(`${BASE}/api/winner?bus=program`, { headers: { Cookie: cookie } })).json()).state;
+    (await (await fetch(on(first.id, '/api/winner?bus=program'), { headers: { Cookie: cookie } })).json()).state;
 
   a.clear();
   a.send('scoreboard.show');
@@ -298,7 +318,7 @@ try {
   ok('a trailing CRLF is tolerated', (await graphicState()).anim.visible === false, 'CRLF broke the op');
 
   // ---- swap sides / swap names, which are the post-match buttons ----
-  await fetch(`${BASE}/api/graphic?bus=preview`, {
+  await fetch(on(first.id, '/api/graphic?bus=preview'), {
     method: 'POST',
     headers: JSON_POST,
     body: JSON.stringify({
@@ -333,7 +353,7 @@ try {
   const withPlayers = await graphicState();
   withPlayers.left.players[0] = { ...withPlayers.left.players[0], name: 'low', acs: 100 };
   withPlayers.left.players[1] = { ...withPlayers.left.players[1], name: 'high', acs: 300 };
-  await fetch(`${BASE}/api/graphic?bus=preview`, { method: 'POST', headers: JSON_POST, body: JSON.stringify({ state: withPlayers }) });
+  await fetch(on(first.id, '/api/graphic?bus=preview'), { method: 'POST', headers: JSON_POST, body: JSON.stringify({ state: withPlayers }) });
 
   a.clear();
   a.send('scoreboard.sort');
@@ -348,7 +368,7 @@ try {
    */
   a.clear();
   const quiet = await graphicState();
-  await fetch(`${BASE}/api/graphic?bus=preview`, {
+  await fetch(on(first.id, '/api/graphic?bus=preview'), {
     method: 'POST',
     headers: JSON_POST,
     body: JSON.stringify({ state: { ...quiet, preset: { ...quiet.preset, panelOpacity: 0.42 } } }),
@@ -358,7 +378,7 @@ try {
 
   a.clear();
   const loud = await graphicAir();
-  await fetch(`${BASE}/api/graphic?bus=program`, {
+  await fetch(on(first.id, '/api/graphic?bus=program'), {
     method: 'POST',
     headers: JSON_POST,
     body: JSON.stringify({ state: { ...loud, left: { ...loud.left, teamName: 'RENAMED' } } }),
@@ -380,7 +400,7 @@ try {
 
   a.clear();
   const toStage = await graphicState();
-  await fetch(`${BASE}/api/graphic?bus=preview`, {
+  await fetch(on(first.id, '/api/graphic?bus=preview'), {
     method: 'POST',
     headers: JSON_POST,
     body: JSON.stringify({ state: { ...toStage, map: 'A-STAGED-MAP' } }),
@@ -393,11 +413,11 @@ try {
 
   // -------------------------------------------------------------- winner ---
   const winnerState = async () =>
-    (await (await fetch(`${BASE}/api/winner?bus=preview`, { headers: { Cookie: cookie } })).json()).state;
+    (await (await fetch(on(first.id, '/api/winner?bus=preview'), { headers: { Cookie: cookie } })).json()).state;
 
   // Auto-advance would walk the stage out from under the assertions.
   const w0 = await winnerState();
-  await fetch(`${BASE}/api/winner?bus=preview`, {
+  await fetch(on(first.id, '/api/winner?bus=preview'), {
     method: 'POST',
     headers: JSON_POST,
     body: JSON.stringify({ state: { ...w0, seq: { ...w0.seq, autoAdvance: false } } }),
@@ -488,7 +508,7 @@ try {
 
   // ---------------------------------------------------------- agent select ---
   const selectState = async () =>
-    (await (await fetch(`${BASE}/api/select?bus=preview`, { headers: { Cookie: cookie } })).json()).state;
+    (await (await fetch(on(first.id, '/api/select?bus=preview'), { headers: { Cookie: cookie } })).json()).state;
 
   a.clear();
   a.send('select.show');
@@ -597,17 +617,21 @@ try {
   ok('and only that graphic comes back', !a.seen.some((m) => m.type === 'state' && m.graphic !== 'winner'), 'sent more than asked');
 
   // ----------------------------------------------------------- isolation ---
-  const second = await (
-    await fetch(`${BASE}/api/account/control-key`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie2 },
-      body: '{}',
-    })
-  ).json();
-  const b = open(second.user.controlKey);
+  /*
+   * A second PRODUCTION, not a second person.
+   *
+   * What has to hold is that two desks driving two competitions never see each
+   * other, and a production is a tournament now - so two accounts sharing one
+   * tournament would be the wrong shape entirely: they are supposed to see the
+   * same board. One owner with two tournaments is both the real operator case
+   * and the one where a leak would actually be a leak.
+   */
+  const secondTournament = await makeTournament(BASE, cookie, 'Somebody else');
+  const second = await controlKeyFor(secondTournament.id);
+  const b = open(second.controlKey);
   await b.ready;
   await b.next((m) => m.type === 'hello');
-  ok('a second account gets its own channel', b.socket.readyState === WebSocket.OPEN);
+  ok('a second production gets its own channel', b.socket.readyState === WebSocket.OPEN);
 
   /*
    * Wait for all three of B's own connect snapshots before clearing.
@@ -621,9 +645,10 @@ try {
     await b.next((m) => m.type === 'state' && m.graphic === graphic);
   }
 
-  // Account A's scoreboard says RENAMED by now; B's says nothing of the sort.
+  // The first production's scoreboard says RENAMED by now; B's says nothing of
+  // the sort.
   const bOwnBoard = b.seen.find((m) => m.type === 'state' && m.graphic === 'scoreboard');
-  ok('and its own board is not the first account’s', bOwnBoard?.scoreboard_left !== 'RENAMED', String(bOwnBoard?.scoreboard_left));
+  ok('and its own board is not the first production’s', bOwnBoard?.scoreboard_left !== 'RENAMED', String(bOwnBoard?.scoreboard_left));
 
   b.clear();
   a.clear();
@@ -631,14 +656,14 @@ try {
   await a.next((m) => m.type === 'ok');
   await wait(400);
   ok(
-    'one account’s press never reaches another’s channel',
+    'one production’s press never reaches another’s channel',
     !b.seen.some((m) => m.type === 'state'),
     JSON.stringify(b.seen.map((m) => `${m.type}:${m.graphic ?? ''}`)),
   );
   // Content, not just traffic - the check that would survive a rewrite of when
   // pushes happen.
   ok(
-    'and no message on it has ever carried the other account’s data',
+    'and no message on it has ever carried the other production’s data',
     !JSON.stringify(b.seen).includes('RENAMED'),
     'CROSS-TENANT LEAK',
   );
@@ -646,27 +671,28 @@ try {
   b.clear();
   b.send('scoreboard.hide');
   await b.next((m) => m.type === 'ok');
-  ok('and the two graphics are different', (await graphicState()).anim.visible === true, 'the second account moved the first’s graphic');
+  ok('and the two graphics are different', (await graphicState()).anim.visible === true, 'the second production moved the first’s graphic');
 
   // -------------------------------------------------------- key rotation ---
   const held = a.socket;
-  await fetch(`${BASE}/api/account/control-key`, { method: 'POST', headers: JSON_POST, body: '{}' });
+  const rotated = await controlKeyFor(first.id);
   await wait(600);
   ok('rotating the key drops the channel it opened', held.readyState === WebSocket.CLOSED || Boolean(a.closed), String(held.readyState));
 
   const stale = await handshake(`?key=${controlKey}`);
   ok('and the old key no longer opens one', statusOf(stale) === 403, String(statusOf(stale)));
-  ok('the other account is untouched', b.socket.readyState === WebSocket.OPEN, 'rotation dropped somebody else');
+  ok('the other production is untouched', b.socket.readyState === WebSocket.OPEN, 'rotation dropped somebody else');
 
   // ---- withdrawing it entirely ----
-  const fresh = (await (await fetch(`${BASE}/api/account/me`, { headers: { Cookie: cookie } })).json()).user.controlKey;
-  await fetch(`${BASE}/api/account/control-key`, { method: 'POST', headers: JSON_POST, body: JSON.stringify({ action: 'clear' }) });
-  ok('withdrawing leaves no key', (await me()).hasControlKey === false);
+  const fresh = rotated.controlKey;
+  ok('the rotation handed back a different key', Boolean(fresh) && fresh !== controlKey, 'rotation reissued the same key');
+  await controlKeyFor(first.id, 'clear');
+  ok('withdrawing leaves no key', (await tournamentNow(first.id)).hasControlKey === false);
   const withdrawn = await handshake(`?key=${fresh}`);
   ok('and the withdrawn key is refused', statusOf(withdrawn) === 403, String(withdrawn));
 
   // ------------------------------------------------------- cross-site ---
-  const bKey = second.user.controlKey;
+  const bKey = second.controlKey;
   const foreign = await handshake(`?key=${bKey}`, 'Origin: http://evil.example\r\n');
   ok('an upgrade from another site is refused', statusOf(foreign) === 403, String(statusOf(foreign)));
 

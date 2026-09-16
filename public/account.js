@@ -239,11 +239,51 @@ function paintAccount() {
  */
 let companionTablesBuilt = false;
 
+/**
+ * The control key of the tournament on screen, as far as this page knows it.
+ *
+ * Two fields rather than one, because the server hands the key itself back only
+ * from the mint that made it - it is not in the tournament list, deliberately,
+ * so that a value which operates the desk does not ride along in a fetch every
+ * page load makes. So `has` survives a reload and `value` does not, and the
+ * panel says so rather than showing an empty URL.
+ */
+let companionKey = { id: '', has: false, value: '' };
+
+/** Which tournament the Account tab is talking about. The same one the key row shows. */
+const hereTournament = () => SESSION_ID || me?.sessions[0]?.id || '';
+
+/**
+ * Ask which tournament holds a control key.
+ *
+ * `/api/account/me` cannot answer this any more: a key belongs to a production,
+ * not to a person, and `sessions` carries only what every member may see.
+ */
+async function loadCompanion() {
+  const id = hereTournament();
+  if (!id) {
+    companionKey = { id: '', has: false, value: '' };
+    return;
+  }
+  try {
+    const payload = await (await fetch('/api/tournaments')).json();
+    const found = (payload.tournaments ?? []).find((entry) => entry.id === id);
+    // A mint earlier in this page's life still holds the value; a reload does not.
+    companionKey = {
+      id,
+      has: Boolean(found?.hasControlKey),
+      value: companionKey.id === id ? companionKey.value : '',
+    };
+  } catch {
+    /* leave what we had; the panel is readable either way */
+  }
+}
+
 function paintCompanion() {
   if (!els.companionPanel) return;
 
   const enabled = me.companion?.enabled !== false;
-  const has = Boolean(me.user.hasControlKey);
+  const has = companionKey.has;
 
   els.companionIntro.textContent = enabled
     ? 'Drive the transport from a stream deck, and light the buttons up with what is actually on air. ' +
@@ -251,13 +291,27 @@ function paintCompanion() {
     : 'An administrator has switched the control channel off on this server, so this key will not connect. ' +
       'It is kept, and starts working again the moment the switch goes back on.';
 
+  /*
+   * A key that exists but is not in hand shows the buttons and no URL.
+   *
+   * Reloading the page loses the value - the server only ever hands it back
+   * once, from the mint - so the URL block is hidden and Copy with it, because
+   * a Copy button beside a dash copies a dash.
+   */
+  const inHand = has && Boolean(companionKey.value);
   els.companionOff.hidden = has;
-  els.companionOn.hidden = !has;
-  els.companionCopy.hidden = !has;
+  els.companionOn.hidden = !inHand;
+  els.companionCopy.hidden = !inHand;
   els.companionClear.hidden = !has;
   els.companionNew.textContent = has ? 'Replace the key' : 'Create a control key';
 
-  if (has && me.user.controlKey) {
+  if (has && !inHand) {
+    els.companionIntro.textContent =
+      'This tournament has a control key. It is only shown once, when it is made - if you no longer ' +
+      'have it, replace it below and re-paste the new URL into Companion.';
+  }
+
+  if (inHand) {
     /*
      * Built from the page's own location rather than a value from the server.
      * The dashboard is already open on the address that works from here -
@@ -266,7 +320,7 @@ function paintCompanion() {
      */
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const path = me.companion?.path ?? '/api/companion';
-    els.companionUrl.textContent = `${scheme}://${window.location.host}${path}?key=${me.user.controlKey}`;
+    els.companionUrl.textContent = `${scheme}://${window.location.host}${path}?key=${companionKey.value}`;
   }
 
   if (!companionTablesBuilt) {
@@ -452,34 +506,42 @@ els.companionCopy.addEventListener('click', async () => {
   }
 });
 
+/*
+ * Minting and withdrawing are owner-only actions on the TOURNAMENT, not on the
+ * account - a control key drives one production's desk, and an account no
+ * longer has one at all. So both buttons name the tournament the page is
+ * looking at, the same one the OBS key row above shows.
+ */
 els.companionNew.addEventListener('click', async () => {
   // Only warns when there is something to break. Making a first key breaks
   // nothing, and a confirmation on it would just be noise.
-  if (me?.user?.hasControlKey) {
+  if (companionKey.has) {
     const warning =
       'Replace the control key?\n\nAny stream deck using the old one stops working at once, and disconnects now. Your OBS sources are not affected.';
     if (!window.confirm(warning)) return;
   }
 
   try {
-    const payload = await post('/api/account/control-key', {});
-    me.user = payload.user;
+    const id = hereTournament();
+    if (!id) throw new Error('There is no tournament to make a key for.');
+    const payload = await post('/api/tournaments', { action: 'control-key', id });
+    companionKey = { id, has: Boolean(payload.tournament?.hasControlKey), value: payload.controlKey ?? '' };
     paintCompanion();
-    await refreshAccount();
-    toast(payload.user.hasControlKey ? 'Control key ready - paste the URL into Companion' : 'Control key made');
+    toast('Control key ready - paste the URL into Companion');
   } catch (error) {
     toast(error.message);
   }
 });
 
 els.companionClear.addEventListener('click', async () => {
-  if (!window.confirm('Remove the control key?\n\nAnything connected now is disconnected, and nothing can drive your graphics remotely until you make a new one.')) return;
+  if (!window.confirm('Remove the control key?\n\nAnything connected now is disconnected, and nothing can drive these graphics remotely until you make a new one.')) return;
 
   try {
-    const payload = await post('/api/account/control-key', { action: 'clear' });
-    me.user = payload.user;
+    const id = hereTournament();
+    if (!id) throw new Error('There is no tournament to remove a key from.');
+    const payload = await post('/api/tournaments', { action: 'control-key', id, mode: 'clear' });
+    companionKey = { id, has: Boolean(payload.tournament?.hasControlKey), value: '' };
     paintCompanion();
-    await refreshAccount();
     toast('Control key removed');
   } catch (error) {
     toast(error.message);
@@ -934,9 +996,14 @@ void fetch('/api/auth/state')
   })
   .catch(() => {});
 
-void account().then((data) => {
+void account().then(async (data) => {
   if (!data) return; // not signed in; the server has already redirected
   me = data;
   paintTopbar();
   paintAccount();
+  // Whether this production holds a control key is a second fetch, because it
+  // is a fact about the tournament rather than about the account. The panel
+  // paints twice rather than blocking the whole tab on it.
+  await loadCompanion();
+  paintCompanion();
 });

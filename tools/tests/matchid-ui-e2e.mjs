@@ -14,6 +14,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -99,12 +101,14 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const key = (await login.json()).user.sessionKey;
+  /*
+   * The key comes off a tournament now, not off the login. An account has none,
+   * so signing in and reading `user.sessionKey` gets undefined - and the
+   * webhook this whole suite is about would be posted to `key=undefined`. The
+   * tournament has to exist first, which is the real order of operations rather
+   * than setup noise.
+   */
+  const { key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Match id panel');
 
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1500, height: 1100 } });

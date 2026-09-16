@@ -16,6 +16,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { grantCapability, makeTournament, openAsAdmin, signIn } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -61,6 +63,21 @@ try {
       await wait(250);
     }
   }
+
+  /*
+   * A production is a tournament now, and an account has no key of its own - so
+   * there is nothing for this dashboard to show until one exists. A brand-new
+   * administrator signing in is on no tournament at all and gets 403 "No such
+   * session." from every graphics route, which is the real first-run state and
+   * is tournament-ui-e2e's subject. This suite is about everything downstream
+   * of having one, so it is made over the API and the browser starts from there.
+   */
+  const { cookie: bossCookie, tournamentId: showId, key: showKey } = await openAsAdmin(
+    BASE,
+    'boss',
+    'a-long-enough-password',
+    'Main show',
+  );
 
   browser = await chromium.launch();
   const context = await browser.newContext();
@@ -269,7 +286,27 @@ try {
   await page.waitForSelector('#acc-key', { timeout: 4000 });
   const shownKey = await page.textContent('#acc-key');
   ok('the account tab shows the key', obsUrl.includes(shownKey), `${shownKey} vs ${obsUrl}`);
-  ok('the access list explains itself when alone', (await page.textContent('#acc-grants')).includes('no other accounts'));
+  /*
+   * And it is the TOURNAMENT's key, not the account's. The panel is still
+   * headed "Your OBS key" but there is no such thing any more - it shows the
+   * key of whichever production the page is looking at, so this asserts the
+   * identity rather than just that something key-shaped is printed.
+   */
+  ok('and it is the key of the tournament on screen', shownKey === showKey, `${shownKey} vs ${showKey}`);
+  /*
+   * Access moved, so this assertion did too.
+   *
+   * It used to read "no other accounts", because a production was an account
+   * and who may operate it was a list of grants held on me. Membership belongs
+   * to the tournament now, so this panel's job is to say where the list went -
+   * and an operator who cannot find the Access tab is exactly the failure worth
+   * a test.
+   */
+  ok(
+    'the account tab sends you to the Tournament page for access',
+    (await page.textContent('#acc-grants')).includes('Tournament page'),
+    await page.textContent('#acc-grants'),
+  );
 
   // --------------------------------------------------------------- admin ---
   await page.click('.tab[data-tab="admin"]');
@@ -281,14 +318,65 @@ try {
   ok('an admin can make an account from the UI', (await page.locator('.admin-row').count()) === 2);
   ok('health rendered', (await page.textContent('#adm-health')).includes('Node'));
 
-  // The new account should appear in the access list without a reload.
-  await page.click('.tab[data-tab="account"]');
-  await page.waitForFunction(() => document.querySelectorAll('.access-row').length === 1, null, { timeout: 6000 });
-  ok('the new account is grantable at once', (await page.locator('.access-row').count()) === 1);
+  // ------------------------------------------------------------- access ---
+  /*
+   * The grant moved, so this block did.
+   *
+   * It used to be a row on the Account tab, because a production was an account
+   * and "who can operate my graphics" was a list of grants held on me. It is
+   * membership on the tournament now - the same three levels meaning the same
+   * three things, hung off the thing being shared instead of off a person.
+   *
+   * The reload is worth flagging rather than hiding. The old panel repainted
+   * the moment an admin made an account, and that was asserted ("grantable at
+   * once") because the obvious next move is to share a production with the
+   * person you just created. The Tournament page builds its Add list from the
+   * `grantable` array of the single /api/account/me it fetched at boot and
+   * never refetches it, so an account made afterwards does not appear until the
+   * page is reloaded. The assertion is kept and the reload is explicit, because
+   * that is a gap in the page rather than in this suite.
+   */
+  await page.reload();
+  await page.waitForSelector('#whoami:not([hidden])', { timeout: 8000 });
+  await page.click('.rail-item[data-tab="tournament"]');
+  await page.waitForSelector('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]', { timeout: 8000 });
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
+  await page.waitForSelector('#tou-members .access-row', { timeout: 6000 });
+  ok('the owner is on the members list', (await page.textContent('#tou-members')).includes('boss'));
 
-  // Grant editor, and check the second account sees it.
-  await page.locator('.access-row .btn', { hasText: 'Editor' }).click();
-  await page.waitForTimeout(500);
+  const addable = await page.$$eval('#tou-add-who option', (nodes) => nodes.map((n) => n.textContent));
+  ok('the new account can be added to the production', addable.includes('operator'), JSON.stringify(addable));
+
+  await page.selectOption('#tou-add-who', { label: 'operator' });
+  await page.selectOption('#tou-add-level', 'editor');
+  await page.click('#tou-add-go');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('#tou-members .access-row')].some((row) => row.textContent.includes('operator')),
+    null,
+    { timeout: 6000 },
+  );
+  ok('adding them as an editor takes', true);
+
+  /*
+   * And a second production, this one the operator's own.
+   *
+   * Two of them, for two reasons. The selector only appears when there is
+   * somewhere to go - one entry and the topbar hides it - and `is-guest` is now
+   * worth asserting in BOTH directions: it used to mean "this is not my
+   * account" and means "I do not own this tournament", so an owner on their own
+   * must come out clean or the border becomes permanent and stops being read.
+   *
+   * Made after the membership above on purpose. With no ?session= the server
+   * opens the newest tournament the caller can see, and the bare /api/media
+   * fetch further down depends on which one that is.
+   */
+  const roster = await fetch(`${BASE}/api/account/me`, { headers: { Cookie: bossCookie } }).then((r) => r.json());
+  const operatorId = roster.grantable?.find((entry) => entry.username === 'operator')?.id;
+  ok('the new account is visible over the API too', Boolean(operatorId), JSON.stringify(roster.grantable));
+  await grantCapability(BASE, bossCookie, operatorId, 'manageTournaments');
+  const { cookie: opCookie } = await signIn(BASE, 'operator', 'another-long-password');
+  const ownShow = await makeTournament(BASE, opCookie, 'Operator own show');
+  ok('the operator has a production of their own', Boolean(ownShow.key));
 
   const second = await browser.newContext();
   const opPage = await second.newPage();
@@ -302,9 +390,22 @@ try {
 
   const options = await opPage.$$eval('#session-target option', (nodes) => nodes.map((n) => n.textContent));
   ok('the shared production appears in the selector', options.length === 2, JSON.stringify(options));
-  ok('the selector marks your own', options.some((text) => text.includes('(yours)')), JSON.stringify(options));
+  /*
+   * "(yours)" is gone with the idea it named - nobody owns a production by
+   * owning an account. Every entry is a tournament and what differs is the
+   * level you hold on it, so that is what the selector prints.
+   */
+  ok('the selector says what you are on each', options.some((text) => text.includes('- owner')), JSON.stringify(options));
+  ok('and names the shared one as an editor', options.some((text) => text.includes('Main show - editor')), JSON.stringify(options));
 
-  await opPage.selectOption('#session-target', { label: 'boss - editor' });
+  // The half of the redefinition a suite can lose silently: their own show,
+  // which is what opens by default, must NOT be marked.
+  ok(
+    'an owner on their own production is not a guest',
+    !(await opPage.evaluate(() => document.body.classList.contains('is-guest'))),
+  );
+
+  await opPage.selectOption('#session-target', { label: 'Main show - editor' });
   await opPage.waitForURL((url) => url.searchParams.has('session'), { timeout: 6000 });
   await opPage.waitForSelector('#whoami:not([hidden])', { timeout: 6000 });
   ok('operating a shared production marks the page', await opPage.evaluate(() => document.body.classList.contains('is-guest')));
@@ -342,8 +443,28 @@ try {
   const listed = await page.evaluate(() => fetch("/api/media").then((r) => r.json()));
   ok("the upload is listed for its owner", listed.media?.length === 1, JSON.stringify(listed));
 
+  /*
+   * A different PRODUCTION does not see it, which is the modern form of "a
+   * different account does not".
+   *
+   * The list is filtered on two axes now - files claimed by you, plus files
+   * claimed by the tournament you are on - and that is deliberate: a colleague
+   * on the same tournament is SUPPOSED to see the logo you uploaded to it, or
+   * the picker hides artwork from the person you are running the show with. So
+   * the isolation that is still real is between productions, and this asks for
+   * it from an account that is neither the uploader nor a member of the
+   * tournament the file was claimed by. The bare fetch carries no ?session=, so
+   * it lands on the operator's own show - see the note on why that one is newer.
+   */
   const otherList = await opPage.evaluate(() => fetch("/api/media").then((r) => r.json()));
-  ok("another account does not see it", otherList.media?.length === 0, JSON.stringify(otherList));
+  ok("another production does not see it", otherList.media?.length === 0, JSON.stringify(otherList));
+
+  // And the other side of that same rule, so the filter cannot quietly become
+  // "nobody sees anything": on the tournament it was uploaded to, the editor
+  // sharing it does.
+  const sharedList = await opPage.evaluate((id) =>
+    fetch(`/api/media?session=${id}`).then((r) => r.json()), showId);
+  ok("but an editor on the tournament it belongs to does", sharedList.media?.length === 1, JSON.stringify(sharedList));
 
   const formShaped = await page.evaluate(() =>
     fetch("/api/media", { method: "POST", headers: { "Content-Type": "text/plain" }, body: "x" }).then((r) => r.status),

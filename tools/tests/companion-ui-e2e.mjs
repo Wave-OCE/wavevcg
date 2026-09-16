@@ -20,6 +20,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -81,6 +83,15 @@ try {
       await wait(250);
     }
   }
+
+  /*
+   * A production first. The control key belongs to a tournament now, so an
+   * account that is on none has nothing to mint a key for - and the panel
+   * correctly offers nothing. Made over HTTP before the browser opens, because
+   * this suite is about the Companion panel rather than about the Tournament
+   * page that would otherwise have to be driven to get here.
+   */
+  const { key: obsKey } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Companion UI');
 
   browser = await chromium.launch();
   const context = await browser.newContext();
@@ -171,6 +182,13 @@ try {
 
   const controlKey = new URL(url).searchParams.get('key');
   const sessionKey = (await page.textContent('#acc-key')).trim();
+  /*
+   * Both keys now belong to the same tournament and sit on the same panel,
+   * which is exactly why confusing them is the likely mistake - so the check
+   * is against the OBS key the server actually minted for this production,
+   * not merely against whatever text the page happens to show.
+   */
+  ok('the panel shows this tournament’s OBS key', sessionKey === obsKey, sessionKey);
   ok('and carries a key that is not the OBS key', controlKey && controlKey !== sessionKey, 'THE PANEL SHOWS THE SESSION KEY');
 
   // ------------------------------------- the page against the real wire ---

@@ -12,6 +12,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { makeTournament, openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -115,14 +117,20 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const me = (await login.json()).user;
-  const key = me.sessionKey;
+  /*
+   * The key belongs to a tournament, so one has to exist before a game client
+   * has anything to post a lobby to. An account carries no key at all now.
+   */
+  const { cookie, tournamentId, key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Lobby');
+
+  /*
+   * Every signed-in read and write names the production it means. Without
+   * `?session=` the server opens the newest tournament this account can see,
+   * and the isolation check below makes a second one - so a bare URL would
+   * start answering about that one instead.
+   */
+  const on = (pathAndQuery) =>
+    `${BASE}${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}session=${encodeURIComponent(tournamentId)}`;
 
   const hook = (body, k = key) =>
     fetch(`${BASE}/api/lobby?key=${encodeURIComponent(k)}`, {
@@ -132,7 +140,7 @@ try {
     });
 
   const control = (action) =>
-    fetch(`${BASE}/api/lobby/control`, {
+    fetch(on('/api/lobby/control'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({ action }),
@@ -200,7 +208,7 @@ try {
   await hook(order('enemies', '{1:"Sage",2:"Neon"}'));
 
   // ------------------------------------------------ nothing is on air yet ---
-  const select = await (await fetch(`${BASE}/api/select`, { headers: { Cookie: cookie } })).json();
+  const select = await (await fetch(on('/api/select'), { headers: { Cookie: cookie } })).json();
   ok(
     'the lobby feed did not touch agent select',
     (select.state?.slots ?? []).every((slot) => !slot.riotId),
@@ -234,7 +242,7 @@ try {
   );
 
   // The catalogue is a network fetch, so assert what is true either way.
-  const cat = await (await fetch(`${BASE}/api/valorant-assets`, { headers: { Cookie: cookie } })).json();
+  const cat = await (await fetch(on('/api/valorant-assets'), { headers: { Cookie: cookie } })).json();
   const haveCatalogue = Boolean(cat?.agents?.length);
   if (haveCatalogue) {
     ok(
@@ -284,7 +292,7 @@ try {
   ok('and lists the ones that work', /stage/.test((await badAction.json()).error?.hint ?? ''));
 
   // ------------------------------------------------------------- SSE ---
-  const frames = await collect(`${BASE}/api/events`, 'lobby', 700, async () => {
+  const frames = await collect(on('/api/events'), 'lobby', 700, async () => {
     await hook(roster(0, 'Live#AAA', 'Sarge', true));
   }, { Cookie: cookie });
   ok('the lobby channel replays on connect', frames.length >= 1, String(frames.length));
@@ -294,25 +302,23 @@ try {
     JSON.stringify(frames.at(-1)?.state?.incoming?.seats?.[0]),
   );
 
-  // ------------------------------------------------- session isolation ---
-  const other = await fetch(`${BASE}/api/admin/users`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ action: 'create', username: 'second', password: 'another-long-password' }),
-  });
-  ok('a second account was made for the isolation check', other.status === 200, String(other.status));
-
-  const login2 = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'second', password: 'another-long-password' }),
-  });
-  const key2 = (await login2.json()).user?.sessionKey;
+  // ---------------------------------------------- production isolation ---
+  /*
+   * A second TOURNAMENT, not a second account.
+   *
+   * What must not leak is one competition's lobby into another's export, and a
+   * production is a tournament now - two operators on the same tournament are
+   * meant to see the same board, so making the second one an account would
+   * have tested the opposite of the requirement.
+   */
+  const second = await makeTournament(BASE, cookie, 'Somebody else');
+  const key2 = second.key;
+  ok('a second production was made for the isolation check', Boolean(key2), JSON.stringify(second));
   ok('and it has its own key', Boolean(key2) && key2 !== key);
 
   await hook(roster(0, 'Theirs#ZZZ', 'Sarge', true), key2);
   const mine = await exported();
-  ok('one session\'s lobby does not reach another\'s export', !JSON.stringify(mine).includes('Theirs#ZZZ'));
+  ok("one production's lobby does not reach another's export", !JSON.stringify(mine).includes('Theirs#ZZZ'));
 
   // ------------------------------------------------------- the log ---
   ok('no session key reached the log', !log.includes(key), 'key found in stdout');

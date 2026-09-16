@@ -19,6 +19,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { makeTournament, openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -99,13 +101,17 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const key = (await login.json()).user.sessionKey;
+  /*
+   * A key names a TOURNAMENT now, not the person who signed in, so the suite
+   * has to make one before it has anything to point an OBS source at. The
+   * login response carries no key at all any more.
+   *
+   * Only one tournament exists on this server, so every cookie-authenticated
+   * request below lands on it without saying `?session=` - which is the
+   * default a dashboard gets on a first load, and the state the OBS
+   * assertions further down are contrasted against.
+   */
+  const { cookie, key, tournamentId } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Bus routes');
   const H = { 'Content-Type': 'application/json', Cookie: cookie };
 
   const get = async (route) => (await (await fetch(`${BASE}${route}`, { headers: { Cookie: cookie } })).json());
@@ -285,6 +291,55 @@ try {
     ok('AND DOES NOT REACH THE SCOREBOARD ON AIR', (await get('/api/graphic')).state.map === airMapBefore, (await get('/api/graphic')).state.map);
     ok('nor the winner on air', (await get('/api/winner')).state.mapName !== 'Icebox', (await get('/api/winner')).state.mapName);
     ok('but agent select gets it on both, being the feed’s own', (await get('/api/select')).state.mapName === 'Icebox' && (await get('/api/select?bus=preview')).state.mapName === 'Icebox');
+  }
+
+  // ------------------------------------------- which production, on the wire ---
+  /*
+   * `?session=` names a TOURNAMENT now rather than an account, and on a
+   * cookie-authenticated request it is the only thing that says which
+   * production is being edited. Worth its own assertions here because the
+   * failure it guards against is a write landing on the wrong board, which is
+   * invisible until somebody takes it to air on a stream that was never meant
+   * to carry it.
+   *
+   * The second tournament is deliberately made LAST. With no `?session=` the
+   * server answers for the newest production the account can see, so creating
+   * it any earlier would have quietly moved every unqualified request above
+   * onto an empty board and proved nothing.
+   */
+  {
+    const airBefore = (await get('/api/graphic')).state.map;
+    const second = await makeTournament(BASE, cookie, 'The other production');
+
+    ok(
+      'naming this tournament reads the board the suite has been driving',
+      (await get(`/api/graphic?session=${tournamentId}`)).state.map === airBefore,
+      (await get(`/api/graphic?session=${tournamentId}`)).state.map,
+    );
+
+    const other = (await get(`/api/graphic?session=${second.id}&bus=program`)).state;
+    await post(`/api/graphic?session=${second.id}&bus=program`, { state: { ...other, map: 'OTHER-PRODUCTION' } });
+    ok(
+      'the other production takes its own write',
+      (await get(`/api/graphic?session=${second.id}`)).state.map === 'OTHER-PRODUCTION',
+      (await get(`/api/graphic?session=${second.id}`)).state.map,
+    );
+    ok(
+      "AND THIS PRODUCTION'S AIR NEVER MOVED",
+      (await get(`/api/graphic?session=${tournamentId}`)).state.map === airBefore,
+      (await get(`/api/graphic?session=${tournamentId}`)).state.map,
+    );
+
+    // And the key follows the tournament rather than the person who made it:
+    // one account holds both of these, and the OBS source still gets exactly
+    // the production whose key it carries.
+    const seen = await collect(`${BASE}/api/graphic/events?key=${encodeURIComponent(second.key)}`, ['graphic'], 500);
+    ok(
+      'an OBS URL carrying the other key renders the other production',
+      seen[0]?.data?.state?.map === 'OTHER-PRODUCTION',
+      seen[0]?.data?.state?.map,
+    );
+    ok('no key reached the log', !log.includes(second.key), 'KEY LEAKED');
   }
 
   // --------------------------------------------------------------- the log ---

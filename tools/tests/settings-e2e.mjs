@@ -10,6 +10,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { addMember, makeTournament } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -48,9 +50,11 @@ server.stderr.on('data', (c) => (log += c));
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// `cookie()` reads the jar out, because the shared setup helpers in
+// harness.mjs take a cookie string rather than an agent.
 function agent() {
   let cookie = '';
-  return async (route, options = {}) => {
+  const call = async (route, options = {}) => {
     const response = await fetch(`${BASE}${route}`, {
       ...options,
       redirect: 'manual',
@@ -69,6 +73,8 @@ function agent() {
     }
     return { status: response.status, json, text };
   };
+  call.cookie = () => cookie;
+  return call;
 }
 
 const json = (body) => ({
@@ -91,6 +97,17 @@ try {
   const anon = agent();
   await boss('/api/auth/login', json({ username: 'boss', password: 'a-long-enough-password' }));
 
+  /*
+   * A production to look at, before any lookup will answer.
+   *
+   * The switches themselves are server-wide and do not need one - but the
+   * routes they gate are the match lookups, and those sit behind the session
+   * gate. An account on no tournament is refused with "No such session." before
+   * the switch is ever consulted, so without this every assertion below about a
+   * tracker refusal would be passing on the wrong 403.
+   */
+  const tournament = await makeTournament(BASE, boss.cookie(), 'Settings');
+
   // -------------------------------------------------------- defaults on ---
   let r = await boss('/api/admin/settings');
   ok('settings read', r.status === 200, JSON.stringify(r.json));
@@ -111,6 +128,20 @@ try {
 
   const op = agent();
   await op('/api/auth/login', json({ username: 'operator', password: 'another-long-password' }));
+
+  /*
+   * The second account works ON the competition, as an editor.
+   *
+   * It used to need nothing but a login, because an account was a production.
+   * It now needs to be a member of one, and an editor rather than a viewer,
+   * because two of the assertions below are about what happens once a request
+   * is PAST the session gate: that the watch switch refuses everybody and not
+   * just administrators, and that the tracker-login permission refuses somebody
+   * who is otherwise entitled to drive this production. A stranger would be
+   * refused earlier, for a different reason, and prove neither.
+   */
+  await addMember(BASE, boss.cookie(), tournament.id, operatorId, 'editor');
+
   r = await op('/api/admin/settings');
   ok('a non-admin cannot read the switches', r.status === 403, `got ${r.status}`);
   r = await op('/api/admin/settings', json({ settings: { watch: false } }));

@@ -13,6 +13,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -66,13 +68,13 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const cookie = (login.headers.getSetCookie?.() ?? []).map((l) => l.split(';')[0]).join('; ');
-  const key = (await login.json()).user.sessionKey;
+  /*
+   * The output page is reached with a key, and a key names a tournament rather
+   * than an account - the login response carries none any more. So one is made
+   * before anything is measured; everything below is unchanged, because what
+   * this suite is about is what a browser source paints.
+   */
+  const { cookie, key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Winner UI');
 
   browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1900, height: 1200 } });

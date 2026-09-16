@@ -9,6 +9,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { makeTournament } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -47,9 +49,11 @@ server.stderr.on('data', (c) => (log += c));
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// `cookie()` reads the jar out, because the shared setup helpers in
+// harness.mjs take a cookie string rather than an agent.
 function agent() {
   let cookie = '';
-  return async (route, options = {}) => {
+  const call = async (route, options = {}) => {
     const response = await fetch(`${BASE}${route}`, {
       ...options,
       redirect: 'manual',
@@ -68,6 +72,8 @@ function agent() {
     }
     return { status: response.status, json, text, cookie };
   };
+  call.cookie = () => cookie;
+  return call;
 }
 
 const json = (body) => ({
@@ -93,9 +99,20 @@ try {
   await boss('/api/auth/login', json({ username: 'boss', password: 'nope' }));
   await boss('/api/auth/login', json({ username: 'boss', password: PASSWORD }));
 
+  /*
+   * The key to hunt for in the buffer belongs to a TOURNAMENT now.
+   *
+   * It is taken off the session list rather than off the user, because that is
+   * the route the dashboard actually reads it from and it is the value that
+   * ends up in an OBS URL - which is the whole reason redaction exists. The
+   * leftover `user.sessionKey` field would have been the wrong string to look
+   * for: it opens nothing, so finding it in a log would prove nothing either.
+   */
+  const made = await makeTournament(BASE, boss.cookie(), 'Logging');
   let r = await boss('/api/account/me');
-  const key = r.json?.user?.sessionKey;
-  ok('got a session key to look for', typeof key === 'string' && key.length > 8);
+  const key = r.json?.sessions?.find((s) => s.id === made.id)?.sessionKey;
+  ok('got a session key to look for', typeof key === 'string' && key.length > 8, JSON.stringify(r.json?.sessions));
+  ok('and it is the tournament key OBS is given', key === made.key);
 
   await anon(`/api/graphic?key=${key}`);
   await boss('/api/graphic?bus=program', json({ state: { anim: { visible: true, cue: 3 } } }));

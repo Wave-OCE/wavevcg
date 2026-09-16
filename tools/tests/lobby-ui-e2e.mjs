@@ -15,6 +15,8 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
+import { openAsAdmin } from './harness.mjs';
+
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
@@ -71,12 +73,12 @@ try {
     }
   }
 
-  const login = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'boss', password: 'a-long-enough-password' }),
-  });
-  const key = (await login.json()).user.sessionKey;
+  /*
+   * A production before the browser opens. The hook URL the panel prints
+   * carries a TOURNAMENT's key, and an account on no tournament has no board
+   * to stage - which is a real state worth its own suite, but not this one.
+   */
+  const { key } = await openAsAdmin(BASE, 'boss', 'a-long-enough-password', 'Lobby UI');
 
   const hook = (body) =>
     fetch(`${BASE}/api/lobby?key=${encodeURIComponent(key)}`, {
