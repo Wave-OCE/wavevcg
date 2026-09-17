@@ -116,13 +116,13 @@
 
           <nav class="subtabs" data-for="tournament" aria-label="Tournament" hidden>
             <button type="button" class="subtab" data-view="tou-settings" aria-selected="true">Settings</button>
+            <button type="button" class="subtab" data-view="tou-teams" aria-selected="false">Teams</button>
+            <button type="button" class="subtab" data-view="tou-players" aria-selected="false">Players</button>
             <button type="button" class="subtab" data-view="tou-access" aria-selected="false">Access</button>
           </nav>
 
           <nav class="subtabs" data-for="global" aria-label="Global" hidden>
             <button type="button" class="subtab" data-view="ged-shared" aria-selected="true">Shared settings</button>
-            <button type="button" class="subtab" data-view="wed-teams" aria-selected="false">Team library</button>
-            <button type="button" class="subtab" data-view="sed-aliases" aria-selected="false">Player library</button>
             <button type="button" class="subtab" data-view="tracker-login-panel" aria-selected="false">tracker.gg</button>
           </nav>
 
@@ -610,8 +610,9 @@
 
       <div class="editor-grid" data-cards="winner">
         <section class="panel" id="wed-content" data-group="data"></section>
-        <!-- "wed-teams" is the Global tab's team library, also built by
+        <!-- "wed-teams" is the TOURNAMENT tab's team library, also built by
              winner-dashboard.js. These are the two sides of THIS series. -->
+
         <section class="panel" id="wed-sides" data-group="data"></section>
         <section class="panel" id="wed-seq" data-group="sequence"></section>
         <section class="panel" id="wed-audio" data-group="music"></section>
@@ -787,6 +788,23 @@
           <p class="field-help" id="tou-saved"></p>
         </section>
 
+        <!--
+          The team and player libraries, which belong to the tournament now -
+          they live in its workspace on disk, so this is where they are edited.
+
+          Still built by winner-dashboard.js and select-dashboard.js, which is
+          where that code has always been and where the graphics that consume a
+          library also live. The ids are unchanged for the same reason: they are
+          what those two modules find by getElementById.
+        -->
+        <section class="panel" id="tou-teams" hidden>
+          <section class="panel-inner" id="wed-teams"></section>
+        </section>
+
+        <section class="panel" id="tou-players" hidden>
+          <section class="panel-inner" id="sed-aliases"></section>
+        </section>
+
         <section class="panel" id="tou-access" hidden>
           <h2 class="panel-title">Access</h2>
           <p class="field-help">
@@ -811,8 +829,6 @@
     <main class="graphic-tab" id="tab-global" role="tabpanel" hidden>
       <div class="editor-grid">
         <section class="panel" id="ged-shared"></section>
-        <section class="panel" id="wed-teams"></section>
-        <section class="panel" id="sed-aliases"></section>
 
         <section class="panel" id="tracker-login-panel">
           <h2 class="panel-title">tracker.gg access</h2>

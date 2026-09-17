@@ -2721,6 +2721,55 @@ body.is-guest .topbar::after {
 /* ------------------------------------------------------------ tournament --- */
 
 /*
+ * A panel that exists only to be found by getElementById.
+ *
+ * The team and player libraries moved onto the Tournament page, but the modules
+ * that build them still find them by their old ids - so the id shell.js needs
+ * (#tou-teams) and the id the builder needs (#wed-teams) are two different
+ * elements, one inside the other. `display: contents` makes the inner one
+ * disappear from layout entirely, so the library's own children sit directly in
+ * the panel and there is no second box, no doubled padding and nothing to keep
+ * in step with .panel.
+ */
+.panel-inner {
+  display: contents;
+}
+
+/*
+ * The roster editor.
+ *
+ * A grid rather than a flex row, so the name column and the Riot ID column line
+ * up down the whole squad - reading ten players for the one whose tag is wrong
+ * is the actual job here, and ragged columns make it a hunt. The remove button
+ * is a fixed track so it does not move as names get longer.
+ */
+.roster-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: flex-start;
+}
+
+.roster-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+}
+
+/*
+ * Advisory, never enforcing - the value is still stored and still saved. Amber
+ * rather than the danger red, because nothing is broken and nothing has been
+ * refused: preview has drifted from what was expected, which is what --warn
+ * means everywhere else on this desk.
+ */
+.roster-row input.is-wrong {
+  border-color: var(--warn-edge);
+  background: var(--warn-wash);
+}
+
+/*
  * The bar above the Tournament page's cards.
  *
  * Above the editor grid rather than inside it, for the same reason the graphics

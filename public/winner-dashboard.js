@@ -17,7 +17,17 @@
 import { FONT_CHOICES } from './preset-schema.js';
 import { onState } from './live.js';
 import { mediaControl } from './media-field.js';
-import { TEAM_FIELDS, TEAM_REGIONS, EMPTY_TEAM, applyTeam, teamLabel } from './teams.js';
+import {
+  TEAM_FIELDS,
+  TEAM_REGIONS,
+  EMPTY_TEAM,
+  PLAYER_FIELDS,
+  ROSTER_LIMIT,
+  applyTeam,
+  emptyPlayer,
+  looksLikeRiotId,
+  teamLabel,
+} from './teams.js';
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
@@ -816,7 +826,7 @@ async function teamAction(body) {
  * only worth saving once it is complete - a half-typed name should not appear in
  * every dropdown on the page while it is being typed.
  */
-let draft = { id: null, ...EMPTY_TEAM };
+let draft = { id: null, ...EMPTY_TEAM, players: [] };
 
 /**
  * The one control on the form that depends on what has been typed into the rest
@@ -836,7 +846,12 @@ const syncTeamForm = () => {
 const draftFields = makeFields(() => draft, syncTeamForm);
 
 function editTeam(team) {
-  draft = team ? { ...team } : { id: null, ...EMPTY_TEAM };
+  // The roster copied, not shared: the form edits rows in place, and without
+  // this an abandoned edit would have already changed the library entry it came
+  // from - visibly, in every picker, without a save.
+  draft = team
+    ? { ...team, players: (team.players ?? []).map((p) => ({ ...p })) }
+    : { id: null, ...EMPTY_TEAM, players: [] };
   buildTeamEditor();
 }
 
@@ -899,6 +914,88 @@ function teamCard(team) {
   return card;
 }
 
+/**
+ * The roster editor.
+ *
+ * Its own container, repainted on its own, because of the note above
+ * `teamSaveBtn`: rebuilding the whole panel replaces the input being typed
+ * into, and the caret goes with it. So the text boxes write straight into
+ * `draft.players[i]` on every keystroke and repaint NOTHING, and only adding or
+ * removing a row - which changes how many boxes there are - repaints this
+ * block. The rest of the form never moves.
+ *
+ * Nothing here validates on the way in. A half-typed Riot ID is the normal
+ * state of a Riot ID being typed, so the mark below is advisory and the server
+ * is what decides: a blank is always allowed, and a malformed one is stored as
+ * typed rather than silently dropped, because a value that vanishes when you
+ * look away is worse than one that is visibly wrong.
+ */
+function rosterEditor() {
+  const rows = el('div', 'roster-rows');
+
+  const paint = () => {
+    rows.replaceChildren(
+      ...draft.players.map((player, index) => {
+        const row = el('div', 'roster-row');
+
+        for (const entry of PLAYER_FIELDS) {
+          const input = el('input', null, {
+            type: 'text',
+            spellcheck: 'false',
+            placeholder: entry.placeholder ?? '',
+            maxlength: entry.max,
+            'aria-label': `${entry.label} ${index + 1}`,
+          });
+          input.value = player[entry.key] ?? '';
+          input.addEventListener('input', () => {
+            player[entry.key] = input.value;
+            if (entry.key === 'riotId') mark(input);
+          });
+          if (entry.key === 'riotId') mark(input);
+          row.append(input);
+        }
+
+        const drop = el('button', 'btn btn-small btn-ghost', { type: 'button', title: 'Remove this player' }, '×');
+        drop.addEventListener('click', () => {
+          draft.players.splice(index, 1);
+          paint();
+        });
+        row.append(drop);
+
+        return row;
+      }),
+      draft.players.length
+        ? null
+        : el('p', 'field-help', {}, 'No players yet. A team works fine without one - this is for recognising them in a lobby.'),
+      addRow(),
+    );
+  };
+
+  /** Advisory, never enforcing. See the note above. */
+  const mark = (input) => {
+    const value = input.value.trim();
+    input.classList.toggle('is-wrong', Boolean(value) && !looksLikeRiotId(value));
+    input.title = value && !looksLikeRiotId(value) ? 'That does not look like GameName#Tag' : '';
+  };
+
+  function addRow() {
+    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add player');
+    add.disabled = draft.players.length >= ROSTER_LIMIT;
+    if (add.disabled) add.title = `${ROSTER_LIMIT} is the most a roster holds.`;
+    add.addEventListener('click', () => {
+      draft.players.push(emptyPlayer());
+      paint();
+      // Straight into the box that just appeared, so adding five players is
+      // five clicks and typing rather than ten.
+      rows.querySelector('.roster-row:last-of-type input')?.focus();
+    });
+    return add;
+  }
+
+  paint();
+  return rows;
+}
+
 function buildTeamEditor() {
   const host = els.editors.teams;
   const editing = Boolean(draft.id);
@@ -938,6 +1035,15 @@ function buildTeamEditor() {
     subhead(editing ? `Editing ${draft.name}` : 'Add a team'),
     grid(2, controls),
     draftLogoField(),
+
+    subhead('Roster'),
+    help(
+      'Who plays for them. Optional, and nothing here goes on air by itself - it is how a player is recognised in ' +
+        'a lobby, and where a Riot ID lives so it can be checked later. A name an operator corrects mid-match still ' +
+        'wins over this one.',
+    ),
+    rosterEditor(),
+
     actions,
     subhead('Share this library'),
     help(

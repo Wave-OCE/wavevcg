@@ -47,6 +47,8 @@ const els = {
   fields: $('tou-fields'),
   saved: $('tou-saved'),
   access: $('tou-access'),
+  teams: $('tou-teams'),
+  players: $('tou-players'),
   members: $('tou-members'),
   add: $('tou-add'),
   addWho: $('tou-add-who'),
@@ -319,6 +321,14 @@ if (els.pick) {
     // what removes the strip - there is no second thing to keep in step.
     els.settings.hidden = !current;
     els.access.hidden = !current;
+    /*
+     * The two libraries, which belong to the tournament and are therefore
+     * meaningless without one. shell.js hides a sub-tab whose panel is hidden,
+     * so this is also what takes their buttons off the strip - there is no
+     * second thing to keep in step.
+     */
+    els.teams.hidden = !current;
+    els.players.hidden = !current;
     els.fresh.hidden = !mayCreate;
 
     // Archiving is the owner's, and it is the only control here that says what

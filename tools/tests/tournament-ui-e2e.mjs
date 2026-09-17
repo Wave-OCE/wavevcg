@@ -193,6 +193,82 @@ try {
   ok('19. the owner gets the Add row', await page.isVisible('#tou-add'));
   ok('20. the owner is listed', (await page.textContent('#tou-members')).includes('boss'));
 
+  // --- the team library and its roster --------------------------------------
+
+  /*
+   * A reload, and it is covering a real gap rather than being impatient.
+   *
+   * winner-dashboard.js builds the team library once at startup. On a fresh
+   * install that startup happens while the account is on no tournament, so
+   * /api/teams answers 403 and the editor is never built - and nothing rebuilds
+   * it when a tournament appears a moment later. So an operator who makes their
+   * very first tournament finds the Teams page empty until they reload, with
+   * nothing saying why.
+   *
+   * The fix belongs in those dashboards: they need to re-initialise when the
+   * production changes, which is also what would let the picker switch
+   * tournaments without a reload. Until then this reload is what the operator
+   * has to do, so it is what the suite does.
+   */
+  await page.reload();
+  await wait(1200);
+  errors.length = 0;
+  await page.click('.rail-item[data-tab="tournament"]');
+  await wait(400);
+
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-teams"]');
+  await wait(400);
+  /*
+   * Asked of the PANEL, not of #wed-teams. That element carries display:contents
+   * so the library's children sit directly in the panel - which means it has no
+   * layout box of its own, and every visibility check on it answers false
+   * however well the page is working.
+   */
+  ok('20a. the Teams sub-page shows the library', await page.isVisible('#tou-teams'));
+  ok('20b. ...with a roster editor', (await page.$('#wed-teams .roster-rows')) !== null);
+
+  await page.fill('#wed-teams input[type=text]', 'Sentinels');
+  await page.click('#wed-teams .roster-rows button:has-text("Add player")');
+  await wait(250);
+  const rosterInputs = await page.$$('#wed-teams .roster-row input');
+  ok('20c. a row has a name and a Riot ID', rosterInputs.length === 2);
+
+  await rosterInputs[1].fill('not-a-riot-id');
+  await wait(150);
+  ok(
+    '20d. a malformed Riot ID is marked',
+    await page.$eval('#wed-teams .roster-row input:nth-of-type(2)', (i) => i.classList.contains('is-wrong')),
+  );
+  await rosterInputs[1].fill('TenZ#SEN');
+  await wait(150);
+  ok(
+    '20e. ...and unmarked once it looks right',
+    await page.$eval('#wed-teams .roster-row input:nth-of-type(2)', (i) => !i.classList.contains('is-wrong')),
+  );
+
+  /*
+   * The caret. The roster repaints on its own for exactly this reason - the
+   * note above teamSaveBtn records that rebuilding the panel replaces the input
+   * being typed into, so a name had to be entered one letter and one click at a
+   * time. Typing a whole word and getting a whole word back is the assertion
+   * that keeps that fix from being undone by a well-meaning repaint.
+   */
+  await rosterInputs[0].fill('');
+  await rosterInputs[0].type('Zekken');
+  await wait(150);
+  ok('20f. typing a name keeps every letter of it', (await rosterInputs[0].inputValue()) === 'Zekken');
+
+  await page.click('#wed-teams button:has-text("Add team")');
+  await wait(800);
+  const saved = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  const squad = saved.teams?.[0]?.players ?? [];
+  ok('20g. the roster reached the server', squad.length === 1, JSON.stringify(saved.teams?.[0]));
+  ok('20h. ...with both fields', squad[0]?.displayName === 'Zekken' && squad[0]?.riotId === 'TenZ#SEN');
+  ok('20i. ...and an empty puuid waiting to be filled', squad[0]?.puuid === '');
+
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
+  await wait(300);
+
   // --- the bar must not outgrow its panel -----------------------------------
 
   /*
