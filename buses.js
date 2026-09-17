@@ -50,7 +50,7 @@
  * change what this graphic is *doing*", not "did any byte differ".
  */
 
-import { makeGraphicStore, makeSelectStore, makeWinnerStore } from './graphics.js';
+import { makeGraphicStore, makeSelectStore, makeVetoBoardStore, makeWinnerStore } from './graphics.js';
 
 /** Matches the dashboards and companion.js. The counter wraps rather than growing. */
 export const CUE_WRAP = 1_000_000;
@@ -86,6 +86,22 @@ export const BUS_KINDS = {
   select: {
     file: 'select.json',
     make: makeSelectStore,
+    transport: (state) => [state.anim.visible],
+    cue: (state) => state.anim.cue ?? 0,
+    withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),
+  },
+  vetoBoard: {
+    file: 'veto-board.json',
+    make: makeVetoBoardStore,
+    /*
+     * Visibility ONLY, and deliberately not `reveal`.
+     *
+     * Revealing the fourth ban should animate the fourth row and leave the
+     * three above it alone. Putting reveal in here would bump the cue on a take
+     * that moved it, and the page would fly the whole board on again every
+     * time - which is exactly the failure the counter exists to prevent. The
+     * page animates a row on its own arrival instead.
+     */
     transport: (state) => [state.anim.visible],
     cue: (state) => state.anim.cue ?? 0,
     withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),

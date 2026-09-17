@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VALORANT Map Veto - Output</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/veto-board.css" />
+  </head>
+
+  <!--
+    OBS browser source: 1920 x 1080, transparent, "Shutdown source when not
+    visible" off.
+
+    The map veto board, in two layouts off one state:
+
+      lower     a strip along the bottom, every step in the order it happened.
+                What a veto looks like WHILE it is happening.
+      full      the whole frame, bans grouped and the maps that will be played
+                laid out large. Same sequence - grouping is a layout choice and
+                never changes the record.
+
+    The board is a SNAPSHOT copied out of the veto when an operator pressed
+    Load. It is not a live view, on purpose: a veto is driven by two people with
+    no account, on their phones, and a live view would put a captain's mis-tap
+    on a stream. See veto-board-schema.js.
+
+    `reveal` says how many steps are on screen, so an operator walks the board
+    out one ban at a time while a caster talks over it. A row animates on its
+    own arrival; the whole graphic only replays when the cue moves, which is a
+    Show press and nothing else.
+  -->
+  <body>
+    <div id="stage">
+      <div class="board" id="board">
+        <!-- Lower third. Built in veto-board.js so the cell count comes from
+             the state rather than from seven copies of the same block. -->
+        <div class="strip" id="strip"></div>
+        <div class="logo-bar" id="logo-bar" hidden>
+          <img id="logo-lower" alt="" />
+        </div>
+
+        <!-- Full screen. -->
+        <div class="full" id="full" hidden>
+          <div class="full-title">
+            <span id="full-left"></span>
+            <span class="full-vs">VS</span>
+            <span id="full-right"></span>
+          </div>
+          <div class="full-cols">
+            <div class="full-bans" id="full-bans"></div>
+            <div class="full-maps" id="full-maps"></div>
+          </div>
+          <div class="full-logo" id="full-logo" hidden><img id="logo-full" alt="" /></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/veto-board.js" type="module"></script>
+  </body>
+</html>

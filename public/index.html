@@ -112,6 +112,7 @@
             <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
             <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
             <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
+            <button type="button" class="tab" role="tab" data-tab="vetoBoard" aria-selected="false">Map veto</button>
           </nav>
 
           <nav class="subtabs" data-for="tournament" aria-label="Tournament" hidden>
@@ -793,6 +794,85 @@
       </div>
     </main>
 
+    <!-- ========================================================= map veto === -->
+    <!--
+      The map veto board.
+
+      A SNAPSHOT of a veto rather than a live view of one, and the transport is
+      unusual for a graphic here: as well as Show and Hide there is a reveal,
+      which walks the board out one step at a time while a caster talks over it.
+      That is deliberately not the cue - revealing the fourth ban animates the
+      fourth row and leaves the three above it alone, where a cue bump would fly
+      the whole board on again.
+    -->
+    <main class="graphic-tab" id="tab-vetoBoard" role="tabpanel" hidden>
+      <div class="graphic-toolbar">
+        <button type="button" id="v-reset" class="btn btn-ghost">Reset graphic</button>
+
+        <span class="toolbar-gap"></span>
+
+        <label class="obs-url">
+          <span>OBS browser source</span>
+          <span class="obs-url-row">
+            <code id="v-obs-url">/veto-board.html</code>
+            <button type="button" class="btn-copy" data-copy-target="v-obs-url" title="Copy URL">Copy</button>
+            <a class="btn btn-ghost" id="v-open" href="/veto-board.html" target="_blank" rel="noopener">Open</a>
+          </span>
+        </label>
+
+        <span id="v-status" class="save-status">Saved</span>
+      </div>
+
+      <div class="cue-bar">
+        <span class="cue-state" id="v-air">
+          <span class="cue-dot" aria-hidden="true"></span>
+          <span id="v-air-label">Off air</span>
+        </span>
+
+        <button type="button" id="v-show" class="btn btn-cue">Show</button>
+        <button type="button" id="v-hide" class="btn btn-ghost">Hide</button>
+
+        <span class="toolbar-gap"></span>
+
+        <!-- The reveal. Its own row of controls rather than part of Show,
+             because walking a board out is what an operator does WHILE it is
+             already up. -->
+        <button type="button" id="v-none" class="btn btn-ghost" title="Hide every step">None</button>
+        <button type="button" id="v-back" class="btn btn-ghost" title="Take the last step back off">Back</button>
+        <button type="button" id="v-next" class="btn btn-cue" title="Reveal the next step">Reveal next</button>
+        <button type="button" id="v-all" class="btn btn-ghost" title="Show the whole board">All</button>
+        <span class="cue-note" id="v-reveal-note"></span>
+      </div>
+
+      <div class="take-bar" id="v-take-bar">
+        <span class="prog-state" id="v-prog">
+          <span class="prog-dot" aria-hidden="true"></span>
+          <span id="v-prog-label">Off air</span>
+        </span>
+        <button type="button" id="v-take" class="btn btn-take">Send to program</button>
+        <button type="button" id="v-revert" class="btn btn-ghost" title="Pull what is on air back into preview, throwing away what is staged">
+          Revert to air
+        </button>
+        <span class="toolbar-gap"></span>
+        <span class="staged-note" id="v-staged" hidden>Preview differs from air</span>
+      </div>
+
+      <section class="panel preview-panel">
+        <h2 class="panel-title">
+          Live preview
+          <span class="pill">1920 &times; 1080</span>
+        </h2>
+        <div class="preview-frame checker" id="v-preview-frame">
+          <iframe id="v-preview" data-src="/veto-board.html" title="Map veto preview" scrolling="no"></iframe>
+        </div>
+      </section>
+
+      <div class="editor-grid" data-cards="vetoBoard">
+        <section class="panel" id="ved-load"></section>
+        <section class="panel" id="ved-style"></section>
+      </div>
+    </main>
+
     <!-- =========================================================== global === -->
     <!--
       The settings that are not any one graphic's business, and the two libraries
@@ -1187,6 +1267,7 @@
     <script src="/fixture-dashboard.js" type="module"></script>
     <script src="/players-dashboard.js" type="module"></script>
     <script src="/veto-dashboard.js" type="module"></script>
+    <script src="/veto-board-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

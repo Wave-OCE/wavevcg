@@ -40,6 +40,7 @@ import {
   sanitiseLobbySeat,
 } from './public/lobby-schema.js';
 import { DEFAULT_SETTINGS, sanitiseSettings } from './public/settings-schema.js';
+import { DEFAULT_VETO_BOARD, sanitiseVetoBoard } from './public/veto-board-schema.js';
 import {
   COLOUR_SOURCE_KEYS,
   DEFAULT_GLOBAL,
@@ -1625,6 +1626,12 @@ export { graphicPatch };
 
 export const makeGraphicStore = (filePath) => makeStateStore(filePath, sanitiseState, DEFAULT_STATE);
 export const makeWinnerStore = (filePath) => makeStateStore(filePath, sanitiseWinner, DEFAULT_WINNER);
+/*
+ * The map veto board. A fourth graphic, and the thinnest of them - it holds a
+ * COPY of a veto rather than anything of its own, so the sanitiser lives with
+ * the schema and this is the whole of the Node side.
+ */
+export const makeVetoBoardStore = (filePath) => makeStateStore(filePath, sanitiseVetoBoard, DEFAULT_VETO_BOARD);
 
 // -------------------------------------------------------------- presets ---
 

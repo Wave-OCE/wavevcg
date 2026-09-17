@@ -50,6 +50,7 @@ import {
 } from './riot-account.js';
 import { sanitiseTournamentFields } from './public/tournament-schema.js';
 import { playedMaps, publicView, sanitiseVeto, vetoComplete } from './public/veto-schema.js';
+import { boardFromVeto } from './public/veto-board-schema.js';
 import {
   emptyMapRow,
   fixtureLabel,
@@ -1477,6 +1478,7 @@ async function handleApi(pathname, params, ctx) {
   const readBus = busFor(params);
   const graphics = ctx.bundle?.graphics?.of(readBus);
   const winner = ctx.bundle?.winner?.of(readBus);
+  const vetoBoard = ctx.bundle?.vetoBoard?.of(readBus);
   const select = ctx.bundle?.select?.of(readBus);
 
   // The configured default, unless it is the source an administrator has just
@@ -1680,6 +1682,9 @@ async function handleApi(pathname, params, ctx) {
 
     case '/api/select':
       return { revision: select.revision, state: select.state };
+
+    case '/api/veto-board':
+      return { revision: vetoBoard.revision, state: vetoBoard.state };
 
     case '/api/global':
       return { revision: globals.revision, state: globals.state };
@@ -3342,6 +3347,16 @@ const KEYED_ROUTES = new Set([
   '/api/graphic/events',
   '/api/winner/events',
   '/api/select/events',
+  /*
+   * The map veto board, read-only, like the other three graphics.
+   *
+   * An OBS browser source carries a key and no cookie, so an output page is
+   * unreachable without this. Note what is NOT here: `/api/veto`, which carries
+   * the links that drive a veto - a key shows a graphic, it does not hand out a
+   * credential.
+   */
+  '/api/veto-board',
+  '/api/veto-board/events',
   '/api/events',
   '/api/roster',
   '/api/game',
@@ -5541,10 +5556,12 @@ async function handleStream(pathname, req, res, ctx, params) {
   const graphics = ctx.bundle.graphics.of(streamBus);
   const winner = ctx.bundle.winner.of(streamBus);
   const select = ctx.bundle.select.of(streamBus);
+  const vetoBoard = ctx.bundle.vetoBoard.of(streamBus);
 
   if (pathname === '/api/graphic/events') return streamState(graphics, 'graphic', req, res), true;
   if (pathname === '/api/winner/events') return streamState(winner, 'winner', req, res), true;
   if (pathname === '/api/select/events') return streamState(select, 'select', req, res), true;
+  if (pathname === '/api/veto-board/events') return streamState(vetoBoard, 'vetoBoard', req, res), true;
 
   /*
    * Every graphic on one connection, for the dashboard.
@@ -5586,6 +5603,8 @@ async function handleStream(pathname, req, res, ctx, params) {
         ['graphicPreview', ctx.bundle.graphics.preview],
         ['winnerPreview', ctx.bundle.winner.preview],
         ['selectPreview', ctx.bundle.select.preview],
+        ['vetoBoard', ctx.bundle.vetoBoard.program],
+        ['vetoBoardPreview', ctx.bundle.vetoBoard.preview],
         ['global', globals],
         ['lookup', lookups],
         ['matchFeed', matchFeed],
@@ -5657,6 +5676,7 @@ async function handlePost(pathname, req, res, ctx, params) {
   const writeBus = busFor(params, { write: true });
   const graphics = bundle.graphics.of(writeBus);
   const winner = bundle.winner.of(writeBus);
+  const vetoBoard = bundle.vetoBoard.of(writeBus);
   const select = bundle.select.of(writeBus);
   // The webhooks' select, pinned to air whatever the query string says.
   const selectAir = bundle.select.program;
@@ -5794,6 +5814,57 @@ async function handlePost(pathname, req, res, ctx, params) {
         const body = await readJsonBody(req);
         const state = globals.replace(body?.state ?? body);
         return { revision: globals.revision, state, pushed: pushGlobal(bundle) };
+      });
+
+    /*
+     * The veto board.
+     *
+     * `load` is its own action rather than a plain state write, because it is
+     * the SNAPSHOT - the moment a veto stops being a live thing two captains
+     * are driving and becomes a picture. Doing it here rather than in the
+     * browser means the copy is made from the document as the server holds it,
+     * not from whatever the dashboard last polled.
+     */
+    case '/api/veto-board':
+      return handleWrite(res, async () => {
+        const body = await readJsonBody(req);
+        const action = String(body?.action ?? '');
+
+        if (action === 'load') {
+          const record = bundle.veto.get(String(body?.id ?? ''));
+          if (!record) throw new ProviderError(404, 'No such veto.');
+          const board = boardFromVeto(record);
+          /*
+           * Patched, not replaced, and the difference is the operator's work.
+           * The layout, the event logo and the styling are theirs and were set
+           * before the show; the board is what changes per match. A replace
+           * would take the logo off every time somebody pressed Load.
+           */
+          const state = vetoBoard.patch(board);
+          log.info('air', `veto board loaded: ${board.title}`, {
+            tournament: ctx.owner?.id,
+            bus: writeBus,
+            who: ctx.user?.username ?? '(key)',
+          });
+          return { bus: writeBus, revision: vetoBoard.revision, state };
+        }
+
+        if (action === 'reveal') {
+          /*
+           * One step at a time, or all of them. `to` is absolute rather than a
+           * delta so that two presses racing cannot leave the board somewhere
+           * neither of them asked for - the same reason the sequence driver
+           * takes a stage rather than a direction.
+           */
+          const current = vetoBoard.state;
+          const wanted = body?.to === undefined ? current.reveal + 1 : Number.parseInt(body.to, 10);
+          if (!Number.isInteger(wanted)) throw new ProviderError(400, 'Reveal to which step?');
+          const state = vetoBoard.patch({ reveal: wanted });
+          return { bus: writeBus, revision: vetoBoard.revision, state };
+        }
+
+        const state = body?.reset === true ? vetoBoard.reset() : vetoBoard.replace(body?.state ?? body);
+        return { bus: writeBus, revision: vetoBoard.revision, state };
       });
 
     case '/api/select':

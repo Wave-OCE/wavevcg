@@ -1,0 +1,227 @@
+/**
+ * The map veto GRAPHIC: what goes to air, and what it is a copy of.
+ *
+ * A fourth graphic beside the scoreboard, the winner splash and agent select,
+ * and like all three it exists twice - preview and program - with a take
+ * between them. `veto.js` holds the veto itself; this holds a picture of one.
+ *
+ * ---------------------------------------------------------------------------
+ * It is a SNAPSHOT, not a view
+ * ---------------------------------------------------------------------------
+ *
+ * `board` is copied out of the veto when an operator presses Load, and nothing
+ * keeps it in step afterwards. That is the copy-not-link rule this codebase
+ * applies everywhere a graphic names something in a library - a fixture copies
+ * its teams, a scoreboard copies the org it was given - and the argument is
+ * sharper here than anywhere else: a veto is being driven by two people with no
+ * account, on their phones, while this graphic may be on air. A live view would
+ * put a captain's mis-tap on a stream.
+ *
+ * The cost is stated rather than hidden: the board can be stale, so the
+ * dashboard says when the veto has moved past what is loaded and Load is one
+ * press away.
+ *
+ * ---------------------------------------------------------------------------
+ * `reveal`, and why it is not a cue
+ * ---------------------------------------------------------------------------
+ *
+ * The graphic shows the first `reveal` steps and nothing after them, so an
+ * operator walks a board out one ban at a time while a caster talks over it.
+ * That is a transport idea, and it deliberately does NOT live on `anim.cue`.
+ *
+ * The cue exists so the page can replay its ENTRANCE - the whole graphic flying
+ * on - and it is bumped only when the operator presses Show. Revealing the
+ * fourth ban must animate the fourth row and leave the other three where they
+ * are; if it bumped the cue the entire board would fly on again every time,
+ * which is precisely the failure the counter was invented to prevent. So the
+ * page animates a row on its own arrival, and the cue is left alone.
+ *
+ * `transport` in buses.js is `[anim.visible]` for the same reason: a take that
+ * only moved the reveal should not replay the entrance.
+ */
+
+const LAYOUTS = [
+  {
+    key: 'lower',
+    label: 'Lower third',
+    help: 'A strip along the bottom. Every step in order, which is what a veto looks like while it is happening.',
+  },
+  {
+    key: 'full',
+    label: 'Full screen',
+    help:
+      'The whole frame, with the bans grouped and the maps that will be played laid out large. Same sequence - ' +
+      'grouping is a layout choice here and never changes the record.',
+  },
+];
+
+export const VETO_BOARD_LAYOUTS = LAYOUTS;
+export const VETO_BOARD_LAYOUT_KEYS = LAYOUTS.map((entry) => entry.key);
+
+/**
+ * One row of the board as the PAGE needs it, which is not the shape the veto
+ * record uses.
+ *
+ * The record says "step 3 was a pick by A". A page needs "Haven, picked by
+ * Crusaders, Jail Time on attack" - the seats resolved to names, because
+ * nothing at 1920x1080 should be dereferencing an 'a' into a team while it
+ * paints. Same reason a fixture carries a copy rather than a teamId.
+ */
+const emptyRow = () => ({ kind: 'ban', map: '', by: '', byShort: '', side: '', sideBy: '', sideByShort: '' });
+
+const text = (value, max) =>
+  typeof value === 'string' ? value.slice(0, max).replace(/[\x00-\x1f\x7f]/g, '').trim() : '';
+
+const whole = (value, min, max, fallback = min) => {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isInteger(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+};
+
+/** The most steps a board can hold. A VALORANT pool is seven; nine is headroom. */
+export const VETO_BOARD_ROWS = 9;
+
+export const DEFAULT_VETO_BOARD = {
+  version: 1,
+  layout: 'lower',
+  // What the veto was loaded from, so the dashboard can say "this has moved".
+  // Never dereferenced at paint time - see the header.
+  vetoId: '',
+  title: '',
+  subtitle: '',
+  eventLogo: '',
+  left: { name: '', shortName: '', logo: '', colour: '' },
+  right: { name: '', shortName: '', logo: '', colour: '' },
+  rows: [],
+  // How many rows are on screen. 0 is an empty board, which is a real state:
+  // the graphic can be shown before the veto starts.
+  reveal: 0,
+  showSides: true,
+  anim: { visible: false, cue: 0 },
+};
+
+const side = (input) => {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    name: text(source.name, 32),
+    shortName: text(source.shortName, 8),
+    logo: text(source.logo, 500),
+    colour: text(source.colour, 24),
+  };
+};
+
+const row = (input) => {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    kind: ['ban', 'pick', 'decider'].includes(source.kind) ? source.kind : 'ban',
+    map: text(source.map, 40),
+    by: text(source.by, 32),
+    byShort: text(source.byShort, 8),
+    side: ['attack', 'defence'].includes(source.side) ? source.side : '',
+    sideBy: text(source.sideBy, 32),
+    sideByShort: text(source.sideByShort, 8),
+  };
+};
+
+export function sanitiseVetoBoard(input, fallback = DEFAULT_VETO_BOARD) {
+  const source = input && typeof input === 'object' ? input : {};
+  const base = fallback ?? DEFAULT_VETO_BOARD;
+  const rows = (Array.isArray(source.rows) ? source.rows : base.rows ?? []).slice(0, VETO_BOARD_ROWS).map(row);
+
+  return {
+    version: 1,
+    layout: VETO_BOARD_LAYOUT_KEYS.includes(source.layout) ? source.layout : base.layout,
+    vetoId: text(source.vetoId ?? base.vetoId, 64),
+    title: text(source.title ?? base.title, 60),
+    subtitle: text(source.subtitle ?? base.subtitle, 60),
+    eventLogo: text(source.eventLogo ?? base.eventLogo, 500),
+    left: side(source.left ?? base.left),
+    right: side(source.right ?? base.right),
+    rows,
+    /*
+     * Clamped to the rows that exist, not to VETO_BOARD_ROWS.
+     *
+     * A reveal past the end would leave the operator pressing Next with nothing
+     * happening and no way to tell whether the graphic was broken or the veto
+     * was finished. Clamping to `rows.length` makes "revealed everything" a
+     * state the dashboard can see and report.
+     */
+    reveal: whole(source.reveal ?? base.reveal, 0, rows.length, 0),
+    showSides: typeof source.showSides === 'boolean' ? source.showSides : (base.showSides ?? true),
+    anim: {
+      visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
+      cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),
+    },
+  };
+}
+
+/**
+ * A veto record -> the board that shows it.
+ *
+ * The one place the two shapes meet, and it lives here rather than in the
+ * server for the reason `SHARED_FIELDS` lives in global-schema.js: the source
+ * of a value owns the mapping, or the dashboard, the route and the output page
+ * each grow their own idea of what a veto looks like.
+ *
+ * Both sides of `sideBy` are resolved to a NAME here. The page must not be
+ * turning an 'a' into a team while it paints - that is a dereference at render
+ * time, which is the one failure this codebase has actually shipped.
+ */
+export function boardFromVeto(veto, { playedOnly = false } = {}) {
+  if (!veto) return null;
+  const seat = (which) => (which === 'a' ? veto.a : which === 'b' ? veto.b : null);
+  const name = (which) => seat(which)?.name ?? '';
+  const short = (which) => seat(which)?.shortName ?? '';
+
+  const steps = (veto.steps ?? []).filter((step) => (playedOnly ? step.kind !== 'ban' : true));
+
+  return {
+    vetoId: veto.id ?? '',
+    title: veto.name || [veto.a?.name, veto.b?.name].filter(Boolean).join(' vs '),
+    subtitle: String(veto.format ?? '').toUpperCase(),
+    left: side(veto.a),
+    right: side(veto.b),
+    rows: steps.map((step) =>
+      row({
+        kind: step.kind,
+        map: step.map,
+        by: name(step.who),
+        byShort: short(step.who),
+        side: step.side,
+        sideBy: name(step.sideBy),
+        sideByShort: short(step.sideBy),
+      }),
+    ),
+  };
+}
+
+/**
+ * Has the veto moved past what is on the board?
+ *
+ * Compared on the answered MAPS rather than on the whole record, because an
+ * operator renaming a veto or fixing a tricode has not changed what the graphic
+ * is showing, and a "reload me" badge that lights for that is one nobody reads.
+ */
+export function boardIsStale(board, veto) {
+  if (!board?.vetoId || board.vetoId !== veto?.id) return false;
+  const live = (veto.steps ?? []).map((step) => `${step.kind}:${step.map}:${step.side}`).join('|');
+  const shown = (board.rows ?? []).map((entry) => `${entry.kind}:${entry.map}:${entry.side}`).join('|');
+  return live !== shown;
+}
+
+/**
+ * The rows a FULL SCREEN layout draws, grouped.
+ *
+ * Bans together, then the maps that will be played - which is what the
+ * reference board does, and is a property of this layout and of nothing else.
+ * The record keeps the true order; `reveal` still counts in that order, so
+ * walking the board out reveals them in the sequence they happened even though
+ * they are drawn in two groups.
+ */
+export function groupedRows(rows, reveal) {
+  const shown = (rows ?? []).slice(0, Math.max(0, reveal));
+  return {
+    bans: shown.filter((entry) => entry.kind === 'ban'),
+    maps: shown.filter((entry) => entry.kind !== 'ban'),
+  };
+}

@@ -1,0 +1,370 @@
+/*
+ * The map veto board, on air.
+ *
+ * Its own stylesheet, like every other output page - nothing in styles.css can
+ * reach a broadcast, which is what makes restyling the dashboard a safe change.
+ *
+ * A fixed 1920x1080 stage scaled as a whole, because OBS renders a browser
+ * source at an exact canvas size and a font size chosen here is the font size
+ * that goes to air. Do not switch to viewport units.
+ */
+
+:root {
+  --stage-w: 1920px;
+  --stage-h: 1080px;
+
+  --ink: #ffffff;
+  --ink-dim: rgba(255, 255, 255, 0.62);
+  --panel: #0d1016;
+  --panel-2: #151a23;
+  --rule: rgba(255, 255, 255, 0.12);
+
+  /* Set from the graphic's own fields so a restyle never touches this file. */
+  --accent: #c8aa6e;
+  --ban: #ff4655;
+
+  --left: #ff4655;
+  --right: #4664ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * `hidden` must actually hide.
+ *
+ * The attribute's own `display: none` comes from the UA stylesheet and loses to
+ * any rule here that sets display - so `.logo-bar { display: flex }` quietly
+ * made hiding it a no-op, and the event-logo bar painted over the full-screen
+ * board where it has no business being. Every layout swap on this page is an
+ * attribute toggle, so this is one line instead of a class per element.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: Gabarito, 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+}
+
+/* The stage, scaled as a whole. */
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--stage-w);
+  height: var(--stage-h);
+  transform-origin: top left;
+}
+
+.board {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  /* Fast, eased-out, symmetrical. Nothing bounces. */
+  transition: opacity 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.board.is-on {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------- lower third --- */
+
+.board.is-lower .strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 60px;
+}
+
+.board.is-lower .cell {
+  position: relative;
+  width: 214px;
+  height: 196px;
+  background: var(--panel);
+  overflow: hidden;
+  /* Arrives from below, one at a time as `reveal` grows. Translate and opacity
+     only - nothing here reflows, which is the rule these pages live by. */
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.board.is-lower .cell.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cell-head {
+  height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.15;
+}
+
+.cell-head .who {
+  color: var(--ink);
+}
+
+.cell-head .what {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.cell-body {
+  position: relative;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+}
+
+.cell-map {
+  font-weight: 800;
+  font-size: 34px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* A banned map is greyed and struck by a ring, not deleted - the audience is
+   being told what is GONE, so it has to still be readable. */
+.cell.is-ban .cell-map {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.cell.is-ban .cell-body::after {
+  content: '';
+  position: absolute;
+  width: 74px;
+  height: 74px;
+  border: 5px solid var(--accent);
+  border-radius: 50%;
+  opacity: 0.85;
+}
+
+.cell.is-ban .cell-body::before {
+  content: '';
+  position: absolute;
+  width: 84px;
+  height: 5px;
+  background: var(--accent);
+  transform: rotate(-45deg);
+  z-index: 1;
+  opacity: 0.85;
+}
+
+.cell-foot {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.cell.is-ban .cell-foot {
+  color: transparent;
+}
+
+.logo-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 52px;
+  min-width: 460px;
+  height: 40px;
+  padding: 0 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+}
+
+.logo-bar img {
+  max-height: 32px;
+  max-width: 340px;
+  object-fit: contain;
+}
+
+/* ---------------------------------------------------------- full screen --- */
+
+/*
+ * Centred as a block rather than pinned top and bottom.
+ *
+ * `justify-content: center` with the logo directly under the columns, because
+ * the first version padded from the top and pushed the logo to the floor with
+ * margin-top:auto - which left 400px of nothing through the middle of a
+ * 1080-high frame. A graphic with a hole in it reads as one that failed to
+ * load.
+ */
+.board.is-full .full {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  padding: 80px 110px;
+}
+
+.full-title {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  font-weight: 800;
+  font-size: 54px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.full-vs {
+  font-size: 34px;
+  color: var(--ban);
+}
+
+.full-cols {
+  display: flex;
+  gap: 34px;
+  align-items: flex-start;
+  width: 100%;
+  justify-content: center;
+}
+
+.full-bans {
+  display: grid;
+  grid-template-columns: repeat(2, 214px);
+  gap: 12px;
+}
+
+.full-maps {
+  display: flex;
+  gap: 14px;
+}
+
+.full-ban {
+  position: relative;
+  height: 178px;
+  background: linear-gradient(180deg, #2a1015, #5a1a22);
+  border: 1px solid rgba(255, 70, 85, 0.55);
+  display: flex;
+  align-items: flex-end;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 300ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.full-map {
+  position: relative;
+  width: 236px;
+  height: 370px;
+  background: var(--panel-2);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 18px;
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* The cross, drawn rather than imported - two rules through the middle, which
+   is what the reference board does and costs no asset. */
+.full-ban::after,
+.full-ban::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 22%;
+  width: 56%;
+  height: 4px;
+  background: var(--ban);
+  opacity: 0.9;
+}
+
+.full-ban::before {
+  transform: rotate(45deg);
+}
+
+.full-ban::after {
+  transform: rotate(-45deg);
+}
+
+.full-ban.is-shown,
+.full-map.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.full-map-name {
+  font-weight: 800;
+  font-size: 34px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* Two lines' worth whatever it holds, so the map NAME sits on the same
+   baseline across all three panels. The decider carries one line where a
+   picked map carries two, and without this its title drops 18px below its
+   neighbours - the kind of thing only a screenshot shows. */
+.full-map-meta {
+  min-height: 42px;
+  margin-top: 8px;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.full-map-meta b {
+  color: var(--ban);
+  font-weight: 700;
+}
+
+.full-logo {
+  padding-top: 6px;
+}
+
+.full-logo img {
+  max-height: 64px;
+  max-width: 420px;
+  object-fit: contain;
+}
