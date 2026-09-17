@@ -4051,3 +4051,99 @@ body.is-adrift .rail-item[data-tab='global'] {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ------------------------------------------------------- the map veto --- */
+
+.veto-pool {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.veto-pool-map {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  font-size: 13px;
+}
+
+.veto-card {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+
+.veto-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.veto-card-name {
+  font-weight: 700;
+}
+
+.veto-card-meta,
+.veto-card-status {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.veto-card-status {
+  margin-top: 4px;
+}
+
+.veto-board {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0;
+}
+
+.veto-board-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.veto-board-kind {
+  min-width: 96px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.veto-board-step.is-ban.is-done .veto-board-map {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
+.veto-board-map {
+  font-weight: 600;
+}
+
+.veto-board-side {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* The links. They wrap rather than growing past the card - the admin row's
+   lesson, which is that a flex container does not report its own overflow. */
+.veto-links,
+.veto-card-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

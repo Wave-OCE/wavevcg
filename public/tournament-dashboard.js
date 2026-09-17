@@ -43,6 +43,7 @@ const els = {
   fresh: $('tou-new'),
   archive: $('tou-archive'),
   schedule: $('tou-schedule'),
+  veto: $('tou-veto'),
   export: $('tou-export'),
   delete: $('tou-delete'),
   state: $('tou-state'),
@@ -540,6 +541,10 @@ if (els.pick) {
     els.teams.hidden = !current;
     els.players.hidden = !current;
     els.schedule.hidden = !current;
+    // Same again for the map veto: the pool and the vetoes belong to the
+    // tournament, so the panel is meaningless without one - and hiding the
+    // panel is what takes its button off the strip.
+    els.veto.hidden = !current;
     els.fresh.hidden = !mayCreate;
 
     // Archiving is the owner's, and it is the only control here that says what

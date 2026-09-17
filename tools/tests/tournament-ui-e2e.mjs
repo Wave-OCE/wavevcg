@@ -437,6 +437,54 @@ try {
     JSON.stringify(folded.players),
   );
 
+  // ------------------------------------------------------- the map veto ---
+  /*
+   * The panel, and the one property that matters more than any of its
+   * behaviour: the links are CREDENTIALS and must never be painted.
+   *
+   * This page is open on a laptop at a desk that is very often being
+   * screen-shared or filmed, so a link printed in full is one frame away from
+   * being everybody's - which is why they sit behind Copy buttons. Every other
+   * assertion here would stay green if somebody "helpfully" showed the URL.
+   */
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-veto"]');
+  await wait(900);
+  ok('28a. the Map veto panel opens', await page.isVisible('#tou-veto'));
+  ok('28b. ...and the module built into it', (await page.$$('.veto-pool-map')).length > 0, 'veto-dashboard.js did not paint');
+
+  // Tick a pool, then make a veto through the modal - the operator's own path.
+  const poolBoxes = page.locator('.veto-pool-map input');
+  const poolCount = Math.min(7, await poolBoxes.count());
+  for (let i = 0; i < poolCount; i += 1) {
+    await poolBoxes.nth(i).check();
+    await wait(140);
+  }
+  await page.click('#veto-body button:has-text("New veto")');
+  await page.waitForSelector('.rl-modal', { timeout: 6000 });
+  await page.fill('.rl-modal input[aria-label="Veto name"]', 'Grand final');
+  await page.fill('.rl-modal input[aria-label="Team A name"]', 'Crusaders');
+  await page.fill('.rl-modal input[aria-label="Team B name"]', 'Jail Time');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1100);
+
+  ok('28c. a veto can be made', (await page.$$('.veto-card')).length === 1, String((await page.$$('.veto-card')).length));
+  ok(
+    '28d. ...laid out in the standard order for the format',
+    (await page.$$eval('.veto-board-kind', (nodes) => nodes.map((n) => n.textContent))).join('|').toLowerCase().includes('bans'),
+    await page.$$eval('.veto-board-kind', (nodes) => nodes.map((n) => n.textContent).join('|')),
+  );
+  ok('28e. ...with seven steps for a Bo3 on a seven-map pool', (await page.$$('.veto-board-step')).length === 7, String((await page.$$('.veto-board-step')).length));
+  ok('28f. ...and a link to copy for each side plus the referee', (await page.$$('.veto-links .mini-btn')).length === 4, String((await page.$$('.veto-links .mini-btn')).length));
+
+  const vetoState = await (await fetch(`${BASE}/api/veto`, { headers: { Cookie: jar.join('; ') } })).json();
+  const vetoToken = Object.values(vetoState.tokens ?? {})[0]?.a ?? '';
+  ok('28g. the server did mint a link', vetoToken.length > 20);
+  ok(
+    '28h. ...and NOTHING paints it on the page',
+    await page.evaluate((t) => !document.documentElement.outerHTML.includes(t), vetoToken),
+    'A VETO LINK IS ON SCREEN',
+  );
+
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
   await wait(300);
 

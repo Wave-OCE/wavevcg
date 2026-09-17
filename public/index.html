@@ -119,6 +119,7 @@
             <button type="button" class="subtab" data-view="tou-teams" aria-selected="false">Teams</button>
             <button type="button" class="subtab" data-view="tou-players" aria-selected="false">Players</button>
             <button type="button" class="subtab" data-view="tou-schedule" aria-selected="false">Schedule</button>
+            <button type="button" class="subtab" data-view="tou-veto" aria-selected="false">Map veto</button>
             <button type="button" class="subtab" data-view="tou-access" aria-selected="false">Access</button>
           </nav>
 
@@ -892,6 +893,18 @@
           therefore defeats isVisible(), boundingBox() and every overflow check
           a test might want to make of it.
         -->
+        <!--
+          The map veto: the pool, the vetoes under it, and the three links each
+          one hands out.
+
+          Beside the schedule rather than under Graphics, because that is what a
+          veto IS - something the competition does, days before anybody opens
+          OBS. The graphic that shows one is a separate object with its own tab.
+        -->
+        <section class="panel" id="tou-veto" hidden>
+          <section class="panel-inner" id="veto-body"></section>
+        </section>
+
         <section class="panel" id="tou-schedule" hidden>
           <h2 class="panel-title">Schedule</h2>
           <p class="field-help">
@@ -1173,6 +1186,7 @@
     <script src="/lobby-dashboard.js" type="module"></script>
     <script src="/fixture-dashboard.js" type="module"></script>
     <script src="/players-dashboard.js" type="module"></script>
+    <script src="/veto-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

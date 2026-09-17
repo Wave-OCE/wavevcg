@@ -196,7 +196,7 @@ function paint() {
   veto.steps.forEach((step, at) => {
     const row = el(
       'div',
-      `veto-step${step.kind === 'ban' ? ' is-ban' : ''}${veto.step?.at === at ? ' is-now' : ''}`,
+      `veto-step${step.kind === 'ban' ? ' is-ban' : ''}${step.map ? ' is-done' : ''}${veto.step?.at === at ? ' is-now' : ''}`,
     );
     const who = step.kind === 'decider' ? 'Decider' : `${seatName(step.who)} ${step.kind}s`;
     row.append(el('span', 'veto-step-kind', {}, who));

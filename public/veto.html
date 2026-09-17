@@ -112,7 +112,9 @@
         color: var(--text-faint);
       }
 
-      .veto-step.is-ban .veto-step-map {
+      /* Only a map that was actually banned is struck through. An unanswered
+         step shows a dash, and a struck-through dash reads as a mistake. */
+      .veto-step.is-ban.is-done .veto-step-map {
         text-decoration: line-through;
         color: var(--text-faint);
       }
