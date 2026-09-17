@@ -211,7 +211,7 @@ export const ROSTER_LIMIT = 10;
 export const looksLikeRiotId = (value) => /^[^#\s][^#]*#[^#\s]+$/.test(String(value ?? '').trim());
 
 const playerText = (value, max) =>
-  typeof value === 'string' ? value.slice(0, max).replace(/[ -]/g, '').trim() : '';
+  typeof value === 'string' ? value.slice(0, max).replace(/[\x00-\x1f]/g, '').trim() : '';
 
 /**
  * Clean one player.

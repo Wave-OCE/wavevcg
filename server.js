@@ -51,8 +51,12 @@ import {
 import { ROSTER_LIMIT } from './public/teams.js';
 import { sanitiseTournamentFields } from './public/tournament-schema.js';
 import {
+  emptyMapRow,
   fixtureLabel,
+  fixtureMapName,
+  fixturePatch,
   fixturesFedBy,
+  nextMapIndex,
   roundRobinPairs,
   sanitiseFixture,
   sanitiseMapRow,
@@ -2171,6 +2175,137 @@ async function handleScheduleAction({ schedule }, body) {
   }
 }
 
+/**
+ * The seam between the schedule and the desk. Two presses, both on Match setup.
+ *
+ * `load` carries a fixture ONTO the graphics; `report` carries a scoreboard
+ * BACK into the fixture. They are one route because they are one idea - the
+ * schedule and the desk meeting - and they are NOT `/api/schedule` actions
+ * because every one of those goes through `schedule.apply` and is about the
+ * document. Loading writes graphics and touches no fixture at all; filing it
+ * under a schedule action would make "what does this route change" two answers.
+ *
+ * Neither is in KEYED_ROUTES, and the question that list exists to force is
+ * answered the same way for both. `load` operates the desk - it stages three
+ * graphics, which is the sentence that list ends on. `report` writes the
+ * schedule, which is already out of bounds in both directions. A key shows a
+ * graphic and feeds it a lobby; it does not pick the next match.
+ */
+async function handleFixtureAction(bundle, body) {
+  const { schedule, graphics, globals } = bundle;
+  const action = String(body?.action ?? '');
+
+  const fixtureOf = () => {
+    const id = String(body?.id ?? '');
+    const found = schedule.fixture(id);
+    if (!found) {
+      throw badRequest(
+        'No such fixture.',
+        'It may have been removed from the schedule since this page last read it.',
+      );
+    }
+    return found;
+  };
+
+  switch (action) {
+    /*
+     * Both teams onto all three previews, the series onto the winner graphic,
+     * and the map onto Global. Nothing reaches air - see pushFixture.
+     */
+    case 'load': {
+      const fixture = fixtureOf();
+      const { pushed, map } = pushFixture(bundle, fixture);
+      return { fixture: fixture.id, label: fixtureLabel(fixture), pushed, map };
+    }
+
+    /*
+     * The scoreboard's two round counts, into one named map row of the fixture.
+     *
+     * Read off PREVIEW rather than air, and that is deliberate: preview is the
+     * board the operator has been building during the map, air is whatever was
+     * last taken - which mid-map is the previous map's final score. Reporting
+     * from air would file last map's result under this map and be right often
+     * enough to be trusted.
+     *
+     * The map NAME comes from the board too, not from Global, because the board
+     * is the thing being reported and its own map is what was printed on it. A
+     * blank one is refused rather than recorded: a nameless row still counts
+     * toward the series score in the table but `activeMaps` skips it on the
+     * winner splash, so it would show in one place and vanish from the other
+     * with nothing failing.
+     */
+    case 'report': {
+      const fixture = fixtureOf();
+      const board = graphics.preview.state;
+      // Absent means "wherever this belongs" - the first unplayed row. Asked
+      // for explicitly, it is taken literally, so an operator correcting map 1
+      // after map 2 is played can say so.
+      const asked = body?.index === undefined ? nextMapIndex(fixture) : Number.parseInt(body.index, 10);
+      const left = board.left.roundsWon;
+      const right = board.right.roundsWon;
+      const name = String(board.map ?? '').trim();
+
+      // NaN separately, and BEFORE the range test: it fails every comparison,
+      // so junk would fall past `index >= bestOf` and land as `rows[NaN]` - a
+      // string property on the array, written with nothing raised.
+      if (!Number.isInteger(asked)) throw badRequest('That is not a map number.');
+      const index = asked;
+      if (index < 0 || index >= fixture.bestOf) {
+        throw badRequest(
+          index < 0
+            ? `Every map of that best of ${fixture.bestOf} already has a result.`
+            : `A best of ${fixture.bestOf} has no map ${index + 1}.`,
+          'Change the series length first if this really is a longer match.',
+        );
+      }
+      if (!name) {
+        throw badRequest(
+          'The scoreboard does not say which map this is.',
+          `Set the map on the Global tab${globals.state.mapName ? ' and send it to the scoreboard' : ''}, then report again.`,
+        );
+      }
+      if (!left && !right) {
+        throw badRequest(
+          'The scoreboard reads 0-0.',
+          'That is what a map nobody has played looks like, so there is nothing to record yet.',
+        );
+      }
+
+      const document = schedule.apply((draft) => {
+        const target = draft.fixtures.find((entry) => entry.id === fixture.id);
+        if (!target) throw badRequest('No such fixture.');
+        /*
+         * The whole array goes back, padded to the index being written.
+         *
+         * `result` replaces `maps` wholesale and there is no per-index write -
+         * so a row spliced into a short array without padding would land at the
+         * wrong map. Padded with blank rows rather than refused: reporting map
+         * 3 of a Bo3 whose first two were never filled in is an operator
+         * catching up, not a mistake.
+         */
+        const rows = [...target.maps];
+        while (rows.length <= index) rows.push(emptyMapRow());
+        // `award` cleared, because a score IS the result - leaving a stale
+        // forfeit beside a real 13-8 would have the row say two things.
+        rows[index] = sanitiseMapRow({ name, left, right, award: '' });
+        target.maps = rows;
+      });
+
+      const saved = document.fixtures.find((entry) => entry.id === fixture.id);
+      return {
+        fixture: fixture.id,
+        label: fixtureLabel(saved ?? fixture),
+        index,
+        map: { name, left, right },
+        schedule: document,
+      };
+    }
+
+    default:
+      throw new ProviderError(400, 'Unknown fixture action.', 'One of: load, report.');
+  }
+}
+
 /** `apply`'s mutator throws these; handleWrite turns them into a 400 with the hint. */
 const badRequest = (message, hint = '') => {
   const error = new ProviderError(400, message, hint);
@@ -2285,6 +2420,59 @@ function pushGlobal({ graphics, winner, select, globals }) {
     pushed.push(name);
   }
   return pushed;
+}
+
+/**
+ * Load a fixture onto the desk: both teams, the series so far, and the map.
+ *
+ * The other half of `pushGlobal`, and built to its rules rather than beside
+ * them:
+ *
+ *   - PREVIEW, and only preview. The whole point of the split is that the next
+ *     thing is built where an audience cannot see it, and "load the next match"
+ *     is the most next-thing there is. Three take bars light; the operator cuts.
+ *   - DATA keys only. `fixturePatch` never names `anim` or `seq`, and the
+ *     stores shallow-merge, so the cue counters cannot move - a load that
+ *     bumped one would replay every entrance on the following take.
+ *   - Gated on actual movement, per graphic. `fixturePatch` answers null when
+ *     nothing of that graphic's would change, so pressing Load twice is one SSE
+ *     frame, not two.
+ *
+ * The map goes through `globals` rather than onto the three graphics directly,
+ * because Global owns that fact and `pushGlobal` owns carrying it - one owner
+ * each, and the operator's per-graphic sync switches keep working for free. A
+ * fixture that names no map says nothing at all rather than saying blank: the
+ * `/api/game` scar, where a write nobody made counted as the feed having spoken
+ * and reverted a map somebody had just picked by hand.
+ *
+ * @returns {{pushed: string[], map: string}} what changed, for the caller to report.
+ */
+function pushFixture(bundle, fixture) {
+  const { graphics, winner, select, globals } = bundle;
+  const pushed = [];
+
+  for (const [name, store] of [
+    ['graphic', graphics.preview],
+    ['winner', winner.preview],
+    ['select', select.preview],
+  ]) {
+    const patch = fixturePatch(fixture, name, store.state);
+    if (!patch) continue;
+    store.patch(patch);
+    pushed.push(name);
+  }
+
+  let map = '';
+  const wanted = fixtureMapName(fixture);
+  if (wanted && globals.state.mapName !== wanted) {
+    globals.patch({ mapName: wanted });
+    map = wanted;
+    // Global has spoken, so the one-way sync carries it - respecting `syncMap`,
+    // which is why this is a call rather than three more keys in the patch above.
+    for (const name of pushGlobal(bundle)) if (!pushed.includes(name)) pushed.push(name);
+  }
+
+  return { pushed, map };
 }
 
 async function handleAliasAction({ graphics, select, aliases }, body) {
@@ -4736,6 +4924,35 @@ async function route(req, res) {
     // opens exactly two kinds of door and this is not one of them.
     if (!KEYED_ROUTES.has(pathname)) return unauthorised(res, 403, 'That key is only good for the output pages and the webhooks.');
     if (!ctx.bundle) return unauthorised(res, 404, 'No session has that key. It may have been rotated.');
+
+    /*
+     * A key may POST to a WEBHOOK and to nothing else.
+     *
+     * This is the half of KEYED_ROUTES that was missing, and until now the
+     * comment on that list and the code disagreed: it says a key cannot reach
+     * "anything that replaces a whole graphic", and `POST /api/graphic?key=`
+     * did exactly that. The keyed branch is exempt from the CSRF check (there
+     * is no cookie to ride) and a key resolves to `level: 'owner'`, so it sailed
+     * past the viewer gate below too.
+     *
+     * Stated as a LIST rather than a rule, for KEYED_ROUTES' own reason: a key
+     * is typed into OBS configuration and read out over screen shares, and the
+     * next person to add a keyed route should have to decide whether a game
+     * client posts to it. `WEBHOOK_ROUTES` is already exactly that list.
+     *
+     * What this costs: an external script that POSTs graphic state with a key
+     * stops working, and must use an account instead. Nothing in this tree did
+     * - every keyed POST here is a webhook, every keyed graphic request is a
+     * GET, and a keyed dashboard was never a working configuration anyway
+     * because `/api/take` is not on the list either.
+     */
+    if (req.method === 'POST' && !WEBHOOK_ROUTES.has(pathname)) {
+      return unauthorised(
+        res,
+        403,
+        'That key cannot change a graphic. A key shows the output pages and feeds the webhooks; sign in to edit.',
+      );
+    }
   } else if (!ctx.user) {
     // A webhook says so plainly rather than talking about signing in - what is
     // reading the answer is a game client's log, not a person.
@@ -4793,9 +5010,23 @@ async function route(req, res) {
     return handleTournaments(pathname, req, res, ctx);
   }
 
-  if (!ctx.bundle) {
-    return unauthorised(res, 403, ctx.owner ? 'You do not have access to that session.' : 'No such session.');
-  }
+  /*
+   * ONE answer, whether or not that tournament exists.
+   *
+   * It used to say "You do not have access to that session." when the id named
+   * a real tournament and "No such session." when it did not - so anybody with
+   * a login could tell the two apart and walk the server's tournaments by
+   * guessing ids. The tournament routes already refuse to do this (they answer
+   * 404 "No such tournament." for a non-member, and `tournament-e2e` asserts
+   * it); this was the same question answered the other way one layer down.
+   *
+   * "No such session." for both, which is also what it honestly is from the
+   * caller's side: a tournament they are not a member of is one they cannot
+   * see. The wording and the 403 are kept exactly as they were, because this is
+   * the ordinary answer for an account on no tournament at all - a brand new
+   * login, which is not an error state - and `auth-e2e` pins both.
+   */
+  if (!ctx.bundle) return unauthorised(res, 403, 'No such session.');
 
   if (req.method === 'POST') {
     // Two independent CSRF defences; see FORM_TYPES. The key path is exempt
@@ -5370,6 +5601,48 @@ async function handlePost(pathname, req, res, ctx, params) {
      */
     case '/api/schedule':
       return handleWrite(res, async () => handleScheduleAction(bundle, await readJsonBody(req)));
+
+    /*
+     * The two show-day presses, and NOT in KEYED_ROUTES - the same answer as
+     * the schedule above, reached twice.
+     *
+     * `load` stages three graphics, which is operating the desk, and that list
+     * ends "a key shows a graphic and feeds it a lobby; it does not operate the
+     * desk". `report` writes the schedule, which is already out of bounds in
+     * both directions for the reason above it.
+     *
+     * Here rather than beside the webhooks, so a VIEWER cannot reach either:
+     * loading the next match onto a production's graphics is not watching one.
+     */
+    case '/api/fixture':
+      return handleWrite(res, async () => {
+        const result = await handleFixtureAction(bundle, await readJsonBody(req));
+        /*
+         * Logged, like the take and like staging a lobby, and for their reason:
+         * both of these are the kind of thing somebody asks about after a show.
+         *
+         * `report` is the one that earns it twice over - it overwrites a map
+         * row in the COMPETITION record, which is shared by every desk of the
+         * tournament, so "who filed 13-6 on map 2" has no other trace at all.
+         * `who` is never "(key)" here the way it is on the keyed routes: this
+         * one cannot be reached with a key.
+         */
+        if (result.pushed) {
+          log.info('air', `${result.label} staged from the schedule`, {
+            graphics: result.pushed.join(',') || 'none',
+            map: result.map || '(unchanged)',
+            tournament: ctx.owner?.id,
+            who: ctx.user?.username,
+          });
+        } else {
+          log.info('schedule', `map ${result.index + 1} of ${result.label} reported from the scoreboard`, {
+            result: `${result.map.name} ${result.map.left}-${result.map.right}`,
+            tournament: ctx.owner?.id,
+            who: ctx.user?.username,
+          });
+        }
+        return result;
+      });
 
     /*
      * POST rather than GET, and deliberately NOT in KEYED_ROUTES.

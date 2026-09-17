@@ -141,7 +141,7 @@ export function usernameProblem(username) {
 const text = (value, fallback = '', max = 200) =>
   value === null || value === undefined
     ? fallback
-    : String(value).slice(0, max).replace(/[\u0000-\u001f]/g, '').trim();
+    : String(value).slice(0, max).replace(/[\u0000-\u001f\u007f]/g, '').trim();
 
 /**
  * One account.

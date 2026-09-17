@@ -1637,6 +1637,55 @@ pre {
   max-width: 860px;
 }
 
+/*
+ * The schedule seam's two rows.
+ *
+ * `.watch-actions` is a two-column grid built for the post-match panel's pair.
+ * Here one row holds a single button and the other a select beside one, so the
+ * row WRAPS instead of being forced into halves - the Admin accounts lesson:
+ * when a row can grow with its data, let the row wrap and keep the labels on
+ * one line, because that is the way round that keeps a button readable.
+ */
+#fixture-panel .watch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+#fixture-panel .watch-actions .btn {
+  width: auto;
+}
+
+/* Wide enough to read a map name in, not so wide it swallows the row. */
+#fixture-panel .watch-actions .g-field {
+  flex: 0 1 280px;
+}
+
+/*
+ * The body is rebuilt whole on every change, so its rhythm is set here rather
+ * than by margins on the pieces. Without it the second row's caption sits hard
+ * against the first row's button and the two read as one confused block - which
+ * every DOM assertion passed and a screenshot showed in a second.
+ */
+#fixture-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#fixture-body .field-help {
+  margin: 0;
+}
+
+/* What this fixture IS, as opposed to how the panel works. Brighter than the
+   help below it, because it is the line an operator actually reads before
+   putting something on air. */
+#fixture-body .fixture-summary {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* Three buttons, where .watch-actions is a two-column grid built for the
    post-match panel's two. Scoped rather than changed: that panel still wants
    its pair side by side. */

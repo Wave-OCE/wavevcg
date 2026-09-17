@@ -472,7 +472,7 @@ try {
    * No stray text nodes. replaceChildren STRINGIFIES what it is handed, so a
    * conditional child resolving to null paints the word "null" on the page -
    * which happened under the roster editor and took a screenshot to see. Asked
-   * of the node types, because a textContent regexp for /null/ was ALSO
+   * of the node types, because a textContent regexp for /\bnull\b/ was ALSO
    * green against that bug: the strays concatenate against their neighbours and
    * have no word boundary on either side.
    */

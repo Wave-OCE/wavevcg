@@ -342,6 +342,25 @@ try {
   ok('revoked access is gone', r.status === 403, `got ${r.status}`);
 
   /*
+   * ...and it does not say WHICH kind of gone.
+   *
+   * A tournament that exists but is not yours used to answer "You do not have
+   * access to that session." while a made-up id answered "No such session." -
+   * so any account could walk this server's tournaments by guessing UUIDs and
+   * reading the difference. The tournament routes already refuse to do this
+   * (404 "No such tournament." either way); this is the same question one layer
+   * down. Byte-identical answers, status and message both.
+   */
+  const denied = await op(`/api/graphic?session=${bossTournament.id}`);
+  const absent = await op('/api/graphic?session=11111111-2222-3333-4444-555555555555');
+  ok(
+    'a real tournament and an imaginary one answer identically',
+    denied.status === absent.status && denied.json?.error?.message === absent.json?.error?.message,
+    `${denied.status} "${denied.json?.error?.message}" vs ${absent.status} "${absent.json?.error?.message}"`,
+  );
+  ok('...and that answer is the ordinary one', absent.json?.error?.message === 'No such session.', absent.json?.error?.message);
+
+  /*
    * The three routes the cutover moved off /api/account.
    *
    * Asserted gone rather than merely unused: a key names a tournament and
@@ -367,6 +386,35 @@ try {
 
   r = await anon(`/api/teams?key=${bossKey}`);
   ok('a key cannot reach the libraries', r.status === 403, `got ${r.status}`);
+
+  /*
+   * A key READS a graphic and cannot WRITE one.
+   *
+   * The comment on KEYED_ROUTES has always said a key cannot reach "anything
+   * that replaces a whole graphic", and for a long time the code disagreed:
+   * the keyed branch is exempt from the CSRF check and a key resolves to
+   * `level: 'owner'`, so `POST /api/graphic?key=` sailed past the viewer gate
+   * and replaced the state. These pin the sentence.
+   *
+   * Asserted on all four state routes, not just the one that was reported,
+   * because the gap was a missing METHOD guard rather than a fact about the
+   * scoreboard - fixing only `/api/graphic` would leave three twins open.
+   */
+  const before = (await anon(`/api/graphic?key=${bossKey}`)).json?.state?.left?.teamName;
+  for (const route of ['/api/graphic', '/api/winner', '/api/select', '/api/global']) {
+    r = await anon(`${route}?key=${bossKey}`, json({ state: { left: { teamName: 'HIJACKED' } } }));
+    ok(`a key cannot POST ${route}`, r.status === 403, `got ${r.status}`);
+  }
+  r = await anon(`/api/graphic?key=${bossKey}`);
+  ok(
+    'and the refused write changed nothing',
+    r.json?.state?.left?.teamName === before && before !== 'HIJACKED',
+    `${before} -> ${r.json?.state?.left?.teamName}`,
+  );
+
+  // The webhooks a game client posts to are the exception, and still work.
+  r = await anon(`/api/game?key=${bossKey}`, json({ event: 'scene', data: 'MainMenu' }));
+  ok('a key can still POST a webhook', r.status === 200, `got ${r.status}`);
 
   r = await anon(`/api/admin/users?key=${bossKey}`);
   ok('a key cannot administer', r.status === 403, `got ${r.status}`);
