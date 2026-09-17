@@ -803,6 +803,51 @@ function buildStyleEditor() {
 
 // -------------------------------------------------- editor: team library ---
 
+/**
+ * Whether this server can verify a Riot ID at all.
+ *
+ * A fact about the deployment, read once. Either key does it and HenrikDev is
+ * the preferred one - it needs no Riot key and returns the canonical PUUID
+ * rather than a per-key encrypted one (see riot-account.js). A server with
+ * neither still saves rosters: verification has never been required, and a
+ * player with no PUUID is an ordinary state.
+ *
+ * Defaults to false and is turned on by the fetch, so the failure of that
+ * fetch leaves a disabled button that explains itself rather than one that
+ * fails on click.
+ */
+let canVerify = false;
+const VERIFY_OFF =
+  'This server has no HenrikDev or Riot account key, so it cannot look a Riot ID up. Rosters still save.';
+
+fetch('/api/config')
+  .then((response) => (response.ok ? response.json() : null))
+  .then((config) => {
+    if (!config?.canVerifyPlayers) return;
+    canVerify = true;
+    // The editor may already have painted its buttons disabled. Repaint only
+    // if it is actually on screen - at page load this answers in milliseconds,
+    // long before anybody is typing into it.
+    if (document.querySelector('.roster-rows')) buildTeamEditor();
+  })
+  .catch(() => {
+    /* Leaves verification off, which is the safe way to be wrong here. */
+  });
+
+async function verifyPlayers(body) {
+  const response = await fetch(api('/api/players/verify'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    const { message, hint } = payload?.error ?? {};
+    throw new Error([message ?? `HTTP ${response.status}`, hint].filter(Boolean).join(' '));
+  }
+  return payload;
+}
+
 async function teamAction(body) {
   const response = await fetch(api('/api/teams'), {
     method: 'POST',
@@ -937,6 +982,7 @@ function rosterEditor() {
     rows.replaceChildren(
       ...draft.players.map((player, index) => {
         const row = el('div', 'roster-row');
+        const inputs = {};
 
         for (const entry of PLAYER_FIELDS) {
           const input = el('input', null, {
@@ -949,11 +995,27 @@ function rosterEditor() {
           input.value = player[entry.key] ?? '';
           input.addEventListener('input', () => {
             player[entry.key] = input.value;
-            if (entry.key === 'riotId') mark(input);
+            if (entry.key === 'riotId') {
+              mark(input);
+              /*
+               * Editing the Riot ID retires the verification that was done
+               * against the OLD one. Leaving the lamp lit would say "this
+               * identity is confirmed" about a string nobody has ever looked
+               * up - which is the one lie this whole feature exists to prevent.
+               * The puuid itself is kept: it is still a true fact about the
+               * player, and re-verifying is what decides whether it still is.
+               */
+              player.puuidCheckedAt = 0;
+              lamp.paint();
+            }
           });
           if (entry.key === 'riotId') mark(input);
+          inputs[entry.key] = input;
           row.append(input);
         }
+
+        const lamp = verifyControl(player, index, inputs);
+        row.append(lamp.node);
 
         const drop = el('button', 'btn btn-small btn-ghost', { type: 'button', title: 'Remove this player' }, '×');
         drop.addEventListener('click', () => {
@@ -964,10 +1026,24 @@ function rosterEditor() {
 
         return row;
       }),
-      draft.players.length
-        ? null
-        : el('p', 'field-help', {}, 'No players yet. A team works fine without one - this is for recognising them in a lobby.'),
-      addRow(),
+      /*
+       * .filter(Boolean), and it is not defensive tidying.
+       *
+       * replaceChildren and append STRINGIFY whatever they are given, so a
+       * conditional that resolves to null appends the text "null" to the page.
+       * Two of these were painting a literal "null" under the roster - one from
+       * the empty-state slot below, one from the check-all button - and every
+       * DOM assertion passed, because the rows, the inputs and the buttons were
+       * all exactly where they were supposed to be. It took a screenshot.
+       * tournament-dashboard.js already filters for the same reason.
+       */
+      ...[
+        draft.players.length
+          ? null
+          : el('p', 'field-help', {}, 'No players yet. A team works fine without one - this is for recognising them in a lobby.'),
+        addRow(),
+        checkAllRow(),
+      ].filter(Boolean),
     );
   };
 
@@ -977,6 +1053,216 @@ function rosterEditor() {
     input.classList.toggle('is-wrong', Boolean(value) && !looksLikeRiotId(value));
     input.title = value && !looksLikeRiotId(value) ? 'That does not look like GameName#Tag' : '';
   };
+
+  /**
+   * One player's verification: a lamp that says where the identity stands, and
+   * the button that moves it.
+   *
+   * Repaints only itself, for the reason the whole block exists - the Riot ID
+   * beside it may be mid-keystroke, and replacing that input would take the
+   * caret with it.
+   *
+   * Drift is NEVER applied here. A rename is a fact about a person, and
+   * rewriting the Riot ID silently would change what a lobby matcher looks for
+   * with nobody told; the operator gets a button naming the new handle and
+   * decides. That is also why the amber state survives until they act on it
+   * rather than clearing on the next repaint.
+   */
+  function verifyControl(player, index, inputs) {
+    const node = el('span', 'roster-state');
+    let drift = null;
+    let busy = false;
+
+    const setRiotId = (value) => {
+      player.riotId = value;
+      inputs.riotId.value = value;
+      mark(inputs.riotId);
+    };
+
+    const run = async (body, apply) => {
+      busy = true;
+      render();
+      try {
+        apply(await verifyPlayers(body));
+      } catch (error) {
+        drift = null;
+        player.puuidCheckedAt = 0;
+        toast(`Could not verify: ${error.message}`);
+      } finally {
+        busy = false;
+        render();
+      }
+    };
+
+    const verify = () =>
+      run({ action: 'resolve', riotId: player.riotId }, ({ identity }) => {
+        player.puuid = identity.puuid;
+        player.puuidSource = identity.source;
+        player.puuidCheckedAt = Date.now();
+        drift = null;
+        // Riot ID matching is case-insensitive, so the canonical spelling is
+        // what the account service returns rather than what was typed. Taking
+        // it is the point of having asked.
+        if (identity.riotId && identity.riotId !== player.riotId) setRiotId(identity.riotId);
+        toast(`Verified ${identity.riotId} (${identity.source})`);
+      });
+
+    const recheck = () =>
+      run(
+        { action: 'check', players: [{ riotId: player.riotId, puuid: player.puuid, puuidSource: player.puuidSource }] },
+        ({ results }) => {
+          const [outcome] = results ?? [];
+          if (outcome?.verdict === 'ok') {
+            player.puuidCheckedAt = Date.now();
+            drift = null;
+            toast(`${player.riotId} is unchanged`);
+          } else if (outcome?.verdict === 'renamed') {
+            drift = outcome.current;
+            toast(`${player.riotId} is now ${outcome.current.riotId}`);
+          } else {
+            drift = null;
+            player.puuidCheckedAt = 0;
+            toast(outcome?.reason ?? 'Could not check that player.');
+          }
+        },
+      );
+
+    function render() {
+      node.replaceChildren();
+      node.className = 'roster-state';
+
+      if (busy) {
+        node.classList.add('is-busy');
+        node.append(el('span', 'roster-lamp', { title: 'Asking Riot…' }, '…'));
+        return;
+      }
+
+      if (drift) {
+        node.classList.add('is-drifted');
+        const take = el(
+          'button',
+          'mini-btn',
+          { type: 'button', title: `Riot says this account is now ${drift.riotId}. Nothing is saved until you save the team.` },
+          `→ ${drift.riotId}`,
+        );
+        take.addEventListener('click', () => {
+          setRiotId(drift.riotId);
+          player.puuidCheckedAt = Date.now();
+          drift = null;
+          render();
+        });
+        node.append(take);
+        return;
+      }
+
+      const verified = Boolean(player.puuid) && Boolean(player.puuidCheckedAt);
+      if (verified) node.classList.add('is-verified');
+
+      const button = el(
+        'button',
+        'mini-btn',
+        {
+          type: 'button',
+          title: verified
+            ? `Checked ${new Date(player.puuidCheckedAt).toLocaleString()} against ${player.puuidSource}. Click to check again.`
+            : player.puuid
+              ? `A PUUID is stored from ${player.puuidSource || 'an unknown source'}, but it has not been checked against this Riot ID. Click to check.`
+              : 'Look this Riot ID up and store the PUUID behind it.',
+          'aria-label': `Verify player ${index + 1}`,
+        },
+        verified ? '✓' : 'Verify',
+      );
+      button.disabled = !canVerify || !looksLikeRiotId(player.riotId ?? '');
+      if (!canVerify) button.title = VERIFY_OFF;
+      else if (button.disabled) button.title = 'Type a Riot ID first (GameName#Tag).';
+      /*
+       * Which question the button asks, and it turns on `verified` rather than
+       * on merely having a PUUID.
+       *
+       * A re-check asks "is the account behind this stored PUUID still called
+       * what the box says" - which is only the right question while the two
+       * were last confirmed to agree. Editing the Riot ID clears the stamp
+       * above, so an edited row RESOLVES instead.
+       *
+       * Getting this wrong is quietly destructive rather than merely wrong:
+       * swap a player out by typing their replacement's Riot ID over the old
+       * one, and a re-check would look up the PREVIOUS player, report a rename
+       * that never happened, and offer a button that puts the old player's
+       * handle back. The operator would be one click from undoing the edit they
+       * had just made, with the UI telling them it was a correction.
+       */
+      button.addEventListener('click', () => (verified ? recheck() : verify()));
+      node.append(button);
+    }
+
+    render();
+    return { node, paint: render };
+  }
+
+  /**
+   * Check the whole roster in one press.
+   *
+   * The reason this exists rather than ten individual clicks: the question
+   * "has anybody on this team renamed since we built it" is asked once, before
+   * a show, about the team - not about a player. Only rows with a stored PUUID
+   * are sent; a row that has never been verified has nothing to re-check and
+   * would only spend a request to be told so.
+   */
+  function checkAllRow() {
+    // Confirmed rows only, for the reason in the note on the per-row button: a
+    // row whose Riot ID has been edited since it was verified would report a
+    // rename against the player who used to be in it.
+    const verifiable = draft.players.filter(
+      (player) => player.puuid && player.puuidSource && player.puuidCheckedAt,
+    );
+    if (!canVerify || verifiable.length < 2) return null;
+
+    const button = el(
+      'button',
+      'btn btn-small btn-ghost',
+      { type: 'button', title: 'Ask whether any of these accounts has been renamed. Nothing is changed without your say-so.' },
+      `Check ${verifiable.length} identities`,
+    );
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const was = button.textContent;
+      button.textContent = 'Checking…';
+      try {
+        const { results } = await verifyPlayers({
+          action: 'check',
+          players: verifiable.map((player) => ({
+            riotId: player.riotId,
+            puuid: player.puuid,
+            puuidSource: player.puuidSource,
+          })),
+        });
+        let renamed = 0;
+        let unknown = 0;
+        results.forEach((outcome, at) => {
+          const player = verifiable[at];
+          if (outcome.verdict === 'ok') player.puuidCheckedAt = Date.now();
+          else if (outcome.verdict === 'renamed') renamed += 1;
+          else unknown += 1;
+        });
+        // A repaint is right here and wrong inside a single row: this press is
+        // not adjacent to typing, and every lamp has to move.
+        paint();
+        toast(
+          renamed
+            ? `${renamed} renamed - the amber buttons say to what.`
+            : unknown
+              ? `No renames. ${unknown} could not be checked.`
+              : 'Every identity still matches.',
+        );
+      } catch (error) {
+        toast(`Could not check the roster: ${error.message}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = was;
+      }
+    });
+    return button;
+  }
 
   function addRow() {
     const add = el('button', 'btn btn-small', { type: 'button' }, 'Add player');

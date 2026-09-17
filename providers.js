@@ -1119,6 +1119,34 @@ export async function henrikAccount(apiKey, { gameName, tagLine }) {
   };
 }
 
+/**
+ * The same lookup, backwards: a PUUID in, the name it answers to today out.
+ *
+ * This is what makes a stored identity worth storing. A Riot ID is a label a
+ * player can change; the PUUID underneath it does not move, so asking "what is
+ * this account called now" is the only way to notice a rename - and noticing
+ * one before a show is the difference between a correct lower third and a
+ * caster reading a name nobody uses any more.
+ *
+ * It takes the CANONICAL uuid, and only that. Henrik answers 400 "Invalid
+ * UUID/PUUID" for the 78-character ciphertext riot/account/v1 hands out, which
+ * is why riot-account.js routes this call on the stored puuidSource rather than
+ * trying both. See the finding at the top of that file.
+ */
+export async function henrikAccountByPuuid(apiKey, { puuid }) {
+  const payload = await henrikFetch(apiKey, `/valorant/v1/by-puuid/account/${encodeURIComponent(puuid)}`);
+  const data = payload?.data ?? {};
+
+  return {
+    gameName: data.name ?? '',
+    tagLine: data.tag ?? '',
+    puuid: data.puuid ?? puuid,
+    region: data.region ?? null,
+    accountLevel: data.account_level ?? null,
+    handle: data.name && data.tag ? `${data.name}#${data.tag}` : '',
+  };
+}
+
 const henrikTimestamp = (value) => {
   if (!value) return null;
   const parsed = typeof value === 'number' ? value : Date.parse(value);

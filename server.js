@@ -41,6 +41,14 @@ import {
   trackerMatchDetail,
   trackerMatchList,
 } from './providers.js';
+import {
+  DEFAULT_ACCOUNT_ROUTING,
+  checkPuuid,
+  henrikLookups,
+  makeAccountClient,
+  resolveRiotId,
+} from './riot-account.js';
+import { ROSTER_LIMIT } from './public/teams.js';
 import { makeTrackerBrowser } from './browser.js';
 import {
   PASSWORD_MIN,
@@ -145,6 +153,20 @@ function pick(value, allowed, fallback) {
 
 const RIOT_API_KEY = (process.env.RIOT_API_KEY ?? '').trim();
 const HENRIK_API_KEY = (process.env.HENRIK_API_KEY ?? '').trim();
+
+/*
+ * The account key, and why it is its own variable.
+ *
+ * RIOT_API_KEY reaches val/match/v1, which needs an approved PRODUCTION key.
+ * riot/account/v1 does not - a development key reaches it, measured. So an
+ * install with no production approval can still verify a roster, which it
+ * could not if the two shared a variable and a hint.
+ *
+ * Falls back to RIOT_API_KEY, so a server that already has a production key
+ * needs nothing new in .env. The full argument, and the PUUID-encryption
+ * finding that shapes the whole feature, is at the top of riot-account.js.
+ */
+const RIOT_ACCOUNT_KEY = (process.env.RIOT_ACCOUNT_KEY ?? '').trim() || RIOT_API_KEY;
 
 /*
  * tracker.gg is driven from the public website - no API key. It needs a real
@@ -885,6 +907,11 @@ const DEFAULT_AFFINITY = pick(process.env.HENRIK_AFFINITY, HENRIK_AFFINITIES, 'a
 const DEFAULT_PLATFORM = pick(process.env.HENRIK_PLATFORM, HENRIK_PLATFORMS, 'pc');
 
 const riotGet = makeRiotClient(RIOT_API_KEY);
+// Separate client, separate key, separate hints. See RIOT_ACCOUNT_KEY above.
+const accountGet = makeAccountClient(RIOT_ACCOUNT_KEY);
+// Null when no HenrikDev key is set, which verification treats as "that source
+// cannot answer" rather than as an error.
+const henrik = henrikLookups(HENRIK_API_KEY);
 
 /*
  * The two stores that stay server-wide, and why.
@@ -1442,6 +1469,14 @@ async function handleApi(pathname, params, ctx) {
         // the UI as the same fact, which is the only fact it can act on.
         hasTrackerKey: trackerOn(),
         hasHenrikKey: Boolean(HENRIK_API_KEY),
+        /*
+         * Whether the Teams page may offer a Verify button at all. Either key
+         * does it - Henrik alone is the common case and the preferred one, and
+         * a server with neither still saves rosters, it just cannot confirm
+         * them. Sent as one fact rather than two because the panel has one
+         * decision to make.
+         */
+        canVerifyPlayers: Boolean(HENRIK_API_KEY || RIOT_ACCOUNT_KEY),
         // What the two administrator switches say, for the panels that have to
         // hide themselves. The server refuses either way; this is so an
         // operator is not offered a button that cannot work.
@@ -1854,6 +1889,61 @@ async function handlePresetAction({ graphics, presets }, body) {
  * Team library actions. Saving or deleting a team never touches a graphic: the
  * fields were copied on the way in, so what is on air stays on air.
  */
+/**
+ * Verify players against Riot's account service.
+ *
+ * Two actions, and they are different questions:
+ *
+ *   resolve   a Riot ID in, an identity out. For a player being added.
+ *   check     stored identities in, a verdict each. For a roster before a show.
+ *
+ * Writes NOTHING. It hands back what it found and the dashboard saves the
+ * roster the operator approves, which keeps two properties that matter: a
+ * rename is applied by a person who can see both names, and a verification
+ * that half-finished leaves no partly-rewritten roster behind.
+ *
+ * Sequential rather than concurrent, on purpose. A development Riot key allows
+ * 20 requests a second and HenrikDev's free tier about 30 a minute, so ten
+ * players fired at once is the shape that earns a 429 - and a 429 in the middle
+ * of a batch is indistinguishable, to the operator, from half the roster having
+ * been deleted from Riot. Ten sequential lookups take a second or two, which is
+ * a button that feels slow rather than a button that lies.
+ */
+async function handlePlayerVerify(body) {
+  const action = String(body?.action ?? '');
+
+  if (action === 'resolve') {
+    const identity = await resolveRiotId({
+      riotId: body?.riotId,
+      henrik,
+      accountGet,
+      routing: DEFAULT_ACCOUNT_ROUTING,
+    });
+    return { identity };
+  }
+
+  if (action === 'check') {
+    const rows = Array.isArray(body?.players) ? body.players.slice(0, ROSTER_LIMIT) : [];
+    if (!rows.length) throw new ProviderError(400, 'No players to check.');
+
+    const results = [];
+    for (const row of rows) {
+      const outcome = await checkPuuid({
+        puuid: row?.puuid,
+        puuidSource: row?.puuidSource,
+        riotId: row?.riotId,
+        henrik,
+        accountGet,
+        routing: DEFAULT_ACCOUNT_ROUTING,
+      });
+      results.push({ riotId: String(row?.riotId ?? ''), ...outcome });
+    }
+    return { results };
+  }
+
+  throw new ProviderError(400, 'Unknown verify action.', 'One of: resolve, check.');
+}
+
 async function handleTeamAction({ teams }, body) {
   const action = String(body?.action ?? '');
 
@@ -3621,6 +3711,11 @@ async function handleAdmin(pathname, req, res, ctx) {
       providers: {
         henrik: Boolean(HENRIK_API_KEY),
         riot: Boolean(RIOT_API_KEY),
+        // Reported separately from `riot` because they answer different
+        // questions and can differ: account-v1 runs on a development key, so a
+        // server with no production approval shows riot false and account true.
+        riotAccount: Boolean(RIOT_ACCOUNT_KEY),
+        riotAccountShared: Boolean(RIOT_ACCOUNT_KEY) && RIOT_ACCOUNT_KEY === RIOT_API_KEY,
       },
       host: HOST,
       port: PORT,
@@ -4695,6 +4790,29 @@ async function handlePost(pathname, req, res, ctx, params) {
     case '/api/teams':
       return handleWrite(res, async () => handleTeamAction(bundle, await readJsonBody(req)));
 
+    /*
+     * POST rather than GET, and deliberately NOT in KEYED_ROUTES.
+     *
+     * POST because it spends somebody else's rate limit - ten outbound lookups
+     * on a key with a daily budget - and because a GET is the shape a browser
+     * will prefetch, a link will follow and a crawler will walk. The read/write
+     * distinction this server draws is about consequence, not about whether a
+     * store changed, and an operator who can make this server call Riot ten
+     * times has made something happen.
+     *
+     * The question KEYED_ROUTES exists to force, answered: no. A session key is
+     * typed into OBS and read out over screen shares, and this route turns one
+     * into an oracle for "does this Riot ID exist" plus a way to burn a
+     * tournament's lookup budget from outside. It shows no graphic and feeds no
+     * lobby.
+     *
+     * It sits here, under the session write gate, so a viewer cannot reach it
+     * either - which is right for the same reason: a viewer may watch a
+     * production, not spend its key.
+     */
+    case '/api/players/verify':
+      return handleWrite(res, async () => handlePlayerVerify(await readJsonBody(req)));
+
     // Raw bytes rather than multipart: there is exactly one file per request and
     // no other fields, so parsing a multipart envelope by hand would be work
     // with nothing to show for it. The declared type is ignored - the store
@@ -4906,6 +5024,15 @@ server.listen(PORT, HOST, () => {
   console.log(`  Riot region     ${DEFAULT_REGION} / routing ${DEFAULT_ROUTING}`);
   console.log(`  HenrikDev       ${HENRIK_API_KEY ? 'key loaded' : 'missing (HENRIK_API_KEY)'} | ${DEFAULT_AFFINITY}/${DEFAULT_PLATFORM}`);
   console.log(`  Riot key        ${RIOT_API_KEY ? 'loaded' : 'missing (RIOT_API_KEY)'}`);
+  console.log(
+    `  Riot account    ${
+      !RIOT_ACCOUNT_KEY
+        ? 'missing (RIOT_ACCOUNT_KEY) - PUUID verification falls back to HenrikDev'
+        : RIOT_ACCOUNT_KEY === RIOT_API_KEY
+          ? 'sharing RIOT_API_KEY'
+          : 'loaded'
+    }`,
+  );
   console.log(
     `  tracker.gg      ${
       !TRACKER_AVAILABLE

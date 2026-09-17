@@ -153,7 +153,15 @@ export function redact(value, depth = 0) {
       // named `<thing>Key` sailed past it with nothing failing. Hiding a field
       // that did not need hiding costs nothing, which is this function's own
       // stated rule.
-      lowered.includes('key')
+      lowered.includes('key') ||
+      // A PUUID is a stable, account-lifetime identifier for a real person: it
+      // is the join key to their whole match history, and unlike a Riot ID they
+      // cannot change it. Verification puts them in meta objects all over the
+      // roster path, and this buffer renders in a browser. It is not a
+      // credential, so it is not hidden for the reason the tests above hide
+      // things - it is hidden because a broadcast log is not the place a
+      // player's permanent identifier should accumulate.
+      lowered.includes('puuid')
     ) {
       out[name] = '<hidden>';
     } else if (lowered === 'url' || lowered === 'path') {

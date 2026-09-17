@@ -47,6 +47,19 @@ const server = spawn(process.execPath, ['server.js'], {
     ADMIN_USERNAME: 'boss',
     ADMIN_PASSWORD: 'a-long-enough-password',
     TRACKER_ENABLED: 'false',
+    /*
+     * Pinned empty, because otherwise this suite's result depends on whose
+     * machine it runs on.
+     *
+     * loadDotEnv only fills a variable that is not already in process.env, so a
+     * spawn that says nothing about these inherits whatever the developer has
+     * in their own .env - and the verify assertions below would pass on a
+     * machine with no keys and fail on one with them, for no reason connected
+     * to the code. An empty string is still "in process.env", so this wins.
+     */
+    HENRIK_API_KEY: '',
+    RIOT_API_KEY: '',
+    RIOT_ACCOUNT_KEY: '',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -258,13 +271,59 @@ try {
   await wait(150);
   ok('20f. typing a name keeps every letter of it', (await rosterInputs[0].inputValue()) === 'Zekken');
 
+  /*
+   * No stray "null" anywhere in the roster block.
+   *
+   * replaceChildren and append STRINGIFY what they are handed, so a conditional
+   * child that resolves to null appends the text "null" to the page. Two of
+   * them were doing exactly that under this roster, and every DOM assertion in
+   * this file passed while it happened - the rows, the inputs and the buttons
+   * were all present and correct, and the junk was in text nodes nobody asked
+   * about. It took a screenshot to see.
+   *
+   * Asked of the child NODES, not of the text, and the first attempt at this
+   * assertion is why. Testing textContent for /\bnull\b/ passed on genuinely
+   * broken code: the stray nodes concatenate straight against their neighbours
+   * as "...×nullAdd playernull", so there is no word boundary on either side of
+   * either one and the pattern never matched. It was green against a page
+   * visibly painting the word twice.
+   *
+   * Every child here is built by el(), so a text node among them is always the
+   * bug and never the design.
+   */
+  const strays = await page.$eval('#wed-teams .roster-rows', (node) =>
+    [...node.childNodes].filter((child) => child.nodeType === 3).map((child) => child.data),
+  );
+  ok('20g. the roster block appends no stray text nodes', strays.length === 0, JSON.stringify(strays));
+
+  /*
+   * The verification control exists and refuses politely.
+   *
+   * This server has no HenrikDev or Riot key, which is the state most installs
+   * start in, so the button must be present, disabled, and carry a title that
+   * says why - rather than being absent (leaving an operator to wonder where
+   * the feature went) or enabled and failing on click.
+   */
+  ok('20h. every roster row carries a verify control', (await page.$('#wed-teams .roster-state .mini-btn')) !== null);
+  ok(
+    '20i. ...disabled on a server with no keys',
+    await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.disabled),
+  );
+  ok(
+    '20j. ...and it says why rather than just being dead',
+    /no HenrikDev or Riot account key/i.test(
+      await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),
+    ),
+    await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),
+  );
+
   await page.click('#wed-teams button:has-text("Add team")');
   await wait(800);
   const saved = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
   const squad = saved.teams?.[0]?.players ?? [];
-  ok('20g. the roster reached the server', squad.length === 1, JSON.stringify(saved.teams?.[0]));
-  ok('20h. ...with both fields', squad[0]?.displayName === 'Zekken' && squad[0]?.riotId === 'TenZ#SEN');
-  ok('20i. ...and an empty puuid waiting to be filled', squad[0]?.puuid === '');
+  ok('20k. the roster reached the server', squad.length === 1, JSON.stringify(saved.teams?.[0]));
+  ok('20l. ...with both fields', squad[0]?.displayName === 'Zekken' && squad[0]?.riotId === 'TenZ#SEN');
+  ok('20m. ...and an empty puuid waiting to be filled', squad[0]?.puuid === '');
 
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
   await wait(300);

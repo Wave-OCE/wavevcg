@@ -2753,9 +2753,60 @@ body.is-guest .topbar::after {
 
 .roster-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   gap: 6px;
   width: 100%;
+  align-items: center;
+}
+
+/*
+ * The verification lamp, and why it is a fixed-width track.
+ *
+ * Its button changes label - "Verify", then a tick, then the new handle after a
+ * rename - and those are very different widths. On an auto track the two input
+ * columns would resize under the operator as each player verified, which is the
+ * "layout must not move when data changes" rule that the output pages are held
+ * to and which is no less annoying on the desk. So the track is sized for the
+ * widest ordinary state and the drifted button scrolls its own text.
+ */
+.roster-state {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 82px;
+  max-width: 160px;
+}
+
+.roster-state .mini-btn {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Confirmed against Riot. The accent, because it is a state, not an alarm. */
+.roster-state.is-verified .mini-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/*
+ * The account resolved under a DIFFERENT name. Amber for the same reason the
+ * take bar uses it: nothing is broken and nothing was refused, but there is a
+ * decision waiting and only a person can make it.
+ */
+.roster-state.is-drifted .mini-btn {
+  border-color: var(--warn-edge);
+  background: var(--warn-wash);
+}
+
+.roster-state.is-busy {
+  opacity: 0.6;
+}
+
+.roster-lamp {
+  font-family: var(--font-mono, monospace);
+  padding: 0 8px;
 }
 
 /*
