@@ -352,7 +352,7 @@ try {
    * none. Adding '/api/players/verify' to KEYED_ROUTES turns 38 red.
    */
   const tournaments = await call('GET', '/api/tournaments');
-  const sessionKey = tournaments.body.tournaments?.[0]?.sessionKey;
+  const sessionKey = tournaments.body.tournaments?.[0]?.productions?.[0]?.sessionKey;
   ok('38a the tournament minted a session key', Boolean(sessionKey));
   const keyed = await fetch(`${BASE}/api/players/verify?key=${encodeURIComponent(sessionKey)}`, {
     method: 'POST',

@@ -42,7 +42,13 @@ export async function makeTournament(base, cookie, name = 'Test tournament') {
     throw new Error(`could not create "${name}": ${payload?.error?.message ?? response.status}`);
   }
   const tournament = payload.tournament;
-  return { id: tournament.id, key: tournament.sessionKey, tournament };
+  /*
+   * The key belongs to a PRODUCTION now, not to the tournament. Every suite
+   * asks the harness rather than the record for exactly this reason - one
+   * place to follow the model when it moves.
+   */
+  const desk = tournament.productions[0];
+  return { id: tournament.id, key: desk.sessionKey, production: desk.id, desk, tournament };
 }
 
 /** Grant a capability. Needs an administrator's cookie. */

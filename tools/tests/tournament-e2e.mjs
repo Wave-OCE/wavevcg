@@ -302,7 +302,15 @@ try {
    * competition by editing a text file.
    */
   const dumped = JSON.stringify(dump);
-  ok('50. the export carries no session key', !dumped.includes(doomed.sessionKey), 'a key reached the file');
+  const doomedKey = doomed.productions[0].sessionKey;
+  /*
+   * Pinned before it is used in a negative. `doomed.sessionKey` was read here
+   * until the key moved onto a production, and an undefined needle makes
+   * `includes()` search for the string "undefined" - so assertion 50 went on
+   * passing while testing nothing at all.
+   */
+  ok('49b. the tournament has a real key to look for', /^[0-9a-f-]{36}$/.test(doomedKey ?? ''), doomedKey);
+  ok('50. the export carries no session key', !dumped.includes(doomedKey), 'a key reached the file');
   ok('51. ...and no membership', !dumped.includes('members') && !dumped.includes(alexId));
 
   r = await chief('/api/tournaments', json({ action: 'export', id: doomed.id }));
@@ -331,7 +339,7 @@ try {
 
   // A key shows a graphic. It does not carry a competition off the server.
   for (const action of ['export', 'delete']) {
-    const keyed = await fetch(`${BASE}/api/tournaments?key=${encodeURIComponent(doomed.sessionKey)}`, {
+    const keyed = await fetch(`${BASE}/api/tournaments?key=${encodeURIComponent(doomedKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, id: doomed.id, confirm: 'Spring Open' }),
@@ -345,7 +353,7 @@ try {
   r = await alex('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: 'Spring Open' }));
   ok('63. the owner deleted it', r.status === 200 && r.json.deleted === doomed.id, r.text.slice(0, 160));
   ok('64. ...and the whole workspace tree went with it', !existsSync(doomedDir));
-  ok('65. ...and the old session key stops resolving', (await fetch(`${BASE}/api/graphic?key=${encodeURIComponent(doomed.sessionKey)}`)).status === 404);
+  ok('65. ...and the old session key stops resolving', (await fetch(`${BASE}/api/graphic?key=${encodeURIComponent(doomedKey)}`)).status === 404);
   ok('66. ...and it is gone from the list', !(await alex('/api/tournaments')).json.tournaments.some((t) => t.id === doomed.id));
 
   /*
@@ -366,6 +374,107 @@ try {
   const after = await alex('/api/tournaments');
   ok('70. the tournament was NOT deleted with the account', after.status === 200);
   ok('71. ...and the server said it is ownerless', log.includes('has no owner left'), 'no warn line');
+
+  // ------------------------------------------------------------ productions ---
+  //
+  // What the whole thing is for: two desks on one competition. Separate
+  // graphics, shared team library.
+
+  const twin = (await alex('/api/tournaments', json({ action: 'create', name: 'Two Courts' }))).json.tournament;
+  ok('73. a new tournament has exactly one production', twin.productions.length === 1, JSON.stringify(twin.productions));
+  ok('74. ...called Main', twin.productions[0].name === 'Main');
+  ok('75. ...with a key of its own', /^[0-9a-f-]{36}$/.test(twin.productions[0].sessionKey ?? ''));
+  ok('76. ...and no control key until somebody asks', twin.productions[0].hasControlKey === false);
+
+  r = await alex('/api/tournaments', json({ action: 'production.create', id: twin.id, name: 'Court 2' }));
+  ok('77. an owner can add a production', r.status === 200, r.text.slice(0, 160));
+  const twoDesks = r.json.tournament.productions;
+  ok('78. ...and the tournament now has two', twoDesks.length === 2, String(twoDesks.length));
+
+  const deskA = twoDesks[0];
+  const deskB = twoDesks[1];
+  ok('79. the second desk gets its OWN key', deskB.sessionKey && deskB.sessionKey !== deskA.sessionKey);
+
+  /*
+   * THE POINT. Two matches at once means two sets of graphics, so a write on
+   * one desk must not appear on the other - that is the whole reason a
+   * production exists rather than a pointer.
+   */
+  const onA = (p) => `${p}${p.includes('?') ? '&' : '?'}production=${deskA.id}`;
+  const onB = (p) => `${p}${p.includes('?') ? '&' : '?'}production=${deskB.id}`;
+
+  const blank = (await alex(onA('/api/winner'))).json.state;
+  await alex(onA('/api/winner'), json({ state: { ...blank, eventLogo: '/media/court-one.png' } }));
+  /*
+   * Read back with ?bus=program, because a write with no bus STAGES - that is
+   * the deliberate asymmetry in busFor, and reading air after a preview write
+   * would have this assertion testing the wrong store.
+   */
+  r = await alex(`${onA('/api/winner')}&bus=preview`);
+  ok('80. a write lands on the desk it was sent to', r.json?.state?.eventLogo === '/media/court-one.png', JSON.stringify(r.json?.state?.eventLogo));
+  r = await alex(`${onB('/api/winner')}&bus=preview`);
+  ok('81. ...and NOT on the other desk', r.json?.state?.eventLogo === '', JSON.stringify(r.json?.state?.eventLogo));
+
+  /*
+   * And the other half: the COMPETITION is shared. A team library per court
+   * would be two libraries to keep in step, and the failure is a rename that
+   * reached one court and not the other, on air, with nothing raised.
+   */
+  await alex(onA('/api/teams'), json({ action: 'save', team: { name: 'Sentinels', shortName: 'SEN' } }));
+  r = await alex(onB('/api/teams'));
+  ok('82. the team library is SHARED between desks', (r.json?.teams ?? []).some((t) => t.name === 'Sentinels'), r.text.slice(0, 160));
+
+  await alex(onA('/api/schedule'), json({ action: 'stage.save', stage: { name: 'Group A' } }));
+  r = await alex(onB('/api/schedule'));
+  ok('83. ...and so is the schedule', (r.json?.schedule?.stages ?? []).length === 1, r.text.slice(0, 160));
+
+  // A key opens ONE desk. Court 2's key must not reach court 1's graphics.
+  const keyedB = await fetch(`${BASE}/api/winner?bus=preview&key=${encodeURIComponent(deskB.sessionKey)}`);
+  const keyedBody = await keyedB.json().catch(() => ({}));
+  ok('84. a desk key opens that desk', keyedB.status === 200, String(keyedB.status));
+  ok('85. ...and shows ITS state, not the other one', keyedBody?.state?.eventLogo === '', JSON.stringify(keyedBody?.state?.eventLogo));
+
+  // ----------------------------------------------------- the production gate ---
+
+  const chiefId = await idOf('chief');
+  await alex('/api/tournaments', json({ action: 'member', id: twin.id, userId: chiefId, level: 'editor' }));
+  r = await chief('/api/tournaments', json({ action: 'production.create', id: twin.id, name: 'Sneaky' }));
+  ok('86. an editor cannot add a production', r.status === 403, String(r.status));
+  r = await chief('/api/tournaments', json({ action: 'production.remove', id: twin.id, productionId: deskB.id, confirm: 'Court 2' }));
+  ok('87. ...nor remove one', r.status === 403, String(r.status));
+
+  // An editor CAN rename one - it is not a key operation.
+  r = await chief('/api/tournaments', json({ action: 'production.update', id: twin.id, productionId: deskB.id, fields: { name: 'Court Two' } }));
+  ok('88. an editor can rename a production', r.status === 200, r.text.slice(0, 140));
+  ok('89. ...and the name took', r.json.tournament.productions[1].name === 'Court Two');
+
+  r = await alex('/api/tournaments', json({ action: 'production.remove', id: twin.id, productionId: deskB.id, confirm: 'wrong name' }));
+  ok('90. removing needs the exact name', r.status === 400, String(r.status));
+  ok('91. ...and says nothing has been removed', /Nothing has been removed/.test(r.json?.error?.hint ?? ''));
+
+  /*
+   * The last desk cannot go. A tournament with no production has no graphics,
+   * no OBS URL and no way back except editing JSON - the same shape as the
+   * last-owner lock.
+   */
+  r = await alex('/api/tournaments', json({ action: 'production.remove', id: twin.id, productionId: deskB.id, confirm: 'Court Two' }));
+  ok('92. the second desk can be removed', r.status === 200, r.text.slice(0, 160));
+  r = await alex('/api/tournaments', json({ action: 'production.remove', id: twin.id, productionId: deskA.id, confirm: 'Main' }));
+  ok('93. the LAST desk cannot', r.status === 400, `${r.status} ${r.text.slice(0, 120)}`);
+  ok('94. ...and says why', /at least one production/i.test(r.json?.error?.message ?? ''), r.json?.error?.message);
+
+  // Removing a desk takes its graphics and leaves the competition alone.
+  ok('95. the removed desk directory is gone', !existsSync(path.join(STATE, 'tournaments', twin.id, 'productions', deskB.id)));
+  ok('96. ...and the tournament directory is not', existsSync(path.join(STATE, 'tournaments', twin.id)));
+  r = await alex(onA('/api/teams'));
+  ok('97. ...and the shared team library survived', (r.json?.teams ?? []).some((t) => t.name === 'Sentinels'));
+
+  r = await alex(`/api/winner?key=${encodeURIComponent(deskB.sessionKey)}`);
+  ok('98. the removed desk key stops resolving', r.status === 404, String(r.status));
+
+  // A production id from ANOTHER tournament must not be reachable.
+  r = await alex('/api/tournaments', json({ action: 'rotate-key', id: twin.id, productionId: cup.productions[0].id }));
+  ok('99. a production id from another tournament is refused', r.status === 404, String(r.status));
 
   // -------------------------------------------------------------- restart ---
 

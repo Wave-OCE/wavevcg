@@ -41,7 +41,13 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import { TOURNAMENT_ROLES, sanitiseTournamentFields, emptyTournament } from './public/tournament-schema.js';
+import {
+  FIRST_PRODUCTION_NAME,
+  TOURNAMENT_ROLES,
+  emptyTournament,
+  sanitiseProductionFields,
+  sanitiseTournamentFields,
+} from './public/tournament-schema.js';
 
 /**
  * The same guard `sessions.js` puts on a session id, for the same reason.
@@ -67,6 +73,95 @@ const text = (value, max) => String(value ?? '').slice(0, max);
  * tournament-schema.js reaches this automatically through `sanitiseTournamentFields`; a
  * field added by hand to tournaments.json does not survive.
  */
+/**
+ * One desk.
+ *
+ * The two keys keep the asymmetry they had on the tournament, because it was
+ * never about tournaments - it is about what each key opens. The session key
+ * self-mints: a production without one is a browser source with nothing to put
+ * in it, and there is no moment in its life where "no key yet" is a state
+ * anybody wants. The control key does NOT: a key that opens a graphic is one
+ * thing, a key that operates the desk is another, and a production minting a
+ * live remote control for a broadcast on first load - one nobody asked for and
+ * nobody knows exists - is the surprise a permission-shaped thing must never
+ * spring.
+ */
+function cleanProduction(input) {
+  const source = input ?? {};
+  return {
+    id: SAFE_ID.test(String(source.id ?? '')) ? String(source.id) : randomUUID(),
+    ...sanitiseProductionFields(source, { name: '' }),
+    sessionKey: text(source.sessionKey, 64) || randomUUID(),
+    controlKey: text(source.controlKey, 64),
+    createdAt: stamp(source.createdAt) || now(),
+  };
+}
+
+/**
+ * The productions of a tournament, and the legacy read that makes migration day
+ * invisible to the records.
+ *
+ * A record written before productions existed carries `sessionKey` and
+ * `controlKey` at the top level and no `productions` at all. It is read here as
+ * ONE production called "Main" holding both keys - so every OBS URL and every
+ * webhook already in a config file keeps resolving, and no stream deck is
+ * dropped. That is the same argument "program keeps the original file name"
+ * made for the preview/program split: the change arrives invisible, and nothing
+ * anybody typed into another program has to be retyped.
+ *
+ * Shipped in the same commit as the new storage, like `cleanUser`'s capability
+ * fallback - a legacy read added later is a legacy read that was missing for
+ * however long it took somebody to notice.
+ *
+ * The FILES still have to move; `tools/migrate-productions.mjs` does that, and
+ * it is the half that cannot be done by reading.
+ */
+function cleanProductions(source) {
+  const listed = Array.isArray(source.productions) ? source.productions : null;
+
+  if (listed?.length) {
+    const seen = new Set();
+    const out = [];
+    for (const entry of listed) {
+      const production = cleanProduction(entry);
+      // A duplicate id makes "which desk did you mean" unanswerable, and both
+      // would answer to one key.
+      if (seen.has(production.id)) continue;
+      seen.add(production.id);
+      out.push(production);
+    }
+    if (out.length) return out;
+  }
+
+  /*
+   * The legacy shape, or a brand new tournament. Either way it gets one desk -
+   * and its id is THE TOURNAMENT'S OWN, deterministically.
+   *
+   * That looks odd on disk (`tournaments/<id>/productions/<id>/`) and it is
+   * load-bearing. A random UUID here is minted on every load and lost again
+   * unless something happens to write, so two boots of an unmigrated tree would
+   * name the same desk differently - and `tools/migrate-productions.mjs`, which
+   * has to create that directory before anything writes the record, would move
+   * a tournament's graphics into a directory the next boot no longer looks in.
+   * A blank scoreboard, no error, no log line.
+   *
+   * A fixed literal like "main" would be deterministic too and is worse: ids
+   * are globally unique so that `?production=` names a desk without also naming
+   * its tournament, and forty tournaments all owning a desk called "main" would
+   * make that impossible.
+   */
+  const first = SAFE_ID.test(String(source.id ?? '')) ? String(source.id) : randomUUID();
+  return [
+    cleanProduction({
+      id: first,
+      name: FIRST_PRODUCTION_NAME,
+      sessionKey: text(source.sessionKey, 64),
+      controlKey: text(source.controlKey, 64),
+      createdAt: source.createdAt,
+    }),
+  ];
+}
+
 function cleanTournament(input) {
   const source = input ?? {};
 
@@ -81,26 +176,15 @@ function cleanTournament(input) {
     members,
 
     /*
-     * The key in this tournament's OBS and webhook URLs.
+     * The desks. One set of graphics, one OBS configuration and one stream deck
+     * each - see PRODUCTION_FIELDS for why a tournament owns several.
      *
-     * Self-minting, like the account key it replaces: a workspace that could
-     * exist without one would be a browser source with nothing to put in it,
-     * and there is no moment in a tournament's life where "no key yet" is a
-     * state anybody wants.
+     * **The two keys live on a PRODUCTION now, not here.** A tournament has no
+     * key of its own, which is the same sentence the cutover wrote about people
+     * and for the same reason: a key names the thing whose graphics it opens,
+     * and a tournament's graphics are not a single thing any more.
      */
-    sessionKey: text(source.sessionKey, 64) || randomUUID(),
-
-    /*
-     * The Companion control channel's key, and deliberately NOT self-minting -
-     * the opposite of the line above, exactly as on an account.
-     *
-     * A key that opens a graphic is one thing; a key that operates the desk is
-     * another. Every tournament minting a live remote control for its own
-     * broadcast on first load - one nobody asked for and nobody knows exists -
-     * is the kind of surprise a permission-shaped thing must never spring. So
-     * the socket refuses every tournament until somebody asks for one.
-     */
-    controlKey: text(source.controlKey, 64),
+    productions: cleanProductions(source),
 
     /*
      * The account whose workspace this was, before tournaments owned them.
@@ -155,6 +239,22 @@ export function makeTournamentStore(filePath) {
 
   const find = (id) => tournaments.find((tournament) => tournament.id === String(id)) ?? null;
 
+  /*
+   * A record handed out, deep enough that a caller cannot reach back in.
+   *
+   * `members` was always copied; `productions` now has to be too, and it is an
+   * array of objects rather than a flat map - so a shallow spread would hand a
+   * caller the live production objects, keys and all. Every caller of this file
+   * either sends a record over the wire or puts it in a template, and one that
+   * mutated a production in passing would rotate a live OBS key with nothing
+   * written to disk and nothing logged.
+   */
+  const copy = (tournament) => ({
+    ...tournament,
+    members: { ...tournament.members },
+    productions: tournament.productions.map((production) => ({ ...production })),
+  });
+
   return {
     async load() {
       try {
@@ -181,11 +281,11 @@ export function makeTournamentStore(filePath) {
       return tournaments.length;
     },
 
-    list: () => tournaments.map((tournament) => ({ ...tournament, members: { ...tournament.members } })),
+    list: () => tournaments.map((tournament) => (copy(tournament))),
 
     byId: (id) => {
       const found = find(id);
-      return found ? { ...found, members: { ...found.members } } : null;
+      return found ? copy(found) : null;
     },
 
     /**
@@ -200,7 +300,7 @@ export function makeTournamentStore(filePath) {
       return tournaments
         .filter((tournament) => canViewTournament(tournamentLevel(tournament, id)))
         .sort((a, b) => b.createdAt - a.createdAt)
-        .map((tournament) => ({ ...tournament, members: { ...tournament.members }, level: tournamentLevel(tournament, id) }));
+        .map((tournament) => ({ ...copy(tournament), level: tournamentLevel(tournament, id) }));
     },
 
     /**
@@ -221,7 +321,7 @@ export function makeTournamentStore(filePath) {
       });
       tournaments.push(tournament);
       persist();
-      return { ...tournament, members: { ...tournament.members } };
+      return copy(tournament);
     },
 
     /** Change the operator-editable fields. Never the id, members or stamps. */
@@ -230,7 +330,7 @@ export function makeTournamentStore(filePath) {
       if (!tournament) throw new Error('No such tournament.');
       Object.assign(tournament, sanitiseTournamentFields(changes, tournament));
       persist();
-      return { ...tournament, members: { ...tournament.members } };
+      return copy(tournament);
     },
 
     /**
@@ -258,7 +358,7 @@ export function makeTournamentStore(filePath) {
       else delete tournament.members[member];
 
       persist();
-      return { ...tournament, members: { ...tournament.members } };
+      return copy(tournament);
     },
 
     /**
@@ -274,7 +374,7 @@ export function makeTournamentStore(filePath) {
       if (!tournament) throw new Error('No such tournament.');
       tournament.archivedAt = archived ? (tournament.archivedAt || now()) : 0;
       persist();
-      return { ...tournament, members: { ...tournament.members } };
+      return copy(tournament);
     },
 
     /**
@@ -287,17 +387,102 @@ export function makeTournamentStore(filePath) {
      * is why the key had to move onto the tournament rather than stay on a person
      * who may be running three.
      */
+    /**
+     * The tournament AND the production a session key opens.
+     *
+     * Both, because everything downstream needs both: the directory a bundle
+     * reads is under the tournament and then under the production, and the
+     * shared libraries belong to the tournament. Returning only the production
+     * would make every caller look its parent up again.
+     *
+     * A scan over one index file rather than a second index of keys. A separate
+     * key table is a second thing to keep in step, and the failure when it
+     * drifts is a key that opens nothing with the tournament sitting right
+     * there holding it.
+     */
     bySessionKey: (key) => {
       const wanted = String(key ?? '');
       if (!wanted) return null;
-      return tournaments.find((t) => t.sessionKey === wanted) ?? null;
+      for (const tournament of tournaments) {
+        const production = tournament.productions.find((entry) => entry.sessionKey === wanted);
+        if (production) return { tournament: copy(tournament), production: { ...production } };
+      }
+      return null;
     },
 
     byControlKey: (key) => {
       const wanted = String(key ?? '');
-      // Never matches the blank field of a tournament that has not minted one.
+      // Never matches the blank field of a production that has not minted one.
       if (!wanted) return null;
-      return tournaments.find((t) => t.controlKey && t.controlKey === wanted) ?? null;
+      for (const tournament of tournaments) {
+        const production = tournament.productions.find((entry) => entry.controlKey && entry.controlKey === wanted);
+        if (production) return { tournament: copy(tournament), production: { ...production } };
+      }
+      return null;
+    },
+
+    /** One desk by its own id, wherever it lives. Ids are UUIDs, so globally unique. */
+    byProductionId: (productionId) => {
+      const wanted = String(productionId ?? '');
+      if (!wanted) return null;
+      for (const tournament of tournaments) {
+        const production = tournament.productions.find((entry) => entry.id === wanted);
+        if (production) return { tournament: copy(tournament), production: { ...production } };
+      }
+      return null;
+    },
+
+    /**
+     * Which desk a request means when it names a tournament and nothing else.
+     *
+     * The first, which is the one migration day created and the one a
+     * single-stream tournament will only ever have. It decides a first load
+     * only - the picker writes the production into the URL after that.
+     */
+    defaultProduction: (tournament) => {
+      const found = tournaments.find((t) => t.id === String(tournament?.id ?? tournament ?? ''));
+      return found?.productions[0] ? { ...found.productions[0] } : null;
+    },
+
+    /** Add a desk. Its keys mint exactly as the first one's did. */
+    addProduction(id, name = '') {
+      const tournament = find(id);
+      if (!tournament) throw new Error('No such tournament.');
+      const production = cleanProduction({ name });
+      tournament.productions.push(production);
+      persist();
+      return { tournament: copy(tournament), production: { ...production } };
+    },
+
+    updateProduction(id, productionId, fields) {
+      const tournament = find(id);
+      if (!tournament) throw new Error('No such tournament.');
+      const production = tournament.productions.find((entry) => entry.id === String(productionId));
+      if (!production) throw new Error('No such production.');
+      Object.assign(production, sanitiseProductionFields(fields, production));
+      persist();
+      return { tournament: copy(tournament), production: { ...production } };
+    },
+
+    /**
+     * Remove a desk.
+     *
+     * The LAST one is refused, for the same reason the last owner is: a
+     * tournament with no production has no graphics, no OBS URL and no way back
+     * except editing JSON by hand, and nothing in the UI would explain how it
+     * got there. The caller is responsible for the directory.
+     */
+    removeProduction(id, productionId) {
+      const tournament = find(id);
+      if (!tournament) throw new Error('No such tournament.');
+      if (tournament.productions.length <= 1) {
+        throw new Error('A tournament needs at least one production.');
+      }
+      const before = tournament.productions.length;
+      tournament.productions = tournament.productions.filter((entry) => entry.id !== String(productionId));
+      if (tournament.productions.length === before) return null;
+      persist();
+      return copy(tournament);
     },
 
     /**
@@ -311,10 +496,30 @@ export function makeTournamentStore(filePath) {
       const wanted = String(key ?? '');
       if (!wanted) return { owner: null, hint: 'No control key was sent.' };
 
-      const owner = tournaments.find((t) => t.controlKey && t.controlKey === wanted);
-      if (owner) return { owner: { ...owner, members: { ...owner.members } } };
+      /*
+       * The owner handed back is the PRODUCTION, not the tournament.
+       *
+       * A stream deck drives one desk - that is what a control key opens - so
+       * `owner.id` downstream has to be the production's id or every op would
+       * land on whichever desk happened to be first. The tournament's name is
+       * folded into the label because "Court 2" alone is not enough to know
+       * what you have connected to, and its id travels for the bundle lookup.
+       */
+      for (const tournament of tournaments) {
+        const production = tournament.productions.find((entry) => entry.controlKey && entry.controlKey === wanted);
+        if (production) {
+          return {
+            owner: {
+              ...production,
+              tournamentId: tournament.id,
+              name: [tournament.name || 'Untitled tournament', production.name].filter(Boolean).join(' - '),
+            },
+          };
+        }
+      }
 
-      if (tournaments.some((t) => t.sessionKey === wanted)) {
+      // The overwhelmingly likely mistake, now checked across every desk.
+      if (tournaments.some((t) => t.productions.some((p) => p.sessionKey === wanted))) {
         return {
           owner: null,
           hint:
@@ -322,7 +527,7 @@ export function makeTournamentStore(filePath) {
             'copy the one from the Companion panel on the Tournament page.',
         };
       }
-      return { owner: null, hint: 'That control key matches no tournament. It may have been rotated.' };
+      return { owner: null, hint: 'That control key matches no production. It may have been rotated or withdrawn.' };
     },
 
     /**
@@ -342,13 +547,15 @@ export function makeTournamentStore(filePath) {
       return mine.find((t) => !t.archivedAt) ?? mine[0] ?? null;
     },
 
-    /** New OBS key. Every browser source and webhook pointing here stops working. */
-    rotateSessionKey(id) {
+    /** New OBS key for one desk. Every source pointing at THAT desk stops working. */
+    rotateSessionKey(id, productionId) {
       const tournament = find(id);
       if (!tournament) throw new Error('No such tournament.');
-      tournament.sessionKey = randomUUID();
+      const production = tournament.productions.find((entry) => entry.id === String(productionId));
+      if (!production) throw new Error('No such production.');
+      production.sessionKey = randomUUID();
       persist();
-      return { ...tournament, members: { ...tournament.members } };
+      return { tournament: copy(tournament), production: { ...production } };
     },
 
     /**
@@ -358,13 +565,15 @@ export function makeTournamentStore(filePath) {
      * leaves the tournament unable to be driven by a stream deck at all, which
      * is the state every tournament starts in.
      */
-    setControlKey(id, wanted) {
+    setControlKey(id, productionId, wanted) {
       const tournament = find(id);
       if (!tournament) throw new Error('No such tournament.');
-      const had = Boolean(tournament.controlKey);
-      tournament.controlKey = wanted === false ? '' : randomUUID();
+      const production = tournament.productions.find((entry) => entry.id === String(productionId));
+      if (!production) throw new Error('No such production.');
+      const had = Boolean(production.controlKey);
+      production.controlKey = wanted === false ? '' : randomUUID();
       persist();
-      return { tournament: { ...tournament, members: { ...tournament.members } }, had };
+      return { tournament: copy(tournament), production: { ...production }, had };
     },
 
     /** Drop a tournament entirely. The caller is responsible for its workspace. */
@@ -406,6 +615,6 @@ export function makeTournamentStore(filePath) {
 
     /** Tournaments with no owner left. For the admin panel to offer a repair. */
     ownerless: () =>
-      tournaments.filter((tournament) => ownerCount(tournament) === 0).map((tournament) => ({ ...tournament, members: { ...tournament.members } })),
+      tournaments.filter((tournament) => ownerCount(tournament) === 0).map((tournament) => (copy(tournament))),
   };
 }

@@ -99,6 +99,10 @@ try {
   await boss('/api/tournaments', json({ action: 'member', id: cup.id, userId: watcherId, level: 'viewer' }));
 
   const at = (id) => (p) => `${p}${p.includes('?') ? '&' : '?'}session=${id}`;
+  // The key is a production's. Read once, so a negative assertion below cannot
+  // quietly search for the string "undefined".
+  const cupKey = cup.productions[0].sessionKey;
+  ok('0. the tournament minted a real key', /^[0-9a-f-]{36}$/.test(cupKey ?? ''), cupKey);
   const here = at(cup.id);
   const there = at(other.id);
 
@@ -189,9 +193,9 @@ try {
    * This asserts the LIST, not a check in the handler - there is deliberately
    * none. Adding '/api/schedule' to KEYED_ROUTES turns 23 and 24 red.
    */
-  const keyed = await fetch(`${BASE}/api/schedule?key=${encodeURIComponent(cup.sessionKey)}`);
+  const keyed = await fetch(`${BASE}/api/schedule?key=${encodeURIComponent(cupKey)}`);
   ok('23. a session key cannot READ a schedule', keyed.status === 403, String(keyed.status));
-  const keyedWrite = await fetch(`${BASE}/api/schedule?key=${encodeURIComponent(cup.sessionKey)}`, json({ action: 'stage.save', stage: { name: 'x' } }));
+  const keyedWrite = await fetch(`${BASE}/api/schedule?key=${encodeURIComponent(cupKey)}`, json({ action: 'stage.save', stage: { name: 'x' } }));
   ok('24. ...nor write one', keyedWrite.status === 403, String(keyedWrite.status));
 
   // ------------------------------------------------- isolation and restart ---

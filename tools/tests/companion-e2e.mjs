@@ -198,7 +198,14 @@ try {
   const on = (tournamentId, pathAndQuery) =>
     `${BASE}${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}session=${encodeURIComponent(tournamentId)}`;
 
-  /** A tournament as its owner sees it, which is where hasControlKey lives. */
+  /*
+   * A tournament's FIRST DESK as its owner sees it, which is where
+   * hasControlKey lives now. A control key opens one desk - that is what a
+   * stream deck drives - so the flag moved down with the key it describes.
+   */
+  const deskNow = async (id) => (await tournamentNow(id)).productions[0];
+
+  /** A tournament as its owner sees it. */
   const tournamentNow = async (id) => {
     const payload = await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: cookie } })).json();
     return payload.tournaments.find((t) => t.id === id);
@@ -216,7 +223,7 @@ try {
 
   // ------------------------------------------------------- default closed ---
   const before = await tournamentNow(first.id);
-  ok('a tournament starts with no control key', before.hasControlKey === false, JSON.stringify(before.hasControlKey));
+  ok('a production starts with no control key', before.productions[0].hasControlKey === false, JSON.stringify(before.productions?.[0]));
   ok('and the value is not sent either', !before.controlKey, 'a key existed before it was asked for');
 
   const blank = await handshake('?key=');
@@ -239,7 +246,7 @@ try {
   const controlKey = minted.controlKey;
   ok('minting returns a control key', Boolean(controlKey) && controlKey.length > 20, String(controlKey));
   ok('which is not the session key', controlKey !== sessionKey, 'THE TWO KEYS ARE THE SAME');
-  ok('and the tournament now reports having one', (await tournamentNow(first.id)).hasControlKey === true);
+  ok('and the production now reports having one', (await deskNow(first.id)).hasControlKey === true);
 
   const junk = await handshake('?key=not-a-real-key-at-all');
   ok('a key that names nobody is refused', statusOf(junk) === 403, String(statusOf(junk)));
@@ -254,7 +261,12 @@ try {
   ok('and names a protocol version', hello?.protocol === 1, String(hello?.protocol));
   // The channel belongs to a production, so what it names is the tournament -
   // which is also the thing an operator with two decks needs told apart.
-  ok('and names the production', hello?.session === 'Companion', String(hello?.session));
+  /*
+   * The label a stream deck shows now names BOTH: "Companion - Main". A desk
+   * called "Court 2" is not enough on its own to know which competition you
+   * have connected to, and an operator with two tournaments open has two decks.
+   */
+  ok('and names the tournament and the desk', hello?.session === 'Companion - Main', String(hello?.session));
 
   /*
    * State on connect is load-bearing, not a nicety: Companion's module blanks
@@ -687,7 +699,7 @@ try {
   const fresh = rotated.controlKey;
   ok('the rotation handed back a different key', Boolean(fresh) && fresh !== controlKey, 'rotation reissued the same key');
   await controlKeyFor(first.id, 'clear');
-  ok('withdrawing leaves no key', (await tournamentNow(first.id)).hasControlKey === false);
+  ok('withdrawing leaves no key', (await deskNow(first.id)).hasControlKey === false);
   const withdrawn = await handshake(`?key=${fresh}`);
   ok('and the withdrawn key is refused', statusOf(withdrawn) === 403, String(withdrawn));
 

@@ -394,7 +394,10 @@ try {
 
   // -------------------------------------------------------- key rotation ---
   r = await boss('/api/tournaments', json({ action: 'rotate-key', id: bossTournament.id }));
-  const rotated = r.json?.tournament?.sessionKey;
+  // A key belongs to a production, so rotation answers on one - the record has
+  // no top-level key to read any more, and reading `undefined` here would make
+  // "the new key works" a request for `?key=undefined`.
+  const rotated = r.json?.tournament?.productions?.[0]?.sessionKey;
   ok('key rotates', r.status === 200 && Boolean(rotated) && rotated !== bossKey, JSON.stringify(r.json?.error));
   r = await anon(`/api/graphic?key=${bossKey}`);
   ok('the old key stops working', r.status === 404, `got ${r.status}`);

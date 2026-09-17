@@ -268,10 +268,17 @@ async function loadCompanion() {
   try {
     const payload = await (await fetch('/api/tournaments')).json();
     const found = (payload.tournaments ?? []).find((entry) => entry.id === id);
+    /*
+     * The control key belongs to a PRODUCTION, so the flag that says whether
+     * one exists is on the desk rather than the tournament. This panel shows
+     * the first desk, which is the one a single-stream tournament will only
+     * ever have; the Tournament page is where a second one is picked.
+     */
+    const desk = found?.productions?.[0];
     // A mint earlier in this page's life still holds the value; a reload does not.
     companionKey = {
       id,
-      has: Boolean(found?.hasControlKey),
+      has: Boolean(desk?.hasControlKey),
       value: companionKey.id === id ? companionKey.value : '',
     };
   } catch {
@@ -489,7 +496,9 @@ els.rotate.addEventListener('click', async () => {
     const id = SESSION_ID || me.sessions[0]?.id;
     if (!id) throw new Error('There is no tournament to re-key.');
     const payload = await post('/api/tournaments', { action: 'rotate-key', id });
-    els.key.textContent = payload.tournament.sessionKey;
+    // The key is a desk's. This panel operates the first one - see the note on
+    // companionKey above.
+    els.key.textContent = payload.tournament.productions[0].sessionKey;
     await refreshAccount();
     toast('New key made - re-copy the OBS and webhook URLs');
   } catch (error) {
@@ -525,7 +534,7 @@ els.companionNew.addEventListener('click', async () => {
     const id = hereTournament();
     if (!id) throw new Error('There is no tournament to make a key for.');
     const payload = await post('/api/tournaments', { action: 'control-key', id });
-    companionKey = { id, has: Boolean(payload.tournament?.hasControlKey), value: payload.controlKey ?? '' };
+    companionKey = { id, has: Boolean(payload.tournament?.productions?.[0]?.hasControlKey), value: payload.controlKey ?? '' };
     paintCompanion();
     toast('Control key ready - paste the URL into Companion');
   } catch (error) {
@@ -540,7 +549,7 @@ els.companionClear.addEventListener('click', async () => {
     const id = hereTournament();
     if (!id) throw new Error('There is no tournament to remove a key from.');
     const payload = await post('/api/tournaments', { action: 'control-key', id, mode: 'clear' });
-    companionKey = { id, has: Boolean(payload.tournament?.hasControlKey), value: '' };
+    companionKey = { id, has: Boolean(payload.tournament?.productions?.[0]?.hasControlKey), value: '' };
     paintCompanion();
     toast('Control key removed');
   } catch (error) {

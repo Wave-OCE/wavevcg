@@ -1045,7 +1045,16 @@ const sessions = makeSessionRegistry({
  */
 const companion = makeCompanionHub({
   ownerForKey: (key) => tournaments.resolveControlKey(key),
-  bundleFor: (id) => sessions.get(id),
+  /*
+   * `id` here is a PRODUCTION id - resolveControlKey hands back the desk as the
+   * owner, because a stream deck drives one desk. Its tournament is looked up
+   * rather than passed, so companion.js never has to know there are two ids.
+   */
+  bundleFor: (id) => {
+    const found = tournaments.byProductionId(id);
+    if (!found) throw new Error('That production no longer exists.');
+    return sessions.get(found.tournament.id, found.production.id);
+  },
   enabled: companionOn,
   log,
 });
@@ -2667,8 +2676,8 @@ async function contextFor(req, url) {
   const key = url.searchParams.get('key');
   if (key) {
     req.rlViaKey = true;
-    const owner = tournaments.bySessionKey(key);
-    if (!owner) {
+    const found = tournaments.bySessionKey(key);
+    if (!found) {
       /*
        * Worth a line of its own, and worth more now than it used to be.
        *
@@ -2679,13 +2688,21 @@ async function contextFor(req, url) {
        * how somebody finds out that the browser source which has gone black is
        * carrying an old key rather than a broken one.
        */
-      log.warn('auth', 'a request arrived with a session key that matches no tournament', {
+      log.warn('auth', 'a request arrived with a session key that matches no production', {
         path: safeLogUrl(req.url),
       });
-      return { user: null, owner: null, bundle: null, level: null, viaKey: true };
+      return { user: null, owner: null, production: null, bundle: null, level: null, viaKey: true };
     }
+    const { tournament: owner, production } = found;
     req.rlUser = owner.name || 'tournament';
-    return { user: null, owner, bundle: await sessions.get(owner.id), level: 'owner', viaKey: true };
+    return {
+      user: null,
+      owner,
+      production,
+      bundle: await sessions.get(owner.id, production.id),
+      level: 'owner',
+      viaKey: true,
+    };
   }
 
   const user = userFor(req);
@@ -2703,14 +2720,36 @@ async function contextFor(req, url) {
    * Null is a real answer. An account on no tournament is the ordinary state of
    * somebody who has just been given a login, and the pages handle it.
    */
+  /*
+   * Which desk. Two parameters, and `?production=` wins.
+   *
+   * A production id is a UUID and therefore globally unique, so naming one is
+   * enough to name its tournament too - which is why the picker writes only
+   * that. `?session=` stays, means a TOURNAMENT, and resolves to its first
+   * desk: every URL written before productions existed keeps meaning what it
+   * meant, exactly as the bus split kept unqualified meaning air.
+   */
+  const wantedDesk = (url.searchParams.get('production') ?? '').trim();
   const wanted = (url.searchParams.get('session') ?? '').trim();
-  const owner = wanted ? tournaments.byId(wanted) : tournaments.defaultFor(user.id);
-  if (!owner) return { user, owner: null, bundle: null, level: null, viaKey: false };
+
+  const found = wantedDesk ? tournaments.byProductionId(wantedDesk) : null;
+  const owner = found?.tournament ?? (wanted ? tournaments.byId(wanted) : tournaments.defaultFor(user.id));
+  if (!owner) return { user, owner: null, production: null, bundle: null, level: null, viaKey: false };
 
   const level = tournamentLevel(owner, user.id);
-  if (!canViewTournament(level)) return { user, owner, bundle: null, level: null, viaKey: false };
+  if (!canViewTournament(level)) {
+    return { user, owner, production: null, bundle: null, level: null, viaKey: false };
+  }
 
-  return { user, owner, bundle: await sessions.get(owner.id), level, viaKey: false };
+  const production = found?.production ?? tournaments.defaultProduction(owner);
+  // A tournament always has at least one desk - the store refuses to remove the
+  // last - so this is a corrupt record rather than an ordinary state.
+  if (!production) {
+    log.warn('auth', 'a tournament has no production', { tournament: owner.id });
+    return { user, owner, production: null, bundle: null, level: null, viaKey: false };
+  }
+
+  return { user, owner, production, bundle: await sessions.get(owner.id, production.id), level, viaKey: false };
 }
 
 /**
@@ -2956,18 +2995,81 @@ function noteLoginFailure(from) {
  * username would have been a lie that read fine right up until somebody
  * wondered whose account "Champions Tour" was.
  */
-const visibleSessions = (user) =>
+/**
+ * Open the desk this account lands on, so its drivers are running before they
+ * touch anything.
+ *
+ * It used to be `sessions.get(user.id)`, which was correct when a workspace WAS
+ * an account and has been wrong since the cutover: a user id is not a
+ * tournament id, so every sign-in built a phantom bundle keyed by the account,
+ * started its auto-hide and its agent-select clock, and left it there for
+ * nothing to ever read. Nothing failed, because the phantom never wrote - the
+ * stores only create their directory on a save.
+ *
+ * Null is an ordinary answer: somebody who has just been given a login is on no
+ * tournament yet.
+ */
+async function openDefaultDesk(user) {
+  const tournament = tournaments.defaultFor(user.id);
+  if (!tournament) return null;
+  const production = tournaments.defaultProduction(tournament);
+  if (!production) return null;
+  return sessions.get(tournament.id, production.id);
+}
+
+/**
+ * Is anything this account can reach currently loaded?
+ *
+ * The admin panel prints "production loaded" from this. It used to ask
+ * `sessions.has(user.id)`, which the cutover made unanswerable - a person has
+ * no session - so it had been quietly answering false for every account since.
+ * Asking about the tournaments they are a member of is both true and the thing
+ * the label claims.
+ */
+const hasOpenDesk = (user) => tournaments.forUser(user.id).some((tournament) => sessions.has(tournament.id));
+
+const visibleSessions = (user, currentProductionId = '') =>
   tournaments.forUser(user.id).map((tournament) => ({
     id: tournament.id,
     name: tournament.name || 'Untitled tournament',
     level: tournament.level,
     archived: Boolean(tournament.archivedAt),
     live: sessions.has(tournament.id),
-    // Editors get the key, viewers do not. An editor can already put things on
-    // air through the dashboard, so withholding the OBS URL would only stop
-    // them setting up the browser source for the show they are running. A
-    // viewer writing nothing must not be handed a webhook.
-    ...(canEditTournament(tournament.level) ? { sessionKey: tournament.sessionKey } : {}),
+    /*
+     * The desks, each with its own key.
+     *
+     * Editors get the keys, viewers do not. An editor can already put things on
+     * air through the dashboard, so withholding the OBS URL would only stop
+     * them setting up the browser source for the show they are running. A
+     * viewer writing nothing must not be handed a webhook.
+     */
+    productions: tournament.productions.map((production) => ({
+      id: production.id,
+      name: production.name,
+      live: sessions.has(tournament.id, production.id),
+      ...(canEditTournament(tournament.level) ? { sessionKey: production.sessionKey } : {}),
+    })),
+
+    /*
+     * The key of the desk THIS PAGE is looking at, kept at the top level.
+     *
+     * `session.js`'s targetKey() reads it, and so does the Account panel's OBS
+     * URL. It is the current production's key when the request named one and
+     * the first desk's otherwise - which is the same thing `?session=` alone
+     * resolves to, so the two cannot disagree.
+     *
+     * Duplicating it beside `productions[]` rather than making every caller
+     * pick: an OBS URL is the single most-copied string in this tool, and a
+     * page that has not yet learned about productions must not start handing
+     * out a blank one.
+     */
+    ...(canEditTournament(tournament.level)
+      ? {
+          sessionKey: (
+            tournament.productions.find((entry) => entry.id === currentProductionId) ?? tournament.productions[0]
+          )?.sessionKey,
+        }
+      : {}),
   }));
 
 /** Accounts that could be added to a tournament, for the Access panel's picker. */
@@ -3372,7 +3474,7 @@ async function handleAuth(pathname, req, res) {
         log.info('auth', `${user.username} signed in with Discord`, { role: user.role, from });
 
         const sessionToken = logins.create(user.id);
-        await sessions.get(user.id);
+        await openDefaultDesk(user);
         cookies.push(sessionCookie(sessionToken));
 
         return bounce(res, cookies, safeNext(flow.next));
@@ -3413,7 +3515,7 @@ async function handleAuth(pathname, req, res) {
       const token = logins.create(user.id);
       // Opened here rather than on their first save, so the auto-hide and the
       // agent-select clock are running before they touch anything.
-      await sessions.get(user.id);
+      await openDefaultDesk(user);
 
       res.setHeader('Set-Cookie', sessionCookie(token));
       return sendJson(res, 200, { user: publicUser(user, { includeKey: true }) });
@@ -3443,16 +3545,27 @@ async function handleAuth(pathname, req, res) {
  * `level` is the CALLER's, folded in by `forUser`, so a page never has to work
  * out its own access from a members map.
  */
-const publicTournament = (tournament, { includeControlKey = false } = {}) => ({
+const publicTournament = (tournament, { includeControlKey = '' } = {}) => ({
   ...tournament,
   /*
-   * The control key travels only when it is asked for, and it is asked for only
-   * by the owner who just minted it. It opens the desk - show, hide, next, swap
-   * - so it must not ride along in a list every member of every tournament
-   * fetches on page load, the way the session key does.
+   * The desks.
+   *
+   * The session key rides along, as it always has - it is what an editor types
+   * into OBS, and every member who can edit needs it on page load.
+   *
+   * The CONTROL key does not, except for the one desk that just minted it.
+   * `includeControlKey` is a production id rather than a boolean for exactly
+   * that reason: a tournament with four courts that returned all four control
+   * keys because one was rotated would put three live remote controls into a
+   * response nobody asked for them in. It opens the desk - show, hide, next,
+   * swap - so it travels to precisely the person who asked, for precisely the
+   * desk they asked about.
    */
-  controlKey: includeControlKey ? tournament.controlKey : undefined,
-  hasControlKey: Boolean(tournament.controlKey),
+  productions: (tournament.productions ?? []).map((production) => ({
+    ...production,
+    controlKey: includeControlKey === production.id ? production.controlKey : undefined,
+    hasControlKey: Boolean(production.controlKey),
+  })),
   members: Object.entries(tournament.members ?? {}).map(([id, level]) => ({
     id,
     level,
@@ -3509,6 +3622,24 @@ async function handleTournaments(pathname, req, res, ctx) {
      * tournament" for both, so the route cannot be used to discover which
      * competitions exist on this server.
      */
+    /**
+     * Which desk an action means.
+     *
+     * Named, it must exist ON THIS TOURNAMENT - a production id from somewhere
+     * else would otherwise let an owner of one competition rotate a key on
+     * another, since ids are globally unique and the level check above only
+     * covers the tournament. Unnamed, it is the first desk, which is the one a
+     * single-stream tournament will only ever have.
+     */
+    const deskOn = (tournament, productionId) => {
+      const wanted = String(productionId ?? '').trim();
+      const desk = wanted
+        ? tournament.productions.find((entry) => entry.id === wanted)
+        : tournament.productions[0];
+      if (!desk) throw new ProviderError(404, 'No such production.');
+      return desk;
+    };
+
     const target = () => {
       const found = tournaments.byId(body?.id);
       const level = tournamentLevel(found, user.id);
@@ -3594,7 +3725,10 @@ async function handleTournaments(pathname, req, res, ctx) {
         const { tournament, level } = target();
         if (!canEditTournament(level)) throw new ProviderError(403, 'You have view-only access to this tournament.');
 
-        const bundle = await sessions.get(tournament.id);
+        // The competition's stores alone. Opening a desk to read the team
+        // library would start a set of graphics drivers for an export, and
+        // would make an arbitrary choice between two courts to do it.
+        const bundle = await sessions.sharedFor(tournament.id);
         return {
           export: {
             kind: 'riotline-tournament',
@@ -3655,7 +3789,11 @@ async function handleTournaments(pathname, req, res, ctx) {
         // Named BEFORE the record goes, because after it there is nothing left
         // to name it with - and this line is the only trace that will remain.
         const label = wanted || 'Untitled tournament';
-        companion.closeForOwner(tournament.id, 'That tournament was deleted.');
+        // Every desk's sockets, because a control key belongs to a production
+        // now - one call with the tournament id would drop nothing at all.
+        for (const desk of tournament.productions) {
+          companion.closeForOwner(desk.id, 'That tournament was deleted.');
+        }
         await sessions.destroy(tournament.id);
         tournaments.remove(tournament.id);
         log.warn('tournament', `${user.username} DELETED "${label}" and its whole workspace`, { tournament: tournament.id });
@@ -3671,11 +3809,80 @@ async function handleTournaments(pathname, req, res, ctx) {
       case 'rotate-key': {
         const { tournament, level } = target();
         if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may re-key a tournament.');
-        const saved = tournaments.rotateSessionKey(tournament.id);
-        log.info('tournament', `${user.username} made a new session key for "${saved.name}" - its OBS and webhook URLs changed`, {
-          tournament: saved.id,
-        });
+        const desk = deskOn(tournament, body?.productionId);
+        const { tournament: saved, production } = tournaments.rotateSessionKey(tournament.id, desk.id);
+        log.info(
+          'tournament',
+          `${user.username} made a new session key for "${saved.name}" / "${production.name}" - its OBS and webhook URLs changed`,
+          { tournament: saved.id, production: production.id },
+        );
         return { tournament: publicTournament(saved) };
+      }
+
+      /*
+       * Another desk. One set of graphics, one OBS configuration, one stream
+       * deck - because a tournament runs more than one match at a time.
+       *
+       * Owner-only, like the keys, and for the same reason: a production mints
+       * a live session key on creation, so making one is handing out access to
+       * a new set of browser sources.
+       */
+      case 'production.create': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may add a production.');
+        const { tournament: saved, production } = tournaments.addProduction(tournament.id, body?.name);
+        log.info('tournament', `${user.username} added the production "${production.name}" to "${saved.name}"`, {
+          tournament: saved.id,
+          production: production.id,
+        });
+        return { tournament: publicTournament(saved), production: production.id };
+      }
+
+      case 'production.update': {
+        const { tournament, level } = target();
+        if (!canEditTournament(level)) throw new ProviderError(403, 'You have view-only access to this tournament.');
+        const desk = deskOn(tournament, body?.productionId);
+        const { tournament: saved } = tournaments.updateProduction(tournament.id, desk.id, body?.fields);
+        return { tournament: publicTournament(saved) };
+      }
+
+      /*
+       * Remove a desk, and its whole set of graphics with it.
+       *
+       * The same two gates delete has, for the same reasons: the exact name
+       * typed back, because a confirm dialog is answered "yes" by reflex; and
+       * the store refuses the LAST one, because a tournament with no desk has
+       * no graphics and no way back except editing JSON.
+       *
+       * No archive step here, unlike a tournament. A desk holds no competition
+       * - the teams, the schedule and the aliases all stay behind on the
+       * tournament - so what is lost is one set of graphic states, which is a
+       * moment in a show rather than a season of work.
+       */
+      case 'production.remove': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may remove a production.');
+        const desk = deskOn(tournament, body?.productionId);
+
+        const typed = String(body?.confirm ?? '').trim();
+        if (typed !== desk.name.trim()) {
+          throw new ProviderError(
+            400,
+            'That is not the name of this production.',
+            `Type "${desk.name}" exactly to confirm. Nothing has been removed.`,
+          );
+        }
+
+        const saved = tournaments.removeProduction(tournament.id, desk.id);
+        if (!saved) throw new ProviderError(404, 'No such production.');
+
+        companion.closeForOwner(desk.id, 'That production was removed.');
+        await sessions.destroyProduction(tournament.id, desk.id);
+        log.warn('tournament', `${user.username} removed the production "${desk.name}" from "${saved.name}"`, {
+          tournament: saved.id,
+          production: desk.id,
+        });
+        return { tournament: publicTournament(saved), removed: desk.id };
       }
 
       /*
@@ -3691,14 +3898,19 @@ async function handleTournaments(pathname, req, res, ctx) {
         const { tournament, level } = target();
         if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may change the control key.');
         const clearing = String(body?.mode ?? '') === 'clear';
-        const { tournament: saved, had } = tournaments.setControlKey(tournament.id, clearing ? false : true);
+        const desk = deskOn(tournament, body?.productionId);
+        const { tournament: saved, production, had } = tournaments.setControlKey(
+          tournament.id,
+          desk.id,
+          clearing ? false : true,
+        );
 
         log.info(
           'tournament',
           clearing
-            ? `${user.username} withdrew the Companion control key for "${saved.name}"`
-            : `${user.username} ${had ? 'made a new' : 'created a'} Companion control key for "${saved.name}"`,
-          { tournament: saved.id },
+            ? `${user.username} withdrew the Companion control key for "${saved.name}" / "${production.name}"`
+            : `${user.username} ${had ? 'made a new' : 'created a'} Companion control key for "${saved.name}" / "${production.name}"`,
+          { tournament: saved.id, production: production.id },
         );
 
         /*
@@ -3709,13 +3921,22 @@ async function handleTournaments(pathname, req, res, ctx) {
          * without this, revoking a leaked key would leave the leak connected
          * until somebody restarted the server.
          */
-        companion.closeForOwner(saved.id, clearing ? 'The control key was withdrawn.' : 'The control key changed.');
+        companion.closeForOwner(production.id, clearing ? 'The control key was withdrawn.' : 'The control key changed.');
 
-        return { tournament: publicTournament(saved), controlKey: saved.controlKey };
+        return {
+          // Scoped to the one desk that asked. See publicTournament.
+          tournament: publicTournament(saved, { includeControlKey: production.id }),
+          controlKey: production.controlKey,
+        };
       }
 
       default:
-        throw new ProviderError(400, 'Unknown tournament action.', 'One of: create, update, member, archive, rotate-key, control-key.');
+        throw new ProviderError(
+          400,
+          'Unknown tournament action.',
+          'One of: create, update, member, archive, export, delete, rotate-key, control-key, ' +
+            'production.create, production.update, production.remove.',
+        );
     }
   });
 }
@@ -3735,7 +3956,7 @@ async function handleAccount(pathname, req, res, ctx) {
       // visibleSessions - see the note on publicUser.
       user: publicUser(user, { includeKey: true, includeControlKey: true }),
       companion: { enabled: companionOn(), path: COMPANION_PATH },
-      sessions: visibleSessions(user),
+      sessions: visibleSessions(user, ctx?.production?.id ?? ''),
       grantable: grantableUsers(user),
       passwordMin: PASSWORD_MIN,
     });
@@ -3890,7 +4111,7 @@ async function handleAdmin(pathname, req, res, ctx) {
     return sendJson(res, 200, {
       users: users.list().map((user) => ({
         ...publicUser(user),
-        live: sessions.has(user.id),
+        live: hasOpenDesk(user),
         logins: 0,
       })),
       passwordMin: PASSWORD_MIN,
@@ -4109,7 +4330,7 @@ async function handleAdmin(pathname, req, res, ctx) {
           role: body?.role === 'admin' ? 'admin' : 'user',
         });
         log.info('admin', `${ctx.user.username} created the account "${created.username}"`, { role: created.role });
-        return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })), created: publicUser(created) };
+        return { users: users.list().map((user) => ({ ...publicUser(user), live: hasOpenDesk(user) })), created: publicUser(created) };
       }
 
       case 'update': {
@@ -4192,7 +4413,7 @@ async function handleAdmin(pathname, req, res, ctx) {
          * Dropping their logins, directly above, is what disabling means: they
          * lose access. Everything they had access to keeps running.
          */
-        return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
+        return { users: users.list().map((user) => ({ ...publicUser(user), live: hasOpenDesk(user) })) };
       }
 
       case 'delete': {
@@ -4245,7 +4466,7 @@ async function handleAdmin(pathname, req, res, ctx) {
          * page, which is where somebody doing it knows what they are deleting.
          */
         await users.remove(id);
-        return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
+        return { users: users.list().map((user) => ({ ...publicUser(user), live: hasOpenDesk(user) })) };
       }
 
       /*
@@ -4274,14 +4495,14 @@ async function handleAdmin(pathname, req, res, ctx) {
         await users.update(id, { discord: null });
         log.warn('admin', `${ctx.user.username} unlinked the Discord account from "${target.username}"`);
         logins.destroyFor(id);
-        return { users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
+        return { users: users.list().map((user) => ({ ...publicUser(user), live: hasOpenDesk(user) })) };
       }
 
       /** Close every login for an account without touching the password. */
       case 'sign-out': {
         const removed = logins.destroyFor(id);
         log.info('admin', `${ctx.user.username} signed "${target.username}" out everywhere`, { logins: removed });
-        return { removed, users: users.list().map((user) => ({ ...publicUser(user), live: sessions.has(user.id) })) };
+        return { removed, users: users.list().map((user) => ({ ...publicUser(user), live: hasOpenDesk(user) })) };
       }
 
       default:
@@ -5285,7 +5506,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
      * from its last save.
      */
     tournaments.flush();
-    void Promise.all(sessions.list().map((id) => flushSession(sessions.peek(id))))
+    void Promise.all(sessions.list().map((key) => flushSession(sessions.peekKey(key))))
       .catch(() => {})
       .then(() => browser?.close())
       .catch(() => {})

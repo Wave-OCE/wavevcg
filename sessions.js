@@ -55,20 +55,40 @@ import { BUS_KEYS, makeBus } from './buses.js';
  *             an alias staged on preview while air keeps the wrong name is not
  *             a feature anybody asked for.
  */
-const STORES = [
-  ['globals', makeGlobalStore, 'global.json'],
+/**
+ * The COMPETITION's stores. One copy, shared by every production of it.
+ *
+ * The rule for this list is "would two desks running two matches of the same
+ * competition ever want different answers". None of these would:
+ *
+ *   teams     one library of orgs. Two per tournament is two to keep in step,
+ *             and the failure is a rename that reached one court and not the
+ *             other - on air, with nothing raised.
+ *   aliases   a player-name correction is wanted everywhere at once, which is
+ *             already why it is not split across preview and program.
+ *   schedule  there is one competition. A table per court is not a table.
+ *   presets   the look of the broadcast. Both courts of one tournament should
+ *             match, and that is the whole point of having a preset.
+ *
+ * They are shared by REFERENCE, so an edit made on one desk is visible to the
+ * other immediately - no syncing, no second source of truth.
+ */
+const SHARED_STORES = [
   ['presets', makePresetStore, 'presets.json'],
   ['teams', makeTeamStore, 'teams.json'],
   ['aliases', makeAliasStore, 'aliases.json'],
-  /*
-   * The schedule: stages, fixtures, and the edges that carry a winner forward.
-   *
-   * A single store rather than a bus, by the rule above. It is a library of
-   * matches exactly as `teams` is a library of orgs - no audience sees it, and
-   * a bus would light "preview differs from air" every time somebody edited
-   * next Tuesday's fixture.
-   */
   ['schedule', makeScheduleStore, 'schedule.json'],
+];
+
+/**
+ * The DESK's stores. One set per production.
+ *
+ * `globals` is here rather than above and the reason is the one that made
+ * productions necessary at all: it carries the map and the shared settings of
+ * a match, and two courts are not on the same map.
+ */
+const STORES = [
+  ['globals', makeGlobalStore, 'global.json'],
 ];
 
 /**
@@ -82,6 +102,8 @@ const SAFE_ID = /^[a-z0-9-]{1,64}$/i;
 export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} }) {
   /** @type {Map<string, object>} */
   const bundles = new Map();
+  /** A desk is identified by BOTH ids; a production id alone would not name its tree. */
+  const keyOf = (tournamentId, productionId) => `${String(tournamentId)}/${String(productionId)}`;
   /** @type {Map<string, Promise<object>>} */
   const opening = new Map();
 
@@ -101,13 +123,61 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
    * that works for some workspaces and serves silent defaults for the rest.
    */
   const dirFor = (tournamentId) => path.join(root, 'tournaments', String(tournamentId));
+  /*
+   * And the second level, which is the productions cutover.
+   *
+   * A tournament's own directory still holds the competition - teams, aliases,
+   * the schedule, the presets - and each DESK gets a subdirectory of it for the
+   * graphics and the globals. The same rule as last time applies: there is no
+   * fallback to the flat layout, because a reader that quietly tried the parent
+   * directory too would turn a half-finished migration into a server that
+   * serves real state for some desks and silent defaults for the rest - which
+   * on air is an empty scoreboard nobody can explain.
+   *
+   * `tools/migrate-productions.mjs` is what moves the files.
+   */
+  const deskFor = (tournamentId, productionId) =>
+    path.join(dirFor(tournamentId), 'productions', String(productionId));
 
-  async function open(tournamentId) {
+  /** The competition's stores, opened once per tournament and shared by reference. */
+  const shared = new Map();
+  const sharing = new Map();
+
+  async function openShared(tournamentId) {
     const id = String(tournamentId);
-    if (!SAFE_ID.test(id)) throw new Error('Bad session id.');
+    const existing = shared.get(id);
+    if (existing) return existing;
+    const pending = sharing.get(id);
+    if (pending) return pending;
 
-    const dir = dirFor(id);
-    const bundle = { tournamentId: id, dir, teardown: [] };
+    const work = (async () => {
+      const dir = dirFor(id);
+      const stores = {};
+      for (const [key, make, file] of SHARED_STORES) stores[key] = make(path.join(dir, file));
+      await Promise.all(SHARED_STORES.map(([key]) => stores[key].load()));
+      shared.set(id, stores);
+      sharing.delete(id);
+      return stores;
+    })().catch((error) => {
+      sharing.delete(id);
+      throw error;
+    });
+
+    sharing.set(id, work);
+    return work;
+  }
+
+  async function open(tournamentId, productionId) {
+    const id = String(tournamentId);
+    const desk = String(productionId);
+    if (!SAFE_ID.test(id) || !SAFE_ID.test(desk)) throw new Error('Bad session id.');
+
+    const dir = deskFor(id, desk);
+    const bundle = { tournamentId: id, productionId: desk, dir, teardown: [] };
+
+    // The competition first, so a desk that opens second finds the same
+    // library object the first one is already writing into.
+    Object.assign(bundle, await openShared(id));
 
     for (const [key, make, file] of STORES) {
       bundle[key] = make(path.join(dir, file));
@@ -147,13 +217,41 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
       return bundles.size;
     },
 
-    /** Every session that has been opened since boot. For the admin panel. */
+    /** Every desk opened since boot, as `<tournamentId>/<productionId>`. */
     list: () => [...bundles.keys()],
 
-    has: (userId) => bundles.has(String(userId)),
+    /**
+     * Is a desk open? With no production, is ANY desk of this tournament open?
+     *
+     * Both questions get asked and they are genuinely different: the picker
+     * wants to know about one court, and the tournament list wants to know
+     * whether the competition is loaded at all.
+     */
+    has: (tournamentId, productionId) =>
+      productionId === undefined
+        ? [...bundles.keys()].some((entry) => entry.startsWith(`${String(tournamentId)}/`))
+        : bundles.has(keyOf(tournamentId, productionId)),
 
     /** An already-open bundle, without opening one. For shutdown and reporting. */
-    peek: (userId) => bundles.get(String(userId)) ?? null,
+    peek: (tournamentId, productionId) => bundles.get(keyOf(tournamentId, productionId)) ?? null,
+
+    /**
+     * The competition's stores alone, with no desk.
+     *
+     * For the export, which reads the team library, the aliases and the
+     * schedule and has no business opening a set of graphics - or choosing
+     * arbitrarily between two desks - to do it.
+     */
+    sharedFor: (tournamentId) => openShared(tournamentId),
+
+    /** A bundle by the composite key `list()` hands out. For the shutdown flush. */
+    peekKey: (key) => bundles.get(String(key)) ?? null,
+
+    /** Which desks of one tournament are open. For a delete that has to close them all. */
+    deskKeysFor: (tournamentId) => {
+      const prefix = `${String(tournamentId)}/`;
+      return [...bundles.keys()].filter((entry) => entry.startsWith(prefix));
+    },
 
     /**
      * The bundle for a user, opening it if this is the first time.
@@ -163,15 +261,15 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
      * a full set of stores over the same files, and the loser's writes would
      * vanish into an object nobody was reading.
      */
-    async get(userId) {
-      const id = String(userId);
+    async get(tournamentId, productionId) {
+      const id = keyOf(tournamentId, productionId);
       const existing = bundles.get(id);
       if (existing) return existing;
 
       const pending = opening.get(id);
       if (pending) return pending;
 
-      const work = open(id)
+      const work = open(tournamentId, productionId)
         .then((bundle) => {
           bundles.set(id, bundle);
           opening.delete(id);
@@ -186,9 +284,9 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
       return work;
     },
 
-    /** Stop a session's timers and forget it. The files stay. */
-    dispose(userId) {
-      const id = String(userId);
+    /** Stop one desk's timers and forget it. The files stay. */
+    dispose(tournamentId, productionId) {
+      const id = keyOf(tournamentId, productionId);
       const bundle = bundles.get(id);
       if (!bundle) return false;
       for (const stop of bundle.teardown) {
@@ -204,13 +302,41 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
       return true;
     },
 
-    /** Everything a deleted account leaves behind. */
-    async destroy(userId) {
-      const id = String(userId);
+    /**
+     * Everything a deleted TOURNAMENT leaves behind - every desk of it.
+     *
+     * Each desk is disposed first, because a driver still running would keep
+     * writing into a tree being removed underneath it. The shared stores go too:
+     * leaving them cached would let a tournament created later with the same id
+     * - which cannot happen with UUIDs, but "cannot happen" is how this file
+     * already got one directory-traversal guard - open onto a stale library.
+     */
+    async destroy(tournamentId) {
+      const id = String(tournamentId);
       if (!SAFE_ID.test(id)) throw new Error('Bad session id.');
-      this.dispose(id);
+      for (const entry of this.deskKeysFor(id)) {
+        const [, desk] = entry.split('/');
+        this.dispose(id, desk);
+      }
+      shared.delete(id);
       await rm(dirFor(id), { recursive: true, force: true });
       log('session', `deleted the state of ${id}`);
+    },
+
+    /**
+     * One desk removed, leaving the competition alone.
+     *
+     * The counterpart to `destroy`, and the distinction matters: removing a
+     * court must not take the team library, the schedule or the other court
+     * with it.
+     */
+    async destroyProduction(tournamentId, productionId) {
+      const id = String(tournamentId);
+      const desk = String(productionId);
+      if (!SAFE_ID.test(id) || !SAFE_ID.test(desk)) throw new Error('Bad session id.');
+      this.dispose(id, desk);
+      await rm(deskFor(id, desk), { recursive: true, force: true });
+      log('session', `deleted the state of desk ${desk}`);
     },
   };
 }
