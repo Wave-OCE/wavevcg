@@ -27,6 +27,7 @@
 import path from 'node:path';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
+import { makeScheduleStore } from './schedule.js';
 import {
   makeAliasStore,
   makeGlobalStore,
@@ -59,6 +60,15 @@ const STORES = [
   ['presets', makePresetStore, 'presets.json'],
   ['teams', makeTeamStore, 'teams.json'],
   ['aliases', makeAliasStore, 'aliases.json'],
+  /*
+   * The schedule: stages, fixtures, and the edges that carry a winner forward.
+   *
+   * A single store rather than a bus, by the rule above. It is a library of
+   * matches exactly as `teams` is a library of orgs - no audience sees it, and
+   * a bus would light "preview differs from air" every time somebody edited
+   * next Tuesday's fixture.
+   */
+  ['schedule', makeScheduleStore, 'schedule.json'],
 ];
 
 /**

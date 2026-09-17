@@ -50,6 +50,16 @@ import {
 } from './riot-account.js';
 import { ROSTER_LIMIT } from './public/teams.js';
 import { sanitiseTournamentFields } from './public/tournament-schema.js';
+import {
+  fixtureLabel,
+  fixturesFedBy,
+  roundRobinPairs,
+  sanitiseFixture,
+  sanitiseMapRow,
+  sanitiseSlot,
+  sanitiseStage,
+  slotFilled,
+} from './public/schedule-schema.js';
 import { makeTrackerBrowser } from './browser.js';
 import {
   PASSWORD_MIN,
@@ -1381,7 +1391,7 @@ function installSession(bundle) {
 /**
  * Flush everything a session holds. Called on shutdown and on eviction.
  *
- * All SEVEN stores. It was six, and the missing one was aliases - which is the
+ * All EIGHT stores. It was six, and the missing one was aliases - which is the
  * store written most often without anybody pressing anything, because every
  * roster event records the players it saw. A restart could therefore drop the
  * last lobby's sightings, or a name typed a second earlier, with the write half
@@ -1396,6 +1406,7 @@ const flushSession = (bundle) =>
     bundle.presets.flush(),
     bundle.teams.flush(),
     bundle.aliases.flush(),
+    bundle.schedule.flush(),
   ]).catch(() => {});
 
 // ----------------------------------------------------------------- riot ---
@@ -1420,7 +1431,7 @@ async function handleApi(pathname, params, ctx) {
   // The session being read. Resolved by the gate, which has already checked
   // that whoever is asking is allowed to see it - by that point this is just
   // the set of stores to answer from.
-  const { globals, aliases, presets, teams, lookups, lobby } = ctx.bundle ?? {};
+  const { globals, aliases, presets, teams, schedule, lookups, lobby } = ctx.bundle ?? {};
   // Reads answer for whichever bus was asked for, defaulting to air - see
   // busFor. `?bus=preview` is what the dashboard will ask for from stage 4.
   const readBus = busFor(params);
@@ -1635,6 +1646,19 @@ async function handleApi(pathname, params, ctx) {
 
     case '/api/teams':
       return { teams: teams.list() };
+
+    /*
+     * The document verbatim: no resolved slots, no standings, no bracket
+     * columns on the wire.
+     *
+     * All three are pure functions of what is already in this payload, and a
+     * server-side second implementation is one refactor away from disagreeing
+     * with the browser's - which would show as a table on the desk that does
+     * not match the one in the editor, with nothing failing. The schema exports
+     * them and both sides call the same function.
+     */
+    case '/api/schedule':
+      return { schedule: schedule.document() };
 
     case '/api/media': {
       /*
@@ -1945,7 +1969,206 @@ async function handlePlayerVerify(body) {
   throw new ProviderError(400, 'Unknown verify action.', 'One of: resolve, check.');
 }
 
-async function handleTeamAction({ teams }, body) {
+/**
+ * Every change to a schedule.
+ *
+ * One switch with a throwing `default:`, and every branch goes through
+ * `schedule.apply` - which mutates a clone, propagates results along the edges,
+ * validates the whole document and assigns only if it is clean. Nothing here
+ * writes to the live document directly, and that is the point: the rules worth
+ * enforcing are relationships, so they are enforced where the relationships
+ * are.
+ *
+ * The level gate and the CSRF shape are both already applied once, above
+ * `handlePost`, so there is nothing to check here. A viewer cannot reach it.
+ */
+async function handleScheduleAction({ schedule }, body) {
+  const action = String(body?.action ?? '');
+  const out = (document) => ({ schedule: document });
+
+  switch (action) {
+    case 'stage.save':
+      return out(
+        schedule.apply((draft) => {
+          const wanted = sanitiseStage(body?.stage ?? {});
+          if (!wanted.id) throw badRequest('A stage needs a name.');
+          const at = draft.stages.findIndex((entry) => entry.id === wanted.id);
+          if (at === -1) draft.stages.push(wanted);
+          else draft.stages[at] = wanted;
+        }),
+      );
+
+    /*
+     * Refused while fixtures sit in it, rather than cascading.
+     *
+     * A cascade here deletes matches that have been played, from a button
+     * labelled "remove stage". Naming the count makes the operator see the
+     * consequence, and moving the fixtures out first is one more click.
+     */
+    case 'stage.remove':
+      return out(
+        schedule.apply((draft) => {
+          const id = String(body?.id ?? '');
+          const holding = draft.fixtures.filter((entry) => entry.stageId === id);
+          if (holding.length) {
+            throw badRequest(
+              `That stage still holds ${holding.length} fixture${holding.length === 1 ? '' : 's'}.`,
+              'Move or remove them first.',
+            );
+          }
+          draft.stages = draft.stages.filter((entry) => entry.id !== id);
+        }),
+      );
+
+    case 'fixture.save':
+      return out(
+        schedule.apply((draft) => {
+          const wanted = sanitiseFixture({ ...(body?.fixture ?? {}) });
+          if (!wanted.id) wanted.id = schedule.mintId();
+          const at = draft.fixtures.findIndex((entry) => entry.id === wanted.id);
+          if (at === -1) draft.fixtures.push(wanted);
+          else draft.fixtures[at] = wanted;
+        }),
+      );
+
+    /*
+     * Refused while something takes a side from it, and there is deliberately
+     * NO force override.
+     *
+     * An override that exists gets used at 2am on show day, and what it would
+     * leave behind is a semi-final whose team came from nowhere. Unwiring the
+     * edge first is one click and it makes the consequence visible.
+     */
+    case 'fixture.remove':
+      return out(
+        schedule.apply((draft) => {
+          const id = String(body?.id ?? '');
+          const fed = fixturesFedBy(draft, id);
+          if (fed.length) {
+            throw badRequest(
+              `${fed.length} fixture${fed.length === 1 ? '' : 's'} take a side from that one.`,
+              fed.map((entry) => fixtureLabel(entry)).join(', '),
+            );
+          }
+          draft.fixtures = draft.fixtures.filter((entry) => entry.id !== id);
+        }),
+      );
+
+    /*
+     * Record a result. The one action that moves teams into other fixtures,
+     * which it does by way of `apply`'s propagate rather than by writing them
+     * itself - so the edge logic has exactly one implementation.
+     */
+    case 'result':
+      return out(
+        schedule.apply((draft) => {
+          const target = draft.fixtures.find((entry) => entry.id === String(body?.id ?? ''));
+          if (!target) throw badRequest('No such fixture.');
+          if (Array.isArray(body?.maps)) {
+            if (body.maps.length > target.bestOf) {
+              throw badRequest(
+                `A best of ${target.bestOf} holds ${target.bestOf} maps, not ${body.maps.length}.`,
+                'Change the series length first if this really is a longer match.',
+              );
+            }
+            target.maps = body.maps.map(sanitiseMapRow);
+          }
+          if (body?.winner !== undefined) target.winner = sanitiseFixture({ winner: body.winner }).winner;
+        }),
+      );
+
+    /** Reorder within a stage. Presentation, but it is what a bracket is drawn from. */
+    case 'move':
+      return out(
+        schedule.apply((draft) => {
+          for (const entry of Array.isArray(body?.fixtures) ? body.fixtures : []) {
+            const target = draft.fixtures.find((fixture) => fixture.id === String(entry?.id ?? ''));
+            if (!target) continue;
+            const moved = sanitiseFixture({ ...target, round: entry.round, slot: entry.slot, order: entry.order, bracket: entry.bracket });
+            target.round = moved.round;
+            target.slot = moved.slot;
+            target.order = moved.order;
+            target.bracket = moved.bracket;
+          }
+        }),
+      );
+
+    /*
+     * Lay out a stage's fixtures in one press.
+     *
+     * Generation only ever ADDS - it never clears what is there, because a
+     * button that silently discarded a half-recorded group would be the worst
+     * kind of convenience. An operator who wants a clean slate removes the
+     * fixtures, and sees how many they are removing.
+     */
+    case 'generate':
+      return out(
+        schedule.apply((draft) => {
+          const stage = draft.stages.find((entry) => entry.id === String(body?.stageId ?? ''));
+          if (!stage) throw badRequest('No such stage.');
+          const seats = (Array.isArray(body?.teams) ? body.teams : []).map(sanitiseSlot).filter(slotFilled);
+          if (seats.length < 2) throw badRequest('Pick at least two teams.');
+
+          const made = [];
+          if (stage.kind === 'bracket') {
+            /*
+             * Seeded single elimination: 1 plays the last seed, 2 plays the
+             * second-last, and so on, so the top seeds meet last. Byes are left
+             * as empty slots rather than auto-advanced - a bye is a real thing
+             * an operator may want to see and label.
+             */
+            const size = 2 ** Math.ceil(Math.log2(seats.length));
+            for (let i = 0; i < size / 2; i += 1) {
+              made.push(
+                sanitiseFixture({
+                  id: schedule.mintId(),
+                  stageId: stage.id,
+                  round: 1,
+                  slot: i,
+                  bestOf: stage.bestOf,
+                  left: seats[i] ?? {},
+                  right: seats[size - 1 - i] ?? {},
+                }),
+              );
+            }
+          } else {
+            const rounds = roundRobinPairs(seats.length);
+            rounds.forEach((pairs, round) => {
+              pairs.forEach(([a, b], slot) => {
+                made.push(
+                  sanitiseFixture({
+                    id: schedule.mintId(),
+                    stageId: stage.id,
+                    round: round + 1,
+                    slot,
+                    bestOf: stage.bestOf,
+                    left: seats[a],
+                    right: seats[b],
+                  }),
+                );
+              });
+            });
+          }
+          draft.fixtures.push(...made);
+        }),
+      );
+
+    default:
+      throw new ProviderError(
+        400,
+        'Unknown schedule action.',
+        'One of: stage.save, stage.remove, fixture.save, fixture.remove, result, move, generate.',
+      );
+  }
+}
+
+/** `apply`'s mutator throws these; handleWrite turns them into a 400 with the hint. */
+const badRequest = (message, hint = '') => {
+  const error = new ProviderError(400, message, hint);
+  return error;
+};
+
+async function handleTeamAction({ teams, schedule }, body) {
   const action = String(body?.action ?? '');
 
   switch (action) {
@@ -1956,7 +2179,30 @@ async function handleTeamAction({ teams }, body) {
     }
 
     case 'delete': {
-      if (!teams.remove(String(body?.id ?? ''))) throw new ProviderError(404, 'No such team.');
+      const id = String(body?.id ?? '');
+
+      /*
+       * Refused while a fixture names this team.
+       *
+       * The fixture keeps a COPY, so deleting the library entry would not
+       * actually break anything on screen - which is exactly why this is worth
+       * refusing rather than allowing. A schedule that still shows a team
+       * nobody can pick any more is a confusing half-state, and the operator
+       * who pressed Delete would have no way to know they had made one.
+       *
+       * It names the fixtures rather than counting them, because the next
+       * question is always "which ones".
+       */
+      const booked = schedule.usesTeam(id);
+      if (booked.length) {
+        throw new ProviderError(
+          409,
+          `That team is in ${booked.length} fixture${booked.length === 1 ? '' : 's'}.`,
+          booked.map((fixture) => fixtureLabel(fixture)).join(', '),
+        );
+      }
+
+      if (!teams.remove(id)) throw new ProviderError(404, 'No such team.');
       await teams.flush();
       return { teams: teams.list() };
     }
@@ -3358,6 +3604,7 @@ async function handleTournaments(pathname, req, res, ctx) {
             fields: sanitiseTournamentFields(tournament),
             teams: bundle.teams.list(),
             aliases: bundle.aliases.list(),
+            schedule: bundle.schedule.document(),
             presets: bundle.presets.list().filter((entry) => !entry.builtIn),
           },
         };
@@ -4887,6 +5134,23 @@ async function handlePost(pathname, req, res, ctx, params) {
       return handleWrite(res, async () => handleTeamAction(bundle, await readJsonBody(req)));
 
     /*
+     * NOT in KEYED_ROUTES, either verb, and the question that list exists to
+     * force is worth answering in both directions.
+     *
+     * Write: obvious. Editing a competition is further from showing a graphic
+     * than operating the desk is, and the desk is already out of bounds.
+     *
+     * Read: less obvious and the same answer. The session key is the weak one
+     * on purpose - it is typed into OBS configuration and read out over screen
+     * shares - and a draw that has not been announced is exactly the kind of
+     * thing that must not leak from a URL sitting in somebody's stream
+     * settings. A schedule is a library, which is the category the comment on
+     * that list already excludes.
+     */
+    case '/api/schedule':
+      return handleWrite(res, async () => handleScheduleAction(bundle, await readJsonBody(req)));
+
+    /*
      * POST rather than GET, and deliberately NOT in KEYED_ROUTES.
      *
      * POST because it spends somebody else's rate limit - ten outbound lookups
@@ -5013,7 +5277,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
      * The tournament index, added here in the same commit that made anything
      * depend on it.
      *
-     * flushSession below covers a bundle's seven stores and its own comment
+     * flushSession below covers a bundle's eight stores and its own comment
      * records the bug from when that list was six and one was missed. This is
      * the server-wide half of the same hazard, and losing it loses a
      * tournament's membership list and its keys - which is not reconstructable
