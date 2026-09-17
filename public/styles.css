@@ -3563,3 +3563,34 @@ label.is-off {
     grid-column: 1 / -1;
   }
 }
+
+/*
+ * The productions list on the Tournament page.
+ *
+ * Wraps, like every other row that grows with the data. A desk name plus four
+ * buttons is already wider than a narrow window, and a flex container does not
+ * report its own overflow - it just gets wider than its parent, nothing
+ * measures it and nothing fails. See the admin-row note in CLAUDE.md.
+ */
+.desk-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--edge, #2a3038);
+}
+
+/* The name takes the slack so the buttons stay together on the right. */
+.desk-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.desk-note {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  opacity: 0.55;
+}

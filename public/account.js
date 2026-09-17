@@ -16,7 +16,7 @@ import { el } from './fields.js';
 import { SETTING_FIELDS } from './settings-schema.js';
 import { CAPABILITY_FIELDS } from './capability-schema.js';
 import { COMPANION_GRAPHICS, companionVariables } from './companion-schema.js';
-import { SESSION_ID, account, refreshAccount, switchTo } from './session.js';
+import { PRODUCTION_ID, SESSION_ID, account, refreshAccount, switchDesk, switchTo } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -58,6 +58,8 @@ const els = {
   whoami: $('whoami'),
   whoamiUser: $('whoami-user'),
   target: $('session-target'),
+  desk: $('desk-target'),
+  deskWrap: $('desk-target-wrap'),
   adminTab: document.querySelector('.tab[data-tab="admin"]'),
 
   facts: $('account-facts'),
@@ -166,6 +168,24 @@ function paintTopbar() {
   const mine = me.sessions.find((entry) => entry.id === current);
 
   /*
+   * The desks of the tournament on screen.
+   *
+   * Shown only when there is more than one, like the tournament selector above
+   * it - a competition running a single stream should not be asked to choose
+   * between one thing. The moment somebody adds Court 2 it appears, on every
+   * page, because which desk you are on decides which graphics every tab is
+   * editing.
+   */
+  const desks = mine?.productions ?? [];
+  const here = PRODUCTION_ID || desks[0]?.id || '';
+  els.desk.replaceChildren(
+    ...desks.map((desk) =>
+      el('option', null, { value: desk.id, selected: desk.id === here ? 'selected' : null }, desk.name || 'Untitled production'),
+    ),
+  );
+  els.deskWrap.hidden = desks.length < 2;
+
+  /*
    * The on-air safety cue, redefined - and this needs a human decision, so it
    * is flagged in the handover rather than quietly settled here.
    *
@@ -197,6 +217,21 @@ function paintTopbar() {
 
   if (els.adminTab) els.adminTab.hidden = me.user.role !== 'admin';
 }
+
+/*
+ * Another module refreshed the account - a desk added on the Tournament page,
+ * say. The selectors up here have to follow, and this module was not involved
+ * in the change that caused it.
+ */
+window.addEventListener('account-changed', (event) => {
+  if (!event.detail) return;
+  me = event.detail;
+  paintTopbar();
+});
+
+els.desk.addEventListener('change', () => {
+  switchDesk(els.desk.value);
+});
 
 els.target.addEventListener('change', () => {
   // Your own session is the plain URL, not ?session=<your id>: a bookmark that

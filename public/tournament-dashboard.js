@@ -31,7 +31,7 @@
 import { el, grid, help, makeFields, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
-import { account, refreshAccount } from './session.js';
+import { account, refreshAccount, switchDesk } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -48,6 +48,7 @@ const els = {
   note: $('tou-note'),
   settings: $('tou-settings'),
   fields: $('tou-fields'),
+  desks: $('tou-desks'),
   saved: $('tou-saved'),
   access: $('tou-access'),
   teams: $('tou-teams'),
@@ -192,6 +193,123 @@ if (els.pick) {
         ? 'Archived. Reopen it to change these.'
         : 'You have view-only access to this tournament.'
       : '';
+  }
+
+  /**
+   * The desks, listed and managed.
+   *
+   * No text input anywhere in here - the name is edited through a prompt rather
+   * than an inline box, so this block is free to repaint on every change. The
+   * caret rule, obeyed by not having the problem.
+   */
+  function buildDesks() {
+    if (!current) return;
+    const owner = isOwner();
+    const rows = current.productions ?? [];
+
+    els.desks.replaceChildren(
+      ...rows.map((desk) => {
+        const row = el('div', 'desk-row');
+        row.append(
+          el('span', 'desk-name', {}, desk.name || 'Untitled production'),
+          el(
+            'span',
+            'desk-note',
+            { title: desk.hasControlKey ? 'A stream deck can drive this desk.' : '' },
+            desk.hasControlKey ? 'OBS + stream deck' : 'OBS',
+          ),
+        );
+
+        const open = el('button', 'mini-btn', { type: 'button', title: 'Point this dashboard at that desk' }, 'Open');
+        open.addEventListener('click', () => switchDesk(desk.id));
+        row.append(open);
+
+        if (mayEdit()) {
+          const rename = el('button', 'mini-btn', { type: 'button' }, 'Rename');
+          rename.addEventListener('click', async () => {
+            const name = window.prompt(`What should this production be called?`, desk.name);
+            if (name === null || name.trim() === desk.name) return;
+            try {
+              const payload = await send({
+                action: 'production.update',
+                id: current.id,
+                productionId: desk.id,
+                fields: { name: name.trim() },
+              });
+              current = payload.tournament;
+              await refreshAccount();
+              paint();
+            } catch (error) {
+              toast(error.message);
+            }
+          });
+          row.append(rename);
+        }
+
+        /*
+         * Removing takes that desk's whole set of graphics. Owner-only, the
+         * exact name typed back, and never offered for the last one - a
+         * tournament with no desk has no OBS URL and no way back.
+         */
+        if (owner && rows.length > 1) {
+          const drop = el('button', 'mini-btn', { type: 'button', title: 'Remove this desk and its graphics' }, 'Remove');
+          drop.addEventListener('click', async () => {
+            const typed = window.prompt(
+              [
+                `Remove "${desk.name}"?`,
+                '',
+                'Its graphics, its OBS URLs and its stream deck key all go. The teams, the schedule ' +
+                  'and the player names stay - they belong to the tournament.',
+                '',
+                'Type the name to confirm:',
+              ].join('\n'),
+            );
+            if (typed === null) return;
+            try {
+              const payload = await send({
+                action: 'production.remove',
+                id: current.id,
+                productionId: desk.id,
+                confirm: typed,
+              });
+              current = payload.tournament;
+              await refreshAccount();
+              paint();
+              toast(`Removed "${desk.name}"`);
+            } catch (error) {
+              toast(error.message);
+            }
+          });
+          row.append(drop);
+        }
+
+        return row;
+      }),
+      ...(owner ? [addDeskRow()] : []),
+    );
+  }
+
+  function addDeskRow() {
+    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add production');
+    add.addEventListener('click', async () => {
+      const name = window.prompt(
+        ['What is this production called?', '', 'e.g. Court 2, Alpha stream'].join('\n'),
+        'Court 2',
+      );
+      if (!name?.trim()) return;
+      try {
+        const payload = await send({ action: 'production.create', id: current.id, name: name.trim() });
+        current = payload.tournament;
+        // The topbar's production selector lives in account.js and is built
+        // from the cached account, which knows nothing about this yet.
+        await refreshAccount();
+        paint();
+        toast(`Added "${name.trim()}" - it has its own OBS URLs`);
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    return add;
   }
 
   // --------------------------------------------------------------- access ---
@@ -381,6 +499,7 @@ if (els.pick) {
     paintPicker();
     if (current) {
       buildSettings();
+      buildDesks();
       buildAccess();
     }
   }

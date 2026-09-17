@@ -135,10 +135,20 @@
         "am I about to put this on somebody else's stream?" The whole page gets
         a border when the answer is yes - see .is-guest in styles.css.
       -->
+      <!--
+        Two selectors, and the first one used to be mislabelled.
+        It says "Tournament" now because it lists tournaments, and
+        "Production" means a DESK - one set of graphics and one OBS
+        configuration. A tournament owns several; see tournament-schema.js.
+      -->
       <div class="whoami" id="whoami" hidden>
         <label class="whoami-target">
-          <span>Production</span>
+          <span>Tournament</span>
           <select id="session-target"></select>
+        </label>
+        <label class="whoami-target" id="desk-target-wrap" hidden>
+          <span>Production</span>
+          <select id="desk-target"></select>
         </label>
         <span class="whoami-user" id="whoami-user"></span>
       </div>
@@ -795,6 +805,23 @@
           <h2 class="panel-title">Settings</h2>
           <div class="g-grid" id="tou-fields"></div>
           <p class="field-help" id="tou-saved"></p>
+
+          <!--
+            The desks. One set of graphics, one OBS configuration and one stream
+            deck each - a tournament owns as many as it runs matches at once.
+
+            Here rather than on a sub-tab of its own: a single-stream tournament
+            has exactly one and never thinks about it, and a fifth sub-tab for
+            something most competitions never touch is a button in the way of
+            the four they do.
+          -->
+          <h3 class="subhead">Productions</h3>
+          <p class="field-help">
+            A production is one desk: its own graphics, its own OBS URLs and its own
+            stream deck. Add one for each match you run at the same time. The teams,
+            the schedule and the player names are shared by all of them.
+          </p>
+          <div id="tou-desks"></div>
         </section>
 
         <!--

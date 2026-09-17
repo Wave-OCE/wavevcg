@@ -386,6 +386,60 @@ try {
    * step has been taken, so it cannot be reached by a mis-click on a picker.
    */
   /*
+   * --- the productions list, and the topbar selector it feeds ---------------
+   *
+   * Back to Settings FIRST. A remembered sub-tab is not restored by returning
+   * to the section, and the assertions above left this page on another panel -
+   * a hidden card is still in the DOM, still bound and still readable, so every
+   * assertion below that READS would pass while the one that CLICKS times out
+   * thirty seconds later naming nothing. That is the wed-audio bug exactly.
+   */
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-settings"]');
+  await wait(400);
+
+  ok('26a. the Settings panel lists the desks', (await page.$('#tou-desks .desk-row')) !== null, 'buildDesks did not paint');
+  ok(
+    '26b. a new tournament has exactly one',
+    (await page.$$('#tou-desks .desk-row')).length === 1,
+    String((await page.$$('#tou-desks .desk-row')).length),
+  );
+  ok('26c. ...called Main', (await page.textContent('#tou-desks .desk-name')) === 'Main');
+  /*
+   * No Remove on the only desk. The server refuses it too, but a button that
+   * exists gets pressed - and what it would leave behind is a tournament with
+   * no graphics and no OBS URL.
+   */
+  ok('26d. the only desk offers no Remove', !(await page.$('#tou-desks .desk-row button:has-text("Remove")')));
+  ok('26e. the topbar desk selector is hidden with one desk', !(await page.isVisible('#desk-target-wrap')));
+  /*
+   * And the label that was wrong: the first selector lists TOURNAMENTS, and it
+   * said "Production" until productions became a real thing with a different
+   * meaning.
+   */
+  ok(
+    '26f. the tournament selector is labelled Tournament',
+    (await page.textContent('.whoami-target span')).trim() === 'Tournament',
+    await page.textContent('.whoami-target span'),
+  );
+
+  page.once('dialog', (d) => d.accept('Court 2'));
+  await page.click('#tou-desks button:has-text("Add production")');
+  await wait(1200);
+  ok('26g. an owner can add a desk', (await page.$$('#tou-desks .desk-row')).length === 2, String((await page.$$('#tou-desks .desk-row')).length));
+  /*
+   * The topbar lives in account.js and was not involved in that write. It
+   * follows because refreshAccount fires `account-changed` - without it the new
+   * desk appeared in this list and in no selector anywhere until a reload.
+   */
+  ok('26h. the topbar selector appears', await page.isVisible('#desk-target-wrap'));
+  ok(
+    '26i. ...carrying both desks',
+    (await page.$$eval('#desk-target option', (o) => o.map((x) => x.textContent))).join(',') === 'Main,Court 2',
+    await page.$$eval('#desk-target option', (o) => o.map((x) => x.textContent).join(',')),
+  );
+  ok('26j. both desks now offer Remove', (await page.$$('#tou-desks button:has-text("Remove")')).length === 2);
+
+  /*
    * --- the Schedule sub-page ------------------------------------------------
    *
    * The shape first, as the note at the top of this file says: a panel
