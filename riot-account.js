@@ -51,19 +51,28 @@
  * therefore not a label: it is the routing decision for the re-check. Compare
  * across sources and every player on the roster reads as renamed.
  *
- * ## Which one gets stored
+ * ## Which one gets asked, and which one gets stored
  *
- * Henrik's, whenever Henrik answers. It is the canonical UUID, it does not
- * expire, it does not depend on a key that rotates, and it costs no Riot key
- * at all - which is the standing rule about not adding a key requirement to
- * something that already works without one.
+ * Riot, and Riot. This is the one place in this program where HenrikDev is NOT
+ * the primary source, and the exception is deliberate: verification asks "is
+ * this account real and what is it called now", which is a question about
+ * Riot's own account service rather than about a match. Asking the authority
+ * directly is the right shape for it, and it spends no HenrikDev budget on a
+ * roster of thirty players an hour before a show.
  *
- * The Riot key is a corroborator, not the store of record. It is worth having
- * because it is Riot answering rather than a third party, and because it is
- * the fallback when Henrik is down or rate-limited. But an id minted from it
- * is only readable while that key lives, which is why checkPuuid refuses to
- * re-check a riot-sourced id on a key that no longer resolves it rather than
- * reporting the player as renamed.
+ * HenrikDev remains the fallback and is worth keeping, because what it covers
+ * is real - a key that lapsed overnight, an outage, a 429 thirty seconds
+ * before a show. But it is switched OFF by default (`henrikVerify` in
+ * settings-schema.js) rather than engaging silently, and that is the whole
+ * argument of the finding above: the two sources mint different PUUIDs, so a
+ * fallback that fires by itself quietly changes which API can ever re-check
+ * that player. An administrator turns it on, and the panel says what it costs.
+ *
+ * The cost of Riot being the store of record is stated rather than hidden: an
+ * id minted from an account key is only readable while that key lives, which
+ * is why checkPuuid answers `unknown` - never `renamed` - when Riot cannot
+ * decrypt one. A permanent personal key is fine; a development key regenerated
+ * daily would make every stored id unreadable each morning.
  *
  * ## Nothing here is ever required
  *
@@ -197,16 +206,15 @@ const asIdentity = (source, gameName, tagLine, puuid) => ({
 /**
  * Resolve a Riot ID to an identity, for a player being created.
  *
- * Henrik first, and that order is the standing rule rather than a preference:
- * it is the primary data source, it needs no Riot key, and - the reason that
- * matters here - it returns the canonical UUID rather than a ciphertext tied
- * to a key that expires daily.
+ * Riot first - see the header. `henrik` is null unless a key is configured AND
+ * an administrator has switched the fallback on, so this function never has to
+ * know what a setting is: being handed one IS the permission.
  *
- * Riot is the fallback, and it is a real one: if Henrik is rate-limited or
- * down thirty seconds before a show, an operator still gets a verified player.
- * The identity it returns is marked riot so the re-check knows to ask Riot.
+ * `henrikNote` is why it was not handed one, in words an operator can act on.
+ * Without it the composite failure says "no HenrikDev key" to somebody who has
+ * a key and a switch turned off, which sends them to the wrong panel.
  */
-export async function resolveRiotId({ riotId, henrik, accountGet, routing }) {
+export async function resolveRiotId({ riotId, henrik, henrikNote, accountGet, routing }) {
   const parts = splitRiotId(riotId);
   if (!parts) {
     throw new ProviderError(400, `"${riotId}" is not a Riot ID.`, 'The shape is GameName#Tag.');
@@ -225,6 +233,26 @@ export async function resolveRiotId({ riotId, henrik, accountGet, routing }) {
   const reasons = [];
   const why = (label, error) => reasons.push([`${label}: ${error.message}`, error.hint].filter(Boolean).join(' '));
 
+  try {
+    const data = await accountGet(
+      routing,
+      `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(parts.gameName)}/${encodeURIComponent(parts.tagLine)}`,
+    );
+    if (!data?.puuid) throw new ProviderError(502, 'Riot answered without a PUUID.');
+    return { ...asIdentity('riot', data.gameName, data.tagLine, data.puuid), region: null };
+  } catch (error) {
+    /*
+     * A 404 from the account service is an ANSWER, not an outage: Riot is the
+     * authority on whether a Riot account exists, so there is nothing a second
+     * source could add. Falling through would turn a clear "no such player"
+     * into a vaguer composite message and spend somebody else's rate limit to
+     * learn what we already knew. The same argument used to be written here
+     * about Henrik, and it moved with the order rather than being dropped.
+     */
+    if (error instanceof ProviderError && error.status === 404) throw error;
+    why('Riot', error);
+  }
+
   if (henrik) {
     try {
       const account = await henrik.account(parts);
@@ -236,31 +264,11 @@ export async function resolveRiotId({ riotId, henrik, accountGet, routing }) {
       }
       reasons.push('HenrikDev found the account but returned no PUUID.');
     } catch (error) {
-      /*
-       * A 404 from Henrik is an ANSWER, not an outage: the account does not
-       * exist. Falling through to Riot would turn a clear "no such player"
-       * into a second lookup and a vaguer message, and would spend a request
-       * from a daily-limited key to learn what we already knew.
-       */
       if (error instanceof ProviderError && error.status === 404) throw error;
       why('HenrikDev', error);
     }
-  } else {
-    reasons.push(
-      'No HenrikDev key is configured. Set HENRIK_API_KEY in .env - free keys come from the HenrikDev Discord.',
-    );
-  }
-
-  try {
-    const data = await accountGet(
-      routing,
-      `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(parts.gameName)}/${encodeURIComponent(parts.tagLine)}`,
-    );
-    if (!data?.puuid) throw new ProviderError(502, 'Riot answered without a PUUID.');
-    return { ...asIdentity('riot', data.gameName, data.tagLine, data.puuid), region: null };
-  } catch (error) {
-    if (error instanceof ProviderError && error.status === 404) throw error;
-    why('Riot', error);
+  } else if (henrikNote) {
+    reasons.push(henrikNote);
   }
 
   throw new ProviderError(502, `Could not verify ${parts.gameName}#${parts.tagLine}.`, reasons.join(' '));
@@ -287,7 +295,7 @@ export async function resolveRiotId({ riotId, henrik, accountGet, routing }) {
  * rename is a fact about a person and rewriting a Riot ID silently changes
  * what a lobby matcher looks for with nobody told.
  */
-export async function checkPuuid({ puuid, puuidSource, riotId, henrik, accountGet, routing }) {
+export async function checkPuuid({ puuid, puuidSource, riotId, henrik, henrikNote, accountGet, routing }) {
   const stored = String(puuid ?? '').trim();
   if (!stored) return { verdict: 'unknown', reason: 'No PUUID stored for this player yet.' };
 
@@ -318,7 +326,10 @@ export async function checkPuuid({ puuid, puuidSource, riotId, henrik, accountGe
    */
   if (puuidSource === 'henrik') {
     if (!henrik) {
-      return { verdict: 'unknown', reason: 'This PUUID came from HenrikDev, and no HenrikDev key is configured.' };
+      return {
+        verdict: 'unknown',
+        reason: `This PUUID came from HenrikDev, which is not available. ${henrikNote ?? ''}`.trim(),
+      };
     }
     try {
       const account = await henrik.accountByPuuid(stored);

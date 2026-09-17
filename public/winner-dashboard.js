@@ -32,6 +32,15 @@ import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
 import { makeTakeBar } from './take-bar.js';
+import {
+  canVerify,
+  onVerifyConfig,
+  sweepPlayers,
+  sweepSummary,
+  verifyOffReason,
+  verifyPlayers,
+  verifyQuestion,
+} from './player-verify.js';
 
 /*
  * Which bus this dashboard edits.
@@ -803,50 +812,19 @@ function buildStyleEditor() {
 
 // -------------------------------------------------- editor: team library ---
 
-/**
- * Whether this server can verify a Riot ID at all.
+/*
+ * Whether this server can verify a Riot ID lives in player-verify.js now, with
+ * the fetch and - the part that actually matters - the decision about which
+ * question a row should ask. Two pages offer verification and a second copy of
+ * that decision is how they come to disagree about it; see that file's header.
  *
- * A fact about the deployment, read once. Either key does it and HenrikDev is
- * the preferred one - it needs no Riot key and returns the canonical PUUID
- * rather than a per-key encrypted one (see riot-account.js). A server with
- * neither still saves rosters: verification has never been required, and a
- * player with no PUUID is an ordinary state.
- *
- * Defaults to false and is turned on by the fetch, so the failure of that
- * fetch leaves a disabled button that explains itself rather than one that
- * fails on click.
+ * The editor may already have painted its buttons disabled when the answer
+ * arrives. Repaint only if it is actually on screen: at page load this answers
+ * in milliseconds, long before anybody is typing into it.
  */
-let canVerify = false;
-const VERIFY_OFF =
-  'This server has no HenrikDev or Riot account key, so it cannot look a Riot ID up. Rosters still save.';
-
-fetch('/api/config')
-  .then((response) => (response.ok ? response.json() : null))
-  .then((config) => {
-    if (!config?.canVerifyPlayers) return;
-    canVerify = true;
-    // The editor may already have painted its buttons disabled. Repaint only
-    // if it is actually on screen - at page load this answers in milliseconds,
-    // long before anybody is typing into it.
-    if (document.querySelector('.roster-rows')) buildTeamEditor();
-  })
-  .catch(() => {
-    /* Leaves verification off, which is the safe way to be wrong here. */
-  });
-
-async function verifyPlayers(body) {
-  const response = await fetch(api('/api/players/verify'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    const { message, hint } = payload?.error ?? {};
-    throw new Error([message ?? `HTTP ${response.status}`, hint].filter(Boolean).join(' '));
-  }
-  return payload;
-}
+onVerifyConfig(() => {
+  if (document.querySelector('.roster-rows')) buildTeamEditor();
+});
 
 async function teamAction(body) {
   const response = await fetch(api('/api/teams'), {
@@ -1155,7 +1133,9 @@ function rosterEditor() {
         return;
       }
 
-      const verified = Boolean(player.puuid) && Boolean(player.puuidCheckedAt);
+      // The same decision the sweep makes, from the same function, so a row's
+      // tick and what the sweep would ask of it can never disagree.
+      const verified = verifyQuestion(player) === 'check';
       if (verified) node.classList.add('is-verified');
 
       const button = el(
@@ -1172,8 +1152,8 @@ function rosterEditor() {
         },
         verified ? '✓' : 'Verify',
       );
-      button.disabled = !canVerify || !looksLikeRiotId(player.riotId ?? '');
-      if (!canVerify) button.title = VERIFY_OFF;
+      button.disabled = !canVerify() || !looksLikeRiotId(player.riotId ?? '');
+      if (!canVerify()) button.title = verifyOffReason();
       else if (button.disabled) button.title = 'Type a Riot ID first (GameName#Tag).';
       /*
        * Which question the button asks, and it turns on `verified` rather than
@@ -1202,58 +1182,85 @@ function rosterEditor() {
   /**
    * Check the whole roster in one press.
    *
-   * The reason this exists rather than ten individual clicks: the question
-   * "has anybody on this team renamed since we built it" is asked once, before
-   * a show, about the team - not about a player. Only rows with a stored PUUID
-   * are sent; a row that has never been verified has nothing to re-check and
-   * would only spend a request to be told so.
+   * The reason this exists rather than ten individual clicks: the question "is
+   * everybody on this team still who we wrote down" is asked once, before a
+   * show, about the TEAM - not about a player.
+   *
+   * It used to send only rows that already carried a confirmed identity, which
+   * made it useless on the case it is most wanted for: a team typed out this
+   * morning, where nothing is verified yet and the operator wants all ten done
+   * before doors. Each row now asks its own question - resolve if it has never
+   * been confirmed, re-check if it has - which is precisely what pressing every
+   * per-row button in turn would do, and `verifyQuestion` is shared with those
+   * buttons so the two cannot drift apart.
+   *
+   * Paced, and the pacing is the point rather than politeness: thirty lookups
+   * fired as fast as the link allows is the shape that earns a 429, and a 429
+   * halfway through reads to an operator as half the roster having been deleted
+   * from Riot.
    */
   function checkAllRow() {
-    // Confirmed rows only, for the reason in the note on the per-row button: a
-    // row whose Riot ID has been edited since it was verified would report a
-    // rename against the player who used to be in it.
-    const verifiable = draft.players.filter(
-      (player) => player.puuid && player.puuidSource && player.puuidCheckedAt,
-    );
-    if (!canVerify || verifiable.length < 2) return null;
+    const asking = draft.players.filter((player) => verifyQuestion(player) !== 'none');
+    if (!canVerify() || asking.length < 2) return null;
 
     const button = el(
       'button',
       'btn btn-small btn-ghost',
-      { type: 'button', title: 'Ask whether any of these accounts has been renamed. Nothing is changed without your say-so.' },
-      `Check ${verifiable.length} identities`,
+      {
+        type: 'button',
+        title:
+          'Look up every player on this team, one at a time. Rows that have never been verified get an ' +
+          'identity; rows that have one are asked whether it has been renamed. A rename is reported, ' +
+          'never applied - nothing is saved until you save the team.',
+      },
+      `Check all ${asking.length}`,
     );
+
     button.addEventListener('click', async () => {
       button.disabled = true;
       const was = button.textContent;
-      button.textContent = 'Checking…';
       try {
-        const { results } = await verifyPlayers({
-          action: 'check',
-          players: verifiable.map((player) => ({
-            riotId: player.riotId,
-            puuid: player.puuid,
-            puuidSource: player.puuidSource,
-          })),
+        const results = await sweepPlayers(asking, {
+          // Progress rather than a spinner, because this one takes seconds
+          // rather than milliseconds and a button that says nothing for eight
+          // of them is a button an operator presses again.
+          onProgress: ({ done, total }) => {
+            button.textContent = done < total ? `Checking ${done + 1}/${total}…` : 'Finishing…';
+          },
         });
-        let renamed = 0;
-        let unknown = 0;
-        results.forEach((outcome, at) => {
-          const player = verifiable[at];
-          if (outcome.verdict === 'ok') player.puuidCheckedAt = Date.now();
-          else if (outcome.verdict === 'renamed') renamed += 1;
-          else unknown += 1;
-        });
+
+        /*
+         * A resolve is APPLIED and a rename is not, and that asymmetry is the
+         * same one the per-row buttons make.
+         *
+         * Minting an identity for a row that had none stores what the operator
+         * asked for - including the canonical spelling of the Riot ID, since
+         * matching is case-insensitive and the account service is what knows
+         * how it is really written. A rename is a fact about a PERSON, and
+         * rewriting it silently would change what a lobby matcher looks for
+         * with nobody told, so it stays as an amber button that names the new
+         * handle.
+         */
+        for (const row of results) {
+          if (row.verdict === 'resolved' && row.identity) {
+            row.player.puuid = row.identity.puuid;
+            row.player.puuidSource = row.identity.source;
+            row.player.puuidCheckedAt = Date.now();
+            if (row.identity.riotId) row.player.riotId = row.identity.riotId;
+          } else if (row.verdict === 'ok') {
+            row.player.puuidCheckedAt = Date.now();
+          } else if (row.verdict === 'unknown' || row.verdict === 'failed') {
+            // The stamp goes, the id stays. The identity is still a true fact
+            // about the player; what is no longer true is that we just agreed
+            // it with the name beside it.
+            row.player.puuidCheckedAt = 0;
+          }
+        }
+
         // A repaint is right here and wrong inside a single row: this press is
         // not adjacent to typing, and every lamp has to move.
         paint();
-        toast(
-          renamed
-            ? `${renamed} renamed - the amber buttons say to what.`
-            : unknown
-              ? `No renames. ${unknown} could not be checked.`
-              : 'Every identity still matches.',
-        );
+        toast(sweepSummary(results));
       } catch (error) {
         toast(`Could not check the roster: ${error.message}`);
       } finally {

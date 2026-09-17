@@ -51,6 +51,38 @@ export const SETTING_FIELDS = [
       'restart the server. The boot banner names whichever one is missing.',
   },
   {
+    key: 'henrikVerify',
+    label: 'HenrikDev as a fallback for player verification',
+    /*
+     * The one switch in this file that defaults OFF, and the exception is
+     * deliberate rather than an oversight of the rule above it.
+     *
+     * The rule - a missing feature switch reads as ON - exists so that
+     * upgrading a server does not silently take a feature away. This switch
+     * does not add a feature to verification, it adds a SECOND SOURCE to it,
+     * and the two sources do not agree on what a PUUID is: Riot's account-v1
+     * hands back a per-key ciphertext and HenrikDev hands back the canonical
+     * UUID. Which one answered decides which one can ever re-check that
+     * player, so a fallback that engages by itself quietly changes the
+     * provenance of everything verified while Riot happened to be slow.
+     *
+     * Defaulting it off makes that a decision an administrator makes and can
+     * see, which is the whole reason it is a switch instead of a try/catch.
+     */
+    default: false,
+    requires: 'henrik',
+    help:
+      'Riot’s account API is the primary source for verifying a player, and it is the only one ' +
+      'used unless this is on. Turning it on lets a lookup fall back to HenrikDev when Riot cannot ' +
+      'answer - down, rate-limited, or a key that has lapsed. Worth knowing before you do: the two ' +
+      'sources mint different PUUIDs, so a player verified through the fallback can only ever be ' +
+      're-checked through it.',
+    off: 'Verification uses Riot and nothing else. A player whose stored PUUID came from HenrikDev reads as unknown until this is switched back on or they are verified again against Riot.',
+    missing:
+      'No HenrikDev key is configured, so there is no fallback to switch on. Set HENRIK_API_KEY in ' +
+      'the environment - free keys come from the HenrikDev Discord - then restart the server.',
+  },
+  {
     key: 'watch',
     label: 'Post-match lookup across several accounts',
     default: true,

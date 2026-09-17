@@ -41,6 +41,16 @@ const server = spawn(process.execPath, ['server.js'], {
     ADMIN_USERNAME: 'boss',
     ADMIN_PASSWORD: 'a-long-enough-password',
     TRACKER_ENABLED: 'true',
+    /*
+     * Pinned, because loadDotEnv only fills what is ABSENT - so without these
+     * the henrikVerify block below would pass or fail on whether the developer
+     * running it happens to have keys in .env. A Henrik key that is present but
+     * nonsense is exactly what is wanted: HENRIK_AVAILABLE is a Boolean() of
+     * it, and with the switch off nothing ever dials out with it.
+     */
+    HENRIK_API_KEY: 'pinned-not-a-real-key',
+    RIOT_ACCOUNT_KEY: '',
+    RIOT_API_KEY: '',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -279,6 +289,46 @@ try {
   ok('the start route is absent when unconfigured', r.status === 404, String(r.status));
   r = await boss('/api/auth/discord/callback?code=x&state=y');
   ok('so is the callback', r.status === 404, String(r.status));
+
+  // ------------------------------------------- henrik as a verify fallback ---
+  /*
+   * The one switch in SETTING_FIELDS that defaults OFF, and the assertion is
+   * worth having precisely because it contradicts the rule the rest of the file
+   * follows. A well-meaning tidy-up that gave it `default: true` for
+   * consistency would turn HenrikDev back into a source that engages by itself
+   * and silently changes which API can re-check a player - with nothing else in
+   * this suite noticing.
+   */
+  r = await boss('/api/admin/settings');
+  ok('the henrik verify switch exists', typeof r.json?.settings?.henrikVerify === 'boolean', JSON.stringify(r.json?.settings));
+  ok('and it is the one that defaults OFF', r.json?.settings?.henrikVerify === false, String(r.json?.settings?.henrikVerify));
+  ok('a configured key reads as available', r.json?.available?.henrik === true, JSON.stringify(r.json?.available));
+
+  /*
+   * ENFORCED, not merely hidden. With no Riot key and the fallback off there is
+   * no source at all, and the refusal has to say which of the two problems it
+   * is: an operator holding a Henrik key must not be sent looking for one.
+   *
+   * Nothing dials out here. Riot refuses locally for want of a key, and Henrik
+   * is never constructed - which is the whole point of the assertion.
+   */
+  r = await boss('/api/players/verify', json({ action: 'resolve', riotId: 'Nobody#XXXX' }));
+  ok('verification is refused with no source', r.status >= 400, String(r.status));
+  ok(
+    'and the refusal names the SWITCH rather than a missing key',
+    /switched off/i.test(`${r.json?.error?.hint ?? ''} ${r.json?.error?.message ?? ''}`),
+    `${r.json?.error?.message ?? ''} | ${r.json?.error?.hint ?? ''}`,
+  );
+
+  r = await boss('/api/config');
+  ok('config reports the fallback off', r.json?.henrikVerifyEnabled === false, String(r.json?.henrikVerifyEnabled));
+  ok('and offers no verify button with no source at all', r.json?.canVerifyPlayers === false, String(r.json?.canVerifyPlayers));
+
+  await boss('/api/admin/settings', json({ settings: { henrikVerify: true } }));
+  r = await boss('/api/config');
+  ok('switching it on restores the button', r.json?.canVerifyPlayers === true, String(r.json?.canVerifyPlayers));
+  ok('and names henrik as what would mint the id', r.json?.verifySource === 'henrik', String(r.json?.verifySource));
+  await boss('/api/admin/settings', json({ settings: { henrikVerify: false } }));
 } catch (error) {
   failed += 1;
   console.log(`  THREW ${error.stack}`);

@@ -177,7 +177,10 @@ export const PLAYER_FIELDS = [
     max: 32,
     label: 'Name',
     placeholder: 'TenZ',
-    help: 'What a caster calls them, and what goes on air.',
+    help:
+      'What a caster calls them, and what goes on air. Saving the team files this as their ' +
+      'ALIAS, so the agent select strip and an imported scoreboard use it too - there is no ' +
+      'second place to type it.',
   },
   {
     key: 'riotId',

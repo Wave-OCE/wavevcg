@@ -48,7 +48,6 @@ import {
   makeAccountClient,
   resolveRiotId,
 } from './riot-account.js';
-import { ROSTER_LIMIT } from './public/teams.js';
 import { sanitiseTournamentFields } from './public/tournament-schema.js';
 import {
   emptyMapRow,
@@ -231,6 +230,33 @@ const trackerOn = () => TRACKER_AVAILABLE && settings.state.tracker;
 
 /** Is the multi-account post-match watch allowed right now? */
 const watchOn = () => settings.state.watch;
+
+/**
+ * HenrikDev as a verification fallback: capability and permission, both - the
+ * same two-condition shape as tracker, and for the same reason. A key that is
+ * not configured and a switch an administrator turned off are different
+ * problems with different people to go and see.
+ *
+ * Note what this does NOT gate: the lookup tab, the match list, the agent
+ * select feed. HenrikDev is still the primary source for all of those. This
+ * switch is about one question - who mints a PUUID - and the answer to that
+ * one is Riot. See the header of riot-account.js.
+ */
+const HENRIK_AVAILABLE = Boolean(HENRIK_API_KEY);
+const henrikVerifyOn = () => HENRIK_AVAILABLE && settings.state.henrikVerify;
+
+/**
+ * The fallback, or null - and null IS the refusal. riot-account.js never sees
+ * a setting; it sees a source or it does not, which keeps the permission in
+ * one place instead of two that can disagree.
+ */
+const verifyHenrik = () => (henrikVerifyOn() ? henrik : null);
+
+/** Why it is not available, in the terms of whoever can fix it. */
+const henrikVerifyNote = () =>
+  HENRIK_AVAILABLE
+    ? 'The HenrikDev fallback for verification is switched off. An administrator can turn it on under Admin > Server settings.'
+    : 'No HenrikDev key is configured. Set HENRIK_API_KEY in .env - free keys come from the HenrikDev Discord.';
 
 /*
  * The Companion control channel.
@@ -1495,13 +1521,22 @@ async function handleApi(pathname, params, ctx) {
         hasTrackerKey: trackerOn(),
         hasHenrikKey: Boolean(HENRIK_API_KEY),
         /*
-         * Whether the Teams page may offer a Verify button at all. Either key
-         * does it - Henrik alone is the common case and the preferred one, and
-         * a server with neither still saves rosters, it just cannot confirm
-         * them. Sent as one fact rather than two because the panel has one
-         * decision to make.
+         * Whether the Teams page may offer a Verify button at all. Sent as one
+         * fact rather than three because the panel has one decision to make.
+         *
+         * The Riot account key alone is the ordinary case now: it is the
+         * primary source and the only one consulted unless an administrator
+         * has switched the fallback on. Henrik alone is still enough - a
+         * server with a Henrik key and the switch thrown can verify with no
+         * Riot key at all - and a server with neither still saves rosters, it
+         * just cannot confirm them.
          */
-        canVerifyPlayers: Boolean(HENRIK_API_KEY || RIOT_ACCOUNT_KEY),
+        canVerifyPlayers: Boolean(RIOT_ACCOUNT_KEY) || henrikVerifyOn(),
+        // Which source a verification would be minted from, so the roster can
+        // say so before somebody presses it. Two sources that mint different
+        // PUUIDs is not a detail an operator should discover afterwards.
+        verifySource: RIOT_ACCOUNT_KEY ? 'riot' : henrikVerifyOn() ? 'henrik' : '',
+        henrikVerifyEnabled: henrikVerifyOn(),
         // What the two administrator switches say, for the panels that have to
         // hide themselves. The server refuses either way; this is so an
         // operator is not offered a button that cannot work.
@@ -1928,6 +1963,24 @@ async function handlePresetAction({ graphics, presets }, body) {
  * fields were copied on the way in, so what is on air stays on air.
  */
 /**
+ * How many players one press may ask about.
+ *
+ * Was ROSTER_LIMIT, which was right while the only caller was one team's
+ * roster editor and became a silent truncation the moment a search across
+ * every team could select more than ten. Its own constant rather than a bigger
+ * ROSTER_LIMIT, because the two numbers answer different questions - how many
+ * players a squad has, and how many lookups one button may spend.
+ *
+ * The client paces its own requests (see the Players page); this is the
+ * backstop for anything that does not.
+ */
+const VERIFY_BATCH_LIMIT = 40;
+
+/** Between one lookup and the next. Matches the dashboard's own gap. */
+const VERIFY_GAP_MS = 250;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
  * Verify players against Riot's account service.
  *
  * Two actions, and they are different questions:
@@ -1940,12 +1993,21 @@ async function handlePresetAction({ graphics, presets }, body) {
  * rename is applied by a person who can see both names, and a verification
  * that half-finished leaves no partly-rewritten roster behind.
  *
- * Sequential rather than concurrent, on purpose. A development Riot key allows
- * 20 requests a second and HenrikDev's free tier about 30 a minute, so ten
- * players fired at once is the shape that earns a 429 - and a 429 in the middle
- * of a batch is indistinguishable, to the operator, from half the roster having
- * been deleted from Riot. Ten sequential lookups take a second or two, which is
- * a button that feels slow rather than a button that lies.
+ * Sequential AND paced, on purpose. A development Riot key allows 20 requests
+ * a second and HenrikDev's free tier about 30 a minute, so ten players fired at
+ * once is the shape that earns a 429 - and a 429 in the middle of a batch is
+ * indistinguishable, to the operator, from half the roster having been deleted
+ * from Riot.
+ *
+ * Sequential alone was not enough: back-to-back lookups with no gap still run
+ * at whatever rate the network allows, which on a fast link is well past
+ * HenrikDev's thirty a minute. The gap makes the rate a property of this loop
+ * rather than of the connection it happens to be running over.
+ *
+ * The dashboard paces itself too (VERIFY_GAP_MS in public/player-verify.js),
+ * and that is not a duplicate: it sends one player per request so it can report
+ * progress, so its gap is the one that applies to the common path and this one
+ * is the backstop for anything that posts a batch directly.
  */
 async function handlePlayerVerify(body) {
   const action = String(body?.action ?? '');
@@ -1953,7 +2015,8 @@ async function handlePlayerVerify(body) {
   if (action === 'resolve') {
     const identity = await resolveRiotId({
       riotId: body?.riotId,
-      henrik,
+      henrik: verifyHenrik(),
+      henrikNote: henrikVerifyNote(),
       accountGet,
       routing: DEFAULT_ACCOUNT_ROUTING,
     });
@@ -1961,16 +2024,21 @@ async function handlePlayerVerify(body) {
   }
 
   if (action === 'check') {
-    const rows = Array.isArray(body?.players) ? body.players.slice(0, ROSTER_LIMIT) : [];
+    const rows = Array.isArray(body?.players) ? body.players.slice(0, VERIFY_BATCH_LIMIT) : [];
     if (!rows.length) throw new ProviderError(400, 'No players to check.');
 
     const results = [];
     for (const row of rows) {
+      // Between lookups, never before the first: a batch of one is what the
+      // dashboard sends, and a gap ahead of its only request would be a quarter
+      // second of nothing on every single press.
+      if (results.length) await sleep(VERIFY_GAP_MS);
       const outcome = await checkPuuid({
         puuid: row?.puuid,
         puuidSource: row?.puuidSource,
         riotId: row?.riotId,
-        henrik,
+        henrik: verifyHenrik(),
+        henrikNote: henrikVerifyNote(),
         accountGet,
         routing: DEFAULT_ACCOUNT_ROUTING,
       });
@@ -2312,14 +2380,59 @@ const badRequest = (message, hint = '') => {
   return error;
 };
 
-async function handleTeamAction({ teams, schedule }, body) {
+async function handleTeamAction(bundle, body) {
+  const { teams, schedule, aliases } = bundle;
   const action = String(body?.action ?? '');
+
+  /**
+   * A roster is a list of names somebody wrote down, so it IS an alias list.
+   *
+   * The two used to be separate pages editing separate libraries, and the
+   * failure was not that it was inconvenient - it was that a player typed on
+   * the Teams page did not get their name on the agent select strip, and
+   * nothing said why. Two places to write a person's name, one of which is
+   * the one that works, is the shape of that bug.
+   *
+   * So saving a team writes its players through to the alias library, which
+   * stays the single thing every resolver reads. Records land keyed on the
+   * Riot ID - the "written down before the event" case the alias store was
+   * already built for - and are linked to an account id later, by the feed or
+   * by hand, exactly as they were before.
+   *
+   * Two rules worth stating because both are the opposite of what a tidy
+   * implementation would do:
+   *
+   *   A blank name writes NOTHING. It is a refusal to speak, not an
+   *   instruction to unname somebody - the /api/game scar, where a write
+   *   nobody made counted as the feed having spoken.
+   *
+   *   Removing a player from a squad does not remove their alias. The roster
+   *   answers "who plays for this team"; the library answers "what is this
+   *   Riot ID called on air", and the second stays true after a transfer. The
+   *   player search is where a name with no team is edited or dropped.
+   */
+  const writeAliases = (team) => {
+    let wrote = 0;
+    for (const player of team?.players ?? []) {
+      const riotId = String(player?.riotId ?? '').trim();
+      const alias = String(player?.displayName ?? '').trim();
+      if (!riotId || !alias) continue;
+      if (aliases.aliasFor('', riotId) === alias) continue;
+      aliases.save({ riotId, alias });
+      wrote += 1;
+    }
+    // Only when something moved: reresolve rewrites two graphics, and a team
+    // saved for its colour should not touch either.
+    if (wrote) reresolveAliases(bundle);
+    return wrote;
+  };
 
   switch (action) {
     case 'save': {
       const saved = teams.save(body?.team ?? {});
       await teams.flush();
-      return { teams: teams.list(), saved };
+      const named = writeAliases(saved);
+      return { teams: teams.list(), saved, named, players: aliases.list() };
     }
 
     case 'delete': {
@@ -2368,6 +2481,10 @@ async function handleTeamAction({ teams, schedule }, body) {
 
       const result = teams.import(incoming);
       await teams.flush();
+      // Same fold on the way in. A library file carries rosters, and a thirty
+      // team import that named nobody would leave an operator retyping every
+      // name on the page this fold exists to remove.
+      for (const team of teams.list()) writeAliases(team);
       return { teams: result.teams, added: result.added, updated: result.updated };
     }
 
@@ -2475,43 +2592,79 @@ function pushFixture(bundle, fixture) {
   return { pushed, map };
 }
 
-async function handleAliasAction({ graphics, select, aliases }, body) {
-  const action = String(body?.action ?? '');
+/**
+ * Re-read every name off the alias library and write the ones that moved.
+ *
+ * Exported from the alias handler rather than buried in it because the team
+ * roster writes aliases too now, and a rename that reaches the graphics from
+ * one page and not the other is the kind of difference nobody reports as a bug
+ * - they just learn to use the page that works.
+ *
+ * ## Which bus, and why the two graphics get different answers
+ *
+ * This used to take `bundle.graphics` and `bundle.select` and read `.state` off
+ * them, which was a STORE before the preview/program split and is a PAIR after
+ * it. The throwing getters in buses.js caught it exactly as designed - and
+ * caught it in production rather than in a suite, because nothing here
+ * exercised an alias write. The symptom was the worst available: `aliases.save`
+ * had already persisted by the time `.state` threw, so the panel reported a
+ * 400, the library had changed anyway, and no graphic was re-resolved. A write
+ * that says it failed and did not is harder to act on than one that plainly
+ * broke.
+ *
+ * Agent select gets BOTH buses, for the reason its webhooks already do: a draft
+ * is ten picks and a handful of scene changes, an operator pressing take once
+ * per lock-in is not a workflow, and a name correction typed mid-draft is
+ * wanted on air now. Applied to each bus separately rather than to one and
+ * copied, because preview may be carrying operator edits air has not been
+ * given.
+ *
+ * The scoreboard gets PREVIEW only, and that is the split doing its job rather
+ * than an inconsistency. A post-match board is on air for minutes and is taken
+ * deliberately; an alias edit silently rewriting names on a board an audience
+ * is reading is the exact failure two buses exist to prevent. The take bar
+ * lights "preview differs from air" and the operator cuts it across.
+ */
+function reresolveAliases({ graphics, select, aliases }) {
+  const library = aliases.list();
 
-  const reresolve = () => {
-    const slots = select.state.slots.map((slot) =>
+  for (const store of [select.preview, select.program]) {
+    const slots = store.state.slots.map((slot) =>
       slot.playerId ? { ...slot, name: displayName(slot.riotId, aliases.aliasFor(slot.playerId, slot.riotId)) } : slot,
     );
-    if (slots.some((slot, index) => slot.name !== select.state.slots[index].name)) select.patch({ slots });
+    if (slots.some((slot, index) => slot.name !== store.state.slots[index].name)) store.patch({ slots });
+  }
 
-    /*
-     * And the scoreboard, for the same reason. A post-match board is on air for
-     * minutes rather than seconds, so it is the graphic an operator is most
-     * likely to be looking at when they notice a name is wrong.
-     *
-     * Matched on either key: an imported row may carry a puuid, a Riot ID, or -
-     * from tracker.gg - only the second. A row with neither was typed by hand
-     * and is left alone.
-     */
-    const library = aliases.list();
-    const patch = {};
-    for (const half of ['left', 'right']) {
-      const current = graphics.state[half];
-      const players = current.players.map((player) => {
-        if (!player.playerId && !player.riotId) return player;
-        // displayName is the same rule the strip uses: the alias if there is
-        // one, otherwise the Riot ID without its tagline - so deleting an alias
-        // undoes it rather than leaving the old name behind.
-        const next = displayName(player.riotId, aliasForPlayer(library, player)) || player.name;
-        return next === player.name ? player : { ...player, name: next };
-      });
-      if (players.some((player, index) => player !== current.players[index])) {
-        // patch is a shallow merge of top-level keys, so the whole side goes.
-        patch[half] = { ...current, players };
-      }
+  /*
+   * Matched on either key: an imported row may carry a puuid, a Riot ID, or -
+   * from tracker.gg - only the second. A row with neither was typed by hand
+   * and is left alone.
+   */
+  const board = graphics.preview;
+  const patch = {};
+  for (const half of ['left', 'right']) {
+    const current = board.state[half];
+    const players = current.players.map((player) => {
+      if (!player.playerId && !player.riotId) return player;
+      // displayName is the same rule the strip uses: the alias if there is
+      // one, otherwise the Riot ID without its tagline - so deleting an alias
+      // undoes it rather than leaving the old name behind.
+      const next = displayName(player.riotId, aliasForPlayer(library, player)) || player.name;
+      return next === player.name ? player : { ...player, name: next };
+    });
+    if (players.some((player, index) => player !== current.players[index])) {
+      // patch is a shallow merge of top-level keys, so the whole side goes.
+      patch[half] = { ...current, players };
     }
-    if (Object.keys(patch).length) graphics.patch(patch);
-  };
+  }
+  if (Object.keys(patch).length) board.patch(patch);
+}
+
+async function handleAliasAction(bundle, body) {
+  const { aliases } = bundle;
+  const action = String(body?.action ?? '');
+
+  const reresolve = () => reresolveAliases(bundle);
 
   switch (action) {
     case 'save': {
@@ -4317,7 +4470,7 @@ async function handleAdmin(pathname, req, res, ctx) {
   if (pathname === '/api/admin/settings' && req.method === 'GET') {
     return sendJson(res, 200, {
       settings: settings.state,
-      available: { tracker: TRACKER_AVAILABLE, discord: DISCORD_AVAILABLE },
+      available: { tracker: TRACKER_AVAILABLE, discord: DISCORD_AVAILABLE, henrik: HENRIK_AVAILABLE },
     });
   }
 
@@ -4367,7 +4520,7 @@ async function handleAdmin(pathname, req, res, ctx) {
       }
 
       await settings.flush();
-      return { settings: state, available: { tracker: TRACKER_AVAILABLE, discord: DISCORD_AVAILABLE } };
+      return { settings: state, available: { tracker: TRACKER_AVAILABLE, discord: DISCORD_AVAILABLE, henrik: HENRIK_AVAILABLE } };
     });
   }
 
@@ -4461,7 +4614,11 @@ async function handleAdmin(pathname, req, res, ctx) {
         };
       })(),
       providers: {
-        henrik: Boolean(HENRIK_API_KEY),
+        henrik: HENRIK_AVAILABLE,
+        // Whether that key is allowed to mint a PUUID, which is a different
+        // question from whether it exists - and the one the Players page is
+        // actually asking when a verification comes back unknown.
+        henrikVerify: henrikVerifyOn(),
         riot: Boolean(RIOT_API_KEY),
         // Reported separately from `riot` because they answer different
         // questions and can differ: account-v1 runs on a development key, so a
@@ -5881,7 +6038,7 @@ server.listen(PORT, HOST, () => {
   console.log(
     `  Riot account    ${
       !RIOT_ACCOUNT_KEY
-        ? 'missing (RIOT_ACCOUNT_KEY) - PUUID verification falls back to HenrikDev'
+        ? 'missing (RIOT_ACCOUNT_KEY) - PUUID verification needs the HenrikDev fallback switched on'
         : RIOT_ACCOUNT_KEY === RIOT_API_KEY
           ? 'sharing RIOT_API_KEY'
           : 'loaded'

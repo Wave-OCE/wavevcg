@@ -342,6 +342,83 @@ try {
     ok('no key reached the log', !log.includes(second.key), 'KEY LEAKED');
   }
 
+  // -------------------------------------------------- aliases and the buses ---
+  /*
+   * THE BUG THIS BLOCK EXISTS FOR, which shipped and was found by hand.
+   *
+   * handleAliasAction was written when `bundle.select` was a store and kept
+   * reading `.state` off it after it became a preview/program PAIR. The
+   * throwing getter in buses.js did its job and named the fix - but nothing
+   * exercised an alias write, so it threw at an operator instead of at a
+   * suite. The symptom was the nastiest shape available: `aliases.save` had
+   * already persisted by the time `.state` threw, so the panel showed a 400,
+   * the library had changed anyway, and no graphic was re-resolved.
+   *
+   * So assertion one is simply that the route answers 200. It would have been
+   * enough.
+   */
+  {
+    const seat = {
+      playerId: 'probe-account-id',
+      riotId: 'Probe#0001',
+      name: 'Probe',
+      agent: 'Jett',
+      locked: true,
+    };
+    // Seat the same player on both buses, so "did the name move" is a question
+    // about the alias write rather than about which bus happened to hold them.
+    for (const bus of ['preview', 'program']) {
+      const current = (await get(`/api/select?bus=${bus}`)).state;
+      const slots = current.slots.map((slot, index) => (index === 0 ? { ...slot, ...seat } : slot));
+      await post(`/api/select?bus=${bus}`, { state: { ...current, slots } });
+    }
+
+    const saved = await post('/api/aliases', { action: 'save', player: { id: seat.playerId, riotId: seat.riotId, alias: 'PROBE' } });
+    ok('an alias save answers rather than throwing', Array.isArray(saved?.players), JSON.stringify(saved).slice(0, 160));
+
+    /*
+     * Agent select gets BOTH buses, which is the rule its own webhooks already
+     * follow: a draft is ten picks, nobody takes once per lock-in, and a name
+     * typed mid-draft is wanted on air now.
+     */
+    ok(
+      'the new name reaches agent select on PREVIEW',
+      (await get('/api/select?bus=preview')).state.slots[0].name === 'PROBE',
+      (await get('/api/select?bus=preview')).state.slots[0].name,
+    );
+    ok(
+      'and on PROGRAM, because a draft is not taken per pick',
+      (await get('/api/select?bus=program')).state.slots[0].name === 'PROBE',
+      (await get('/api/select?bus=program')).state.slots[0].name,
+    );
+
+    /*
+     * The scoreboard is the other answer, and deliberately so: it is on air for
+     * minutes and is taken on purpose, so an alias edit stages there rather
+     * than rewriting a board an audience is reading.
+     */
+    const board = (await get('/api/graphic?bus=program')).state;
+    const row = { playerId: 'probe-account-id', riotId: 'Probe#0001', name: 'Probe' };
+    for (const bus of ['preview', 'program']) {
+      const current = (await get(`/api/graphic?bus=${bus}`)).state;
+      await post(`/api/graphic?bus=${bus}`, {
+        state: { ...current, left: { ...current.left, players: [row, ...current.left.players.slice(1)] } },
+      });
+    }
+    await post('/api/aliases', { action: 'save', player: { id: seat.playerId, riotId: seat.riotId, alias: 'BOARD' } });
+    ok(
+      'a scoreboard name stages on preview',
+      (await get('/api/graphic?bus=preview')).state.left.players[0].name === 'BOARD',
+      (await get('/api/graphic?bus=preview')).state.left.players[0].name,
+    );
+    ok(
+      'and AIR does not move until somebody takes it',
+      (await get('/api/graphic?bus=program')).state.left.players[0].name === 'Probe',
+      (await get('/api/graphic?bus=program')).state.left.players[0].name,
+    );
+    ok('the board fixture was real', board !== null);
+  }
+
   // --------------------------------------------------------------- the log ---
   ok('the take is logged', /taken to program/.test(log), 'no audit line for a take');
   ok('and says whether it replayed', /\(data only\)|\(replayed\)/.test(log), 'no replay detail in the log');

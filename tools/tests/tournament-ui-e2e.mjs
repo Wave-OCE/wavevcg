@@ -311,7 +311,11 @@ try {
   );
   ok(
     '20j. ...and it says why rather than just being dead',
-    /no HenrikDev or Riot account key/i.test(
+    // Both remedies, because there are two reasons the button can be dead and
+    // they are fixed by different people: an environment variable and a
+    // restart, or an administrator throwing a switch.
+    /RIOT_ACCOUNT_KEY/.test(await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title)) &&
+      /HenrikDev fallback/i.test(
       await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),
     ),
     await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),

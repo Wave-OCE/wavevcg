@@ -73,46 +73,96 @@ ok('7 surrounding whitespace is trimmed', splitRiotId('  TenZ#SEN  ')?.tagLine =
 // --------------------------------------------------------------- resolving ---
 
 {
-  const identity = await resolveRiotId({ riotId: 'RTLine#GLHF', henrik: henrikOk, accountGet: riotOk, routing: 'europe' });
-  eq('8 henrik is preferred over riot', identity.source, 'henrik');
-  eq('9 and it is the canonical uuid that is stored', identity.puuid, CANONICAL);
+  /*
+   * RIOT FIRST, and the one place in this program where HenrikDev is not the
+   * primary source. Verification asks Riot's own account service whether an
+   * account exists and what it is called, so asking the authority is the right
+   * shape - and it spends no HenrikDev budget on a roster of thirty players an
+   * hour before a show.
+   *
+   * Note that BOTH sources are handed in here and Henrik is still not touched:
+   * the assertion is about order, not about availability.
+   */
+  let henrikAsked = false;
+  const watched = {
+    account: async (parts) => {
+      henrikAsked = true;
+      return henrikOk.account(parts);
+    },
+    accountByPuuid: henrikOk.accountByPuuid,
+  };
+  const identity = await resolveRiotId({ riotId: 'RTLine#GLHF', henrik: watched, accountGet: riotOk, routing: 'europe' });
+  eq('8 riot is preferred over henrik', identity.source, 'riot');
+  eq('9 and it is riot\'s encrypted id that is stored', identity.puuid, ENCRYPTED);
+  eq('9b henrik is not asked at all when riot answers', henrikAsked, false);
   eq('10 the handle comes back assembled', identity.riotId, 'RTLine#GLHF');
 }
 
 {
-  // The standing rule made concrete: with no Henrik key this still works.
-  const identity = await resolveRiotId({ riotId: 'RTLine#GLHF', henrik: null, accountGet: riotOk, routing: 'europe' });
-  eq('11 riot answers when henrik is not configured', identity.source, 'riot');
-  eq('12 and its id is the encrypted one', identity.puuid, ENCRYPTED);
+  // The fallback is a real one: Riot down, Henrik on, an operator still gets a
+  // verified player - and it is marked henrik so the re-check knows who to ask.
+  const identity = await resolveRiotId({
+    riotId: 'RTLine#GLHF',
+    henrik: henrikOk,
+    henrikNote: 'unused - a source was handed in',
+    accountGet: throws(new ProviderError(503, 'No Riot account key configured.')),
+    routing: 'europe',
+  });
+  eq('11 henrik answers when riot cannot', identity.source, 'henrik');
+  eq('12 and its id is the canonical uuid', identity.puuid, CANONICAL);
 }
 
 {
-  // A 404 from Henrik is an ANSWER. Falling through to Riot would spend a
-  // request from a daily-limited key to learn what we already knew, and would
-  // turn "no such player" into a vaguer two-source failure.
+  /*
+   * NULL IS THE REFUSAL. The switch lives in server.js; this file never sees a
+   * setting, it sees a source or it does not. So the composite failure has to
+   * carry the note the caller supplied, or an operator with a Henrik key and a
+   * switch turned off is sent to look for a key they already have.
+   */
+  const err = await resolveRiotId({
+    riotId: 'RTLine#GLHF',
+    henrik: null,
+    henrikNote: 'The HenrikDev fallback for verification is switched off.',
+    accountGet: throws(new ProviderError(503, 'No Riot account key configured.')),
+    routing: 'europe',
+  }).catch((e) => e);
+  ok('12b a gated-off fallback says so rather than blaming a missing key', /switched off/.test(err.hint), err.hint);
+}
+
+{
+  /*
+   * A 404 from the account service is an ANSWER, and the short-circuit moved
+   * with the order rather than being dropped. Riot is the authority on whether
+   * a Riot account exists, so there is nothing a second source could add -
+   * falling through would spend somebody else's rate limit to learn what we
+   * already knew and turn "no such player" into a vaguer two-source failure.
+   */
   let reached = false;
   const err = await resolveRiotId({
     riotId: 'Nobody#XXXX',
-    henrik: { account: throws(new ProviderError(404, 'Account not found')), accountByPuuid: throws(new Error('x')) },
-    accountGet: async () => {
-      reached = true;
-      return { puuid: ENCRYPTED, gameName: 'Nobody', tagLine: 'XXXX' };
+    henrik: {
+      account: async () => {
+        reached = true;
+        return { puuid: CANONICAL, gameName: 'Nobody', tagLine: 'XXXX' };
+      },
+      accountByPuuid: throws(new Error('x')),
     },
+    accountGet: throws(new ProviderError(404, 'Account not found')),
     routing: 'europe',
   }).catch((e) => e);
-  eq('13 a henrik 404 is passed straight through', err.status, 404);
-  eq('14 and riot is never asked', reached, false);
+  eq('13 a riot 404 is passed straight through', err.status, 404);
+  eq('14 and henrik is never asked', reached, false);
 }
 
 {
   // An OUTAGE is not an answer, so the other source is tried.
   const identity = await resolveRiotId({
     riotId: 'RTLine#GLHF',
-    henrik: { account: throws(new ProviderError(429, 'Rate limited')), accountByPuuid: throws(new Error('x')) },
-    accountGet: riotOk,
+    henrik: henrikOk,
+    accountGet: throws(new ProviderError(429, 'Rate limited')),
     routing: 'europe',
   });
-  eq('15 a henrik rate limit falls back to riot', identity.source, 'riot');
+  eq('15 a riot rate limit falls back to henrik', identity.source, 'henrik');
 }
 
 {
@@ -261,8 +311,8 @@ ok('7 surrounding whitespace is trimmed', splitRiotId('  TenZ#SEN  ')?.tagLine =
 
 {
   const out = await checkPuuid({ puuid: CANONICAL, puuidSource: 'henrik', riotId: 'RTLine#GLHF', henrik: null, accountGet: riotOk });
-  eq('31 a henrik id with no henrik key reads unknown', out.verdict, 'unknown');
-  ok('32 and names the missing key', /HenrikDev key/i.test(out.reason), out.reason);
+  eq('31 a henrik id with no henrik source reads unknown', out.verdict, 'unknown');
+  ok('32 and says which source it cannot reach', /HenrikDev/i.test(out.reason), out.reason);
 }
 
 {
