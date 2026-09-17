@@ -1517,6 +1517,29 @@ async function handleApi(pathname, params, ctx) {
 
       const team = (half) => {
         const entry = half.teamId ? teams.get(half.teamId) : null;
+
+        /*
+         * Said out loud, because the alternative is a blank tricode on air.
+         *
+         * This is the ONLY place in the codebase that dereferences `teamId`,
+         * and it failed as `''` - so a side picked from a team that has since
+         * been renamed, deleted, or imported under a different slug exported an
+         * unnamed team to VHUD with no error, no log line and nothing in the UI
+         * to suggest anything was wrong. The graphic still showed the name,
+         * because that was copied at pick time; only the export lost it, which
+         * is the half nobody is looking at.
+         *
+         * At warn rather than info: it means the library and the graphic
+         * disagree, and somebody has to re-pick the team to fix it.
+         */
+        if (half.teamId && !entry) {
+          log.warn('gstack', `the graphic names a team that is not in the library any more`, {
+            teamId: half.teamId,
+            teamName: half.teamName ?? '',
+            tournament: ctx.owner?.id,
+          });
+        }
+
         return {
           name: half.teamName ?? '',
           // The tricode lives in the library, not on the graphic - the graphic

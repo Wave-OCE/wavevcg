@@ -29,7 +29,7 @@ import {
   DEFAULT_ANIM,
   inDurationMs,
 } from './public/animation.js';
-import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, teamSlug } from './public/teams.js';
+import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, sanitiseRoster, teamSlug } from './public/teams.js';
 import { mapCodeFromUrl, mapDisplayName } from './public/maps.js';
 import {
   LOBBY_SEATS,
@@ -1780,7 +1780,15 @@ export function makeTeamStore(filePath) {
         if (!Array.isArray(parsed)) return false;
         teams = parsed
           .filter((entry) => entry && typeof entry.id === 'string')
-          .map((entry) => ({ id: teamSlug(entry.id), ...sanitiseTeamFields(entry) }))
+          .map((entry) => ({
+            id: teamSlug(entry.id),
+            ...sanitiseTeamFields(entry),
+            // Beside the fields, never inside them - see PLAYER_FIELDS. A file
+            // written before rosters existed simply has none, which cleans to
+            // an empty array rather than to undefined, so every reader can
+            // assume the key is there.
+            players: sanitiseRoster(entry.players),
+          }))
           // A team with no name cannot be picked out of a list, so it is not a
           // team - dropping it beats leaving a blank row in every dropdown.
           .filter((entry) => entry.name);
@@ -1790,27 +1798,45 @@ export function makeTeamStore(filePath) {
       }
     },
 
+    /*
+     * Copied one level deeper than the spread, because `players` is an array
+     * and a shallow copy hands every caller the store's own. A dashboard
+     * splicing a row out of what it got back from list() would edit the library
+     * in memory without a save - and it would survive until the next restart,
+     * at which point the file on disk would silently disagree with what
+     * everyone had been looking at.
+     */
     list() {
-      return sortByName(teams).map((entry) => ({ ...entry }));
+      return sortByName(teams).map((entry) => ({ ...entry, players: (entry.players ?? []).map((p) => ({ ...p })) }));
     },
 
     get(id) {
-      return teams.find((entry) => entry.id === id) ?? null;
+      const found = teams.find((entry) => entry.id === id);
+      return found ? { ...found, players: (found.players ?? []).map((p) => ({ ...p })) } : null;
     },
 
-    /** Create or update. An unknown id creates rather than failing. */
-    save({ id = null, ...fields }) {
+    /**
+     * Create or update. An unknown id creates rather than failing.
+     *
+     * The roster is only touched when the caller sends one. That is not
+     * politeness - the team editor and the roster editor are different panels,
+     * and a save from the one that does not know about players would otherwise
+     * clear a squad somebody had just typed in. An absent `players` preserves;
+     * an empty array is a real instruction to empty it.
+     */
+    save({ id = null, players = undefined, ...fields }) {
       const existing = id ? teams.find((entry) => entry.id === id) : null;
       const clean = sanitiseTeamFields(fields, existing ?? EMPTY_TEAM);
       if (!clean.name) throw new Error('A team needs a name.');
 
       if (existing) {
         Object.assign(existing, clean);
+        if (players !== undefined) existing.players = sanitiseRoster(players);
         persist();
         return { ...existing };
       }
 
-      const entry = { id: uniqueId(clean.name), ...clean };
+      const entry = { id: uniqueId(clean.name), ...clean, players: sanitiseRoster(players) };
       teams.push(entry);
       persist();
       return { ...entry };
@@ -1858,16 +1884,30 @@ export function makeTeamStore(filePath) {
         const wanted = teamSlug(clean.name);
         const existing = teams.find((entry) => entry.id === wanted || teamSlug(entry.name) === wanted);
 
+        /*
+         * A roster arrives only if the file carried one.
+         *
+         * Same preserve rule as save(): a library exported before rosters
+         * existed has no `players` key, and folding it in must not empty the
+         * squads at this desk. Whether the incoming roster DIFFERS is part of
+         * "changed", or importing a file that only adds players would report
+         * nothing updated and write nothing.
+         */
+        const roster = row?.players === undefined ? undefined : sanitiseRoster(row.players);
+
         if (existing) {
-          const changed = TEAM_FIELDS.some((field) => existing[field.key] !== clean[field.key]);
-          if (changed) {
+          const fieldsMoved = TEAM_FIELDS.some((field) => existing[field.key] !== clean[field.key]);
+          const rosterMoved =
+            roster !== undefined && JSON.stringify(roster) !== JSON.stringify(existing.players ?? []);
+          if (fieldsMoved || rosterMoved) {
             Object.assign(existing, clean);
+            if (roster !== undefined) existing.players = roster;
             updated += 1;
           }
           continue;
         }
 
-        teams.push({ id: teamSlug(uniqueId(clean.name)), ...clean });
+        teams.push({ id: teamSlug(uniqueId(clean.name)), ...clean, players: roster ?? [] });
         added += 1;
       }
 
