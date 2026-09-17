@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Map veto</title>
+    <!--
+      The dashboard's stylesheet, like login.html uses - this is the same kind
+      of page: one thing to do, for somebody who is not signed in. It is NOT an
+      output page and carries none of the broadcast look; nothing here goes to
+      air.
+
+      What it does carry is a phone layout, because that is what it is opened
+      on. A team captain doing this at a desk is the exception.
+    -->
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      .veto-page {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 20px 16px 60px;
+      }
+
+      .veto-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+      }
+
+      .veto-teams {
+        font-family: var(--font-label, inherit);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 18px;
+      }
+
+      /* Whose turn it is, and it is the only thing on the page that ever needs
+         to be read from across a room - a captain glances at this between
+         other things and must not have to work it out. */
+      .veto-turn {
+        margin: 14px 0;
+        padding: 12px 14px;
+        border-left: 3px solid var(--accent);
+        background: var(--surface-2, rgba(255, 255, 255, 0.03));
+        font-size: 15px;
+      }
+
+      .veto-turn.is-yours {
+        border-left-color: var(--on-air);
+        font-weight: 700;
+      }
+
+      .veto-maps {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      /* A whole tile, not a button with a label beside it: this is pressed on a
+         phone, in a hurry, and the target being the size of the map is the
+         difference between banning Haven and banning Lotus. */
+      .veto-map {
+        padding: 16px 12px;
+        border: 1px solid var(--border);
+        background: var(--bg-panel, #14181d);
+        color: var(--text);
+        font-family: var(--font-label, inherit);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 15px;
+        cursor: pointer;
+      }
+
+      .veto-map:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .veto-map:not(:disabled):hover {
+        border-color: var(--accent);
+      }
+
+      .veto-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 22px;
+      }
+
+      .veto-step {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 9px 12px;
+        background: var(--surface-2, rgba(255, 255, 255, 0.03));
+        font-size: 14px;
+      }
+
+      .veto-step.is-now {
+        border-left: 3px solid var(--accent);
+      }
+
+      .veto-step-kind {
+        min-width: 74px;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+      }
+
+      .veto-step.is-ban .veto-step-map {
+        text-decoration: line-through;
+        color: var(--text-faint);
+      }
+
+      .veto-step-map {
+        font-weight: 700;
+      }
+
+      .veto-step-side {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-faint);
+      }
+
+      .veto-sides {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .veto-note {
+        margin-top: 18px;
+        font-size: 12px;
+        color: var(--text-faint);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="veto-page" id="veto-page">
+      <p class="field-help">Loading…</p>
+    </main>
+    <script src="/veto-public.js" type="module"></script>
+  </body>
+</html>

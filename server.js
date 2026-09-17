@@ -49,6 +49,7 @@ import {
   resolveRiotId,
 } from './riot-account.js';
 import { sanitiseTournamentFields } from './public/tournament-schema.js';
+import { playedMaps, publicView, sanitiseVeto, vetoComplete } from './public/veto-schema.js';
 import {
   emptyMapRow,
   fixtureLabel,
@@ -1705,6 +1706,36 @@ async function handleApi(pathname, params, ctx) {
      * not match the one in the editor, with nothing failing. The schema exports
      * them and both sides call the same function.
      */
+    /*
+     * The vetoes, and the pool.
+     *
+     * Carries the LINKS as well, which is why this is an editor's route and not
+     * a viewer's: the three tokens are what let somebody drive a veto with no
+     * account, so handing them out is handing out the veto. A viewer reads the
+     * competition; they do not get to run one.
+     */
+    case '/api/veto': {
+      /*
+       * A VIEWER gets the vetoes and no links, and the split is the whole
+       * reason this is not one response.
+       *
+       * Every other read on this server is the same for everybody who may see
+       * the tournament, because what they carry is information. This one
+       * carries CREDENTIALS - three of them per veto, each of which files bans
+       * for a real match with no account behind it - so handing them to
+       * somebody whose whole permission is "may watch" would make a viewer able
+       * to run a veto, or to give somebody else the ability to.
+       *
+       * Refusing the route outright to a viewer would be the other option and
+       * is worse: the board is worth seeing, and the Match setup page shows it.
+       */
+      const mayRun = ctx.level === 'owner' || ctx.level === 'editor';
+      return {
+        veto: ctx.bundle.veto.document(),
+        tokens: mayRun ? vetoTokens(ctx.bundle) : null,
+      };
+    }
+
     case '/api/schedule':
       return { schedule: schedule.document() };
 
@@ -2380,6 +2411,191 @@ const badRequest = (message, hint = '') => {
   return error;
 };
 
+/**
+ * Every change an OPERATOR makes to a veto.
+ *
+ * The captains' half is not here - it is `answer` and `setSide` on the store,
+ * reached through the public route, which has a different credential and a
+ * different set of things it may do. Keeping them apart is the point: this
+ * function assumes a signed-in editor and nothing in it checks a token, so a
+ * refactor cannot accidentally expose an operator action to a link.
+ */
+/**
+ * The three tokens for every veto, keyed by veto id.
+ *
+ * Tokens rather than assembled URLs, and that is a deliberate refusal of the
+ * more convenient shape. A whole link would have to be built from the request's
+ * Host header - a value the caller supplies - so the address an operator copies
+ * and sends to a team captain would be one an attacker could influence. The
+ * dashboard knows its own origin exactly, without being told, so it composes
+ * the link and this hands over only the secret.
+ */
+function vetoTokens(bundle) {
+  const out = {};
+  for (const entry of bundle.veto.document().vetoes) out[entry.id] = bundle.veto.tokens(entry.id);
+  return out;
+}
+
+async function handleVetoAction(bundle, body, who = '') {
+  const { veto, schedule } = bundle;
+  const action = String(body?.action ?? '');
+  const out = () => ({ veto: veto.document() });
+
+  switch (action) {
+    /*
+     * The pool, which is a property of the TOURNAMENT rather than of a match.
+     *
+     * Existing vetoes keep the pool they were created with. A map rotating out
+     * mid-season must not rewrite a veto that was already played on it - the
+     * board would then be evidence of a ban nobody made.
+     */
+    case 'pool.save':
+      return out(veto.apply((draft) => {
+        draft.pool = Array.isArray(body?.pool) ? body.pool : [];
+      }));
+
+    case 'create': {
+      const id = veto.mintId();
+      const fixture = body?.fixtureId ? schedule.fixture(String(body.fixtureId)) : null;
+
+      return out(veto.apply((draft) => {
+        /*
+         * From a fixture, or from nothing, and both are ordinary.
+         *
+         * A fixture brings both teams and the series length across, which is
+         * the whole reason to offer it - a playoff veto should not be typed out
+         * twice. A standalone one is a showmatch or a scrim, and is the case
+         * this had to keep working for.
+         */
+        const seeded = fixture
+          ? {
+              name: `${fixture.left?.name || 'Left'} vs ${fixture.right?.name || 'Right'}`,
+              format: fixture.bestOf === 1 ? 'bo1' : fixture.bestOf >= 5 ? 'bo5' : 'bo3',
+              a: fixture.left ?? {},
+              b: fixture.right ?? {},
+              fixtureId: fixture.id,
+            }
+          : {};
+
+        draft.vetoes.push(
+          sanitiseVeto(
+            {
+              ...seeded,
+              ...(body?.veto && typeof body.veto === 'object' ? body.veto : {}),
+              id,
+              // The pool it is created with, frozen onto the record.
+              pool: draft.pool,
+              createdAt: Date.now(),
+            },
+            { id },
+          ),
+        );
+      }));
+    }
+
+    case 'save': {
+      const wanted = String(body?.veto?.id ?? '');
+      if (!wanted) throw new ProviderError(400, 'Which veto?');
+      return out(veto.apply((draft) => {
+        const at = draft.vetoes.findIndex((entry) => entry.id === wanted);
+        if (at === -1) throw badRequest('No such veto.');
+        // The steps are NOT taken from the request. An operator edits the
+        // teams, the name and the rules; the sequence is answered through the
+        // veto itself, by a captain or by the referee, and letting a save carry
+        // it would make the dashboard a way to skip somebody's turn.
+        draft.vetoes[at] = sanitiseVeto(
+          { ...body.veto, id: wanted, pool: draft.vetoes[at].pool, steps: draft.vetoes[at].steps },
+          { id: wanted },
+        );
+      }));
+    }
+
+    case 'remove': {
+      const id = String(body?.id ?? '');
+      return out(veto.apply((draft) => {
+        const at = draft.vetoes.findIndex((entry) => entry.id === id);
+        if (at === -1) throw badRequest('No such veto.');
+        draft.vetoes.splice(at, 1);
+      }));
+    }
+
+    /*
+     * Start again. The links are deliberately NOT rotated: the captains already
+     * have them open, and a reset that silently broke both pages would be
+     * indistinguishable from the tool falling over.
+     */
+    case 'reset': {
+      const id = String(body?.id ?? '');
+      return out(veto.apply((draft) => {
+        const target = draft.vetoes.find((entry) => entry.id === id);
+        if (!target) throw badRequest('No such veto.');
+        for (const step of target.steps) {
+          step.map = '';
+          step.side = '';
+          step.sideBy = '';
+        }
+      }));
+    }
+
+    /** New links. The whole revocation story - see the header of veto.js. */
+    case 'rotate': {
+      const id = String(body?.id ?? '');
+      const tokens = veto.rotate(id, String(body?.role ?? ''));
+      log.info('veto', `links rotated for veto ${id}`, { tournament: bundle.tournamentId, who });
+      return { veto: veto.document(), tokens };
+    }
+
+    /*
+     * File the picked maps onto the fixture this veto came from.
+     *
+     * AN OPERATOR PRESS, never automatic, and that is a security decision
+     * rather than an ergonomic one: the schedule is the competition record and
+     * every desk of the tournament shares it, while a veto can be driven by
+     * somebody holding a link who has no account here at all. A token must not
+     * be able to write the draw.
+     *
+     * `at` files one map; its absence files all of them. Both, because a veto
+     * that went wrong at step five should not make an operator redo the first
+     * four by hand.
+     */
+    case 'file': {
+      const id = String(body?.id ?? '');
+      const record = veto.get(id);
+      if (!record) throw new ProviderError(404, 'No such veto.');
+      if (!record.fixtureId) {
+        throw new ProviderError(400, 'That veto is not attached to a fixture.', 'Make it from a fixture to file its maps.');
+      }
+
+      const maps = playedMaps(record);
+      const only = body?.at === undefined || body?.at === null ? null : Number.parseInt(body.at, 10);
+      if (only !== null && (!Number.isInteger(only) || !maps[only])) {
+        throw new ProviderError(400, 'No such map on that veto.');
+      }
+
+      const schedule_ = schedule.apply((draft) => {
+        const fixture = draft.fixtures.find((entry) => entry.id === record.fixtureId);
+        if (!fixture) throw badRequest('That fixture is gone.');
+        const rows = Array.isArray(fixture.maps) ? fixture.maps : (fixture.maps = []);
+        const write = (index) => {
+          while (rows.length <= index) rows.push(emptyMapRow());
+          // The NAME only. A veto knows which map is played, not what the score
+          // was - and overwriting a score that Report already filed would throw
+          // away the one thing a veto cannot know.
+          rows[index] = { ...rows[index], name: maps[index].name };
+        };
+        if (only === null) maps.forEach((_, index) => write(index));
+        else write(only);
+      });
+
+      log.info('veto', `maps filed on a fixture from veto ${id}`, { tournament: bundle.tournamentId, who });
+      return { veto: veto.document(), schedule: schedule_ };
+    }
+
+    default:
+      throw new ProviderError(400, `Unknown veto action: ${action || '(none)'}`);
+  }
+}
+
 async function handleTeamAction(bundle, body) {
   const { teams, schedule, aliases } = bundle;
   const action = String(body?.action ?? '');
@@ -2827,7 +3043,22 @@ async function handleWrite(res, work) {
   try {
     return sendJson(res, 200, await work());
   } catch (error) {
-    const status = error instanceof ProviderError ? error.status : 400;
+    /*
+     * A thrower that set a status gets it, whatever class it is.
+     *
+     * It was ProviderError or 400, which is right for a bad request and wrong
+     * for the stores: schedule.js and veto.js both raise plain Errors carrying
+     * a status, because neither should have to import a web framework concept
+     * to say "that map is already gone". Their 404s and 409s were arriving as
+     * 400 - technically a refusal, but the wrong one, and "it is not your turn"
+     * reads very differently from "your request was malformed".
+     *
+     * Bounded to real client/server codes so a stray status on some other
+     * error - a Node system error carrying a number, say - cannot turn into a
+     * nonsense HTTP status.
+     */
+    const declared = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 0;
+    const status = error instanceof ProviderError ? error.status : declared || 400;
     // The hint travels too. ProviderError has carried one since it was written
     // and the read path at the bottom of this file sends it, but this - the
     // path every write takes - dropped it, so the half of the message that says
@@ -5057,6 +5288,88 @@ async function route(req, res) {
     return sendJson(res, 200, await handleApi(pathname, url.searchParams, { bundle: null }));
   }
 
+  /*
+   * The map veto, as a team captain sees it.
+   *
+   * OUTSIDE THE ACCOUNT GATE ON PURPOSE, and it is the only route here that is.
+   * The whole point of a veto link is that somebody with no account opens it
+   * fifteen minutes before a match, on a phone, and bans a map. A login would
+   * make it useless; that is not a compromise, it is the requirement.
+   *
+   * So it carries its own credential, and the rules around it are the tight
+   * ones you get when there is no second lock behind:
+   *
+   *   A TOKEN NAMES ONE VETO AND ONE SEAT IN IT. It opens nothing else on this
+   *   server - not the tournament, not the schedule, not a graphic. Compare the
+   *   session key, which shows every output page of a tournament: that would be
+   *   far too much to hand a visiting team.
+   *
+   *   A BAD TOURNAMENT AND A BAD TOKEN ANSWER THE SAME. Both are 404 with the
+   *   same words, so this cannot be used to find out which tournaments exist -
+   *   the rule `!ctx.bundle` already follows, reached again by a route that has
+   *   no ctx.
+   *
+   *   NO CSRF SHAPE, because there is no cookie to ride. A request here is
+   *   authenticated by a value in the URL and by nothing the browser attaches
+   *   on its own, so the attack the CSRF check defends against cannot be built.
+   *   That is the same reasoning the keyed branch uses, written out again
+   *   because it is the sort of thing a later reader assumes was forgotten.
+   *
+   *   NEVER LOGGED. safeUrl already rewrites `key=`; this one is `k=`, and it
+   *   is added to that redaction rather than being left as the exception.
+   */
+  if (pathname === '/api/veto/public') {
+    const tournamentId = (url.searchParams.get('session') ?? '').trim();
+    const token = (url.searchParams.get('k') ?? '').trim();
+    const gone = () => unauthorised(res, 404, 'That veto link is not valid.');
+    if (!tournamentId || !token) return gone();
+
+    const owner = tournaments.byId(tournamentId);
+    if (!owner) return gone();
+
+    const desk = tournaments.defaultProduction(owner);
+    if (!desk) return gone();
+
+    const bundle = await sessions.get(owner.id, desk.id);
+    const found = bundle.veto.resolve(token);
+    if (!found) return gone();
+
+    if (req.method === 'GET') {
+      return sendJson(res, 200, { veto: publicView(found.veto, found.role) });
+    }
+
+    return handleWrite(res, async () => {
+      const body = await readJsonBody(req);
+      const action = String(body?.action ?? 'answer');
+
+      if (action === 'side') {
+        const document = bundle.veto.setSide({ token, at: body?.at, side: body?.side });
+        const after = document.vetoes.find((entry) => entry.id === found.id);
+        return { veto: publicView(after, found.role) };
+      }
+
+      if (action !== 'answer') throw new ProviderError(400, 'Unknown veto action.');
+
+      const result = bundle.veto.answer({ token, map: body?.map, side: body?.side });
+      const after = result.document.vetoes.find((entry) => entry.id === found.id);
+
+      /*
+       * Logged, like the take and like staging a lobby - and this one earns it
+       * twice over. It is a write made by somebody with no account, to a record
+       * the whole tournament shares, and after a show the only question that
+       * matters is who banned what. `who` is the SEAT rather than a name,
+       * because a seat is all this credential proves.
+       */
+      log.info('veto', `${result.kind} ${result.map}`, {
+        tournament: owner.id,
+        veto: found.id,
+        who: `veto:${found.role}`,
+      });
+
+      return { veto: publicView(after, found.role), complete: vetoComplete(after) };
+    });
+  }
+
   // ------------------------------------------------------------- the gate ---
 
   const ctx = await contextFor(req, url);
@@ -5758,6 +6071,25 @@ async function handlePost(pathname, req, res, ctx, params) {
      */
     case '/api/schedule':
       return handleWrite(res, async () => handleScheduleAction(bundle, await readJsonBody(req)));
+
+    /*
+     * The operator's half of a veto. NOT in KEYED_ROUTES, either verb, and the
+     * question that list exists to force has two answers here.
+     *
+     * Write: it mints and rotates credentials that drive a veto with no
+     * account. A session key is typed into OBS configuration and read out over
+     * screen shares; it must not be able to hand out a link that files the
+     * bans for a match.
+     *
+     * Read: the same, for the same reason - this response CARRIES those links.
+     * An unannounced draw leaking from an OBS URL was the argument for keeping
+     * the schedule out of that list, and this is that argument with a
+     * credential attached.
+     */
+    case '/api/veto':
+      return handleWrite(res, async () =>
+        handleVetoAction(bundle, await readJsonBody(req), ctx.user?.username ?? '(key)'),
+      );
 
     /*
      * The two show-day presses, and NOT in KEYED_ROUTES - the same answer as

@@ -28,6 +28,7 @@ import path from 'node:path';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 import { makeScheduleStore } from './schedule.js';
+import { makeVetoStore } from './veto.js';
 import {
   makeAliasStore,
   makeGlobalStore,
@@ -78,6 +79,16 @@ const SHARED_STORES = [
   ['teams', makeTeamStore, 'teams.json'],
   ['aliases', makeAliasStore, 'aliases.json'],
   ['schedule', makeScheduleStore, 'schedule.json'],
+  /*
+   * The map vetoes, and the pool they draw from.
+   *
+   * Shared for the same reason the schedule is: two courts of one tournament do
+   * not hold different opinions about which maps Crusaders banned, and whoever
+   * is refereeing needs to reach a veto from whichever desk they happen to be
+   * sitting at. The pool is a fact about the SEASON, which settles it twice
+   * over.
+   */
+  ['veto', makeVetoStore, 'veto.json'],
 ];
 
 /**

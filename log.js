@@ -39,7 +39,20 @@ const RANK = Object.fromEntries(LOG_LEVELS.map((name, index) => [name, index]));
  * exchangeable for an identity assertion until it is spent, and a 500 on that
  * route logs the whole query string at error level.
  */
-const SECRET_PARAMS = new Set(['key', 'password', 'token', 'secret', 'current', 'code', 'state']);
+const SECRET_PARAMS = new Set([
+  'key',
+  // The map veto's public link. Short because it rides in a URL a team captain
+  // is sent and may well retype, but it is a credential exactly like 'key' is -
+  // it files bans on a real match - so it is redacted exactly like one. A short
+  // name is the reason to list it here rather than to hope a pattern catches it.
+  'k',
+  'password',
+  'token',
+  'secret',
+  'current',
+  'code',
+  'state',
+]);
 
 /** `?key=abc123` -> `?key=<hidden>`, leaving everything else readable. */
 export function safeUrl(rawUrl) {
