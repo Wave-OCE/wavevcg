@@ -489,6 +489,95 @@ try {
   });
   ok('27h. the Schedule panel appends no stray null', schedStrays.length === 0, JSON.stringify(schedStrays));
 
+
+  /*
+   * --- the bracket, and the match editor ------------------------------------
+   *
+   * The stage added above is a round robin by default, so it draws a table.
+   * Switching it to a bracket is what puts a drawing on the page, and doing it
+   * through the select is the operator's own path rather than a fixture posted
+   * behind the page's back.
+   */
+  await page.selectOption('#sch-body select[aria-label="Stage kind"]', 'bracket');
+  await wait(900);
+  ok('27i. a bracket stage draws a bracket', await page.isVisible('.sch-bracket'));
+  ok('27j. ...with a node for the fixture', (await page.$$('.sch-node')).length === 1, String((await page.$$('.sch-node')).length));
+  ok('27k. ...and no standings table', (await page.$$('#sch-body .sch-table')).length === 0);
+
+  /*
+   * THE CARET RULE, asserted as the shape rather than by typing.
+   *
+   * This page meets it by SEPARATION: every input that carries a caret lives in
+   * the modal, which is built once and never touched by paint(). If a text box
+   * ever appears on the page itself, the page can no longer repaint freely and
+   * the failure is a caret jumping mid-word - which no other assertion here
+   * would catch.
+   */
+  ok(
+    '27l. the page itself has no text input',
+    (await page.$$('#tou-schedule input[type="text"]')).length === 0,
+    String((await page.$$('#tou-schedule input[type="text"]')).length),
+  );
+
+  await page.click('.sch-node');
+  await wait(600);
+  ok('27m. clicking a match opens the editor', await page.isVisible('.sch-modal'));
+  ok('27n. ...as a real modal dialog', await page.evaluate(() => document.querySelector('.sch-modal').open === true));
+  /*
+   * On document.body, NOT inside the painted host. That is what makes the
+   * separation above true rather than merely intended: a repaint replaces
+   * everything under #sch-body, and anything holding a caret in there would go
+   * with it.
+   */
+  ok('27o. ...outside the painted host', await page.evaluate(() => document.querySelector('.sch-modal').parentElement === document.body));
+  ok('27p. ...carrying a map row per map of the series', (await page.$$('.sch-modal .sch-map')).length === 3, String((await page.$$('.sch-modal .sch-map')).length));
+
+  // Typing, then provoking a repaint of the page behind it. The box must
+  // survive, or the separation is decorative.
+  await page.fill('.sch-modal .sch-map:nth-child(1) input[type="text"]', 'Ascent');
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('teams-changed', { detail: [] })));
+  await wait(400);
+  ok(
+    '27q. a repaint behind the modal does not eat what is being typed',
+    (await page.inputValue('.sch-modal .sch-map:nth-child(1) input[type="text"]')) === 'Ascent',
+    await page.inputValue('.sch-modal .sch-map:nth-child(1) input[type="text"]'),
+  );
+
+  await page.fill('.sch-modal .sch-map:nth-child(1) input[type="number"] >> nth=0', '13');
+  await page.fill('.sch-modal .sch-map:nth-child(1) input[type="number"] >> nth=1', '7');
+  await wait(300);
+  ok('27r. the running tally follows the boxes', (await page.textContent('.sch-modal .sch-result-score')).trim() === '1 - 0', (await page.textContent('.sch-modal .sch-result-score')).trim());
+
+  await page.click('.sch-modal-foot .btn-primary');
+  await wait(900);
+  ok('27s. saving closes the editor', (await page.$$('.sch-modal')).length === 0);
+  const savedSchedule = await (await fetch(`${BASE}/api/schedule?session=${cupId}`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok(
+    '27t. ...and the result reached the schedule',
+    savedSchedule.schedule.fixtures[0]?.maps?.[0]?.name === 'Ascent' && savedSchedule.schedule.fixtures[0]?.maps?.[0]?.left === 13,
+    JSON.stringify(savedSchedule.schedule.fixtures[0]?.maps?.[0]),
+  );
+
+  /*
+   * And Cancel writes NOTHING, which is the promise a modal makes that an
+   * inline editor writing on every change never could.
+   */
+  await page.click('.sch-node');
+  await wait(600);
+  await page.fill('.sch-modal .sch-map:nth-child(2) input[type="text"]', 'Never saved');
+  await page.click('.sch-modal-foot .btn-ghost >> nth=1');
+  await wait(800);
+  const afterCancel = await (await fetch(`${BASE}/api/schedule?session=${cupId}`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok('27u. cancelling writes nothing', !JSON.stringify(afterCancel.schedule).includes('Never saved'));
+  ok('27v. ...and closes the editor', (await page.$$('.sch-modal')).length === 0);
+
+  // Escape is the platform's, which is the reason to use a real dialog.
+  await page.click('.sch-node');
+  await wait(500);
+  await page.keyboard.press('Escape');
+  await wait(500);
+  ok('27w. escape closes the editor', (await page.$$('.sch-modal')).length === 0);
+
   // Back to Settings, or the assertions below type into a hidden card. A
   // remembered sub-tab is not restored by returning to the section.
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-settings"]');

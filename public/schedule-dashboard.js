@@ -5,18 +5,21 @@
  * ## The caret rule, and how this page obeys it
  *
  * `winner-dashboard.js`'s roster editor records the rule: rebuilding a block
- * replaces the input being typed into, and the caret goes with it. The shape
- * that follows here is deliberate and worth stating, because it is what keeps
- * the rest of the page free to repaint:
+ * replaces the input being typed into, and the caret goes with it. This page
+ * meets it by SEPARATION, and that is what lets everything on it repaint
+ * freely:
  *
- *   the fixture LIST has no text inputs at all. It is rows of read-only
- *   summaries and buttons, so it may be rebuilt on every change.
+ *   the PAGE has no text input anywhere. The stage settings, the fixture list,
+ *   the bracket and the table are selects, buttons and derived text, so any of
+ *   them may be rebuilt on any change.
  *
- *   the RESULT EDITOR has all of them, holds a draft, writes into that draft
- *   on every keystroke and repaints nothing. One fixture is open at a time.
+ *   the MODAL has all of them. It is built once, lives on `document.body`
+ *   rather than inside `host`, is never touched by `paint()`, and writes into a
+ *   draft that reaches the server only on Save.
  *
- * A derived view - the table, the round headings - may repaint on every
- * keystroke precisely because it contains no inputs.
+ * So a repaint provoked by anything at all - a team library arriving, another
+ * stage being picked - cannot replace the box somebody is typing into, because
+ * the two are not in the same tree.
  *
  * ## It works out the table itself
  *
@@ -35,7 +38,7 @@
  * see each other until one reloads.
  */
 
-import { el, grid, help, title } from './fields.js';
+import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
@@ -47,6 +50,7 @@ import {
   fixtureScore,
   fixtureStatus,
   fixtureWinner,
+  bracketLayout,
   mapsNeeded,
   slotLabel,
   stageHasTable,
@@ -67,8 +71,6 @@ if (host) {
   let openStage = '';
   /** Which fixture's result is open, or ''. One at a time - see the caret note. */
   let openFixture = '';
-  /** The result being edited. A copy, so cancelling costs nothing. */
-  let draft = null;
   let loaded = false;
 
   // ------------------------------------------------------------- the wire ---
@@ -129,7 +131,6 @@ if (host) {
       pill.addEventListener('click', () => {
         openStage = stage.id;
         openFixture = '';
-        draft = null;
         paint();
       });
       row.append(pill);
@@ -255,7 +256,6 @@ if (host) {
         list.append(el('h3', 'sch-round', {}, roundName(stage, fixture)));
       }
       list.append(fixtureRow(fixture));
-      if (fixture.id === openFixture && draft) list.append(resultEditor(fixture));
     }
 
     const add = el('button', 'btn btn-small', { type: 'button' }, 'Add fixture');
@@ -299,81 +299,39 @@ if (host) {
       el('span', `sch-status is-${status}`, {}, STATUS_LABEL[status]),
     );
 
+    /*
+     * One button, and removal moved into the modal beside it.
+     *
+     * A row of small buttons next to a row that is ITSELF clickable is two ways
+     * to do one thing plus a delete sitting a few pixels from both - which is
+     * the shape the Admin accounts row got wrong by growing. Edit opens the
+     * match; everything you can do to a match is in there.
+     */
     const open = el(
       'button',
       'mini-btn',
       { type: 'button', title: `Best of ${fixture.bestOf} - needs ${mapsNeeded(fixture.bestOf)} maps` },
-      fixture.id === openFixture ? 'Close' : 'Result',
+      'Edit',
     );
-    open.addEventListener('click', () => {
-      if (fixture.id === openFixture) {
-        openFixture = '';
-        draft = null;
-      } else {
-        openFixture = fixture.id;
-        draft = {
-          bestOf: fixture.bestOf,
-          winner: fixture.winner,
-          maps: Array.from({ length: fixture.bestOf }, (_, i) => ({ ...emptyMapRow(), ...(fixture.maps[i] ?? {}) })),
-        };
-      }
-      paint();
-    });
+    open.addEventListener('click', () => openMatch(fixture));
 
-    const drop = el('button', 'btn btn-small btn-ghost', { type: 'button', title: 'Remove this fixture' }, '×');
-    drop.addEventListener('click', () => {
-      if (!window.confirm(`Remove "${fixtureLabel(fixture)}"?`)) return;
-      act({ action: 'fixture.remove', id: fixture.id }, () => {
-        if (openFixture === fixture.id) {
-          openFixture = '';
-          draft = null;
-        }
-      });
-    });
-
-    row.append(open, drop);
+    row.append(open);
     return row;
   }
 
   /**
-   * One side of a fixture: who is in it, or where they come from.
+   * One side of a fixture, read only.
    *
-   * A select rather than a text box, for two reasons. A fixture's team is a
-   * COPY of a library entry and typing a name would make a team the library
-   * does not have; and a select carries no caret, so this row stays free to
-   * repaint.
+   * The row used to carry a `select` here and write on change. Everything
+   * editable now lives in the modal, which is what lets this whole list - and
+   * the bracket above it - repaint on any change without a thought: there is no
+   * input left in either to lose a caret.
    */
   function side(fixture, which, winner) {
     const slot = fixture[which];
     const wrap = el('span', `sch-side${winner ? ' is-winner' : ''}`);
-
-    const pick = el('select', null, { 'aria-label': `${which} team` });
-    pick.append(el('option', null, { value: '' }, slot.source ? `← ${sourceLabel(slot.source)}` : '- nobody yet -'));
-    for (const team of library) {
-      // The full name, not teamLabel() - that prefers the tricode, which is
-      // right on a graphic at 1920x1080 and useless in a list where "ALP" and
-      // "ALT" are the whole of what an operator has to tell apart.
-      pick.append(
-        el('option', null, { value: team.id, selected: team.id === slot.teamId ? 'selected' : null }, team.name || teamLabel(team)),
-      );
-    }
-    // A team already copied in that is no longer in the library still has to
-    // show, or the row would silently read as empty.
-    if (slot.teamId && !library.some((team) => team.id === slot.teamId)) {
-      pick.append(el('option', null, { value: slot.teamId, selected: 'selected' }, `${slot.name} (not in the library)`));
-    }
-
-    pick.addEventListener('change', () => {
-      const team = library.find((entry) => entry.id === pick.value);
-      act({
-        action: 'fixture.save',
-        // Picking a team by hand is what PINS a slot, so the edge is cleared
-        // explicitly - the sanitiser deliberately arbitrates neither.
-        fixture: { ...fixture, [which]: team ? { ...asSlot(team), source: null } : { ...slot, ...EMPTY_TEAM, teamId: '' } },
-      });
-    });
-
-    wrap.append(pick);
+    const label = slotLabel(slot) || (slot.source ? `← ${sourceLabel(slot.source)}` : '- nobody yet -');
+    wrap.append(el('span', 'sch-side-name', {}, label));
     return wrap;
   }
 
@@ -382,17 +340,48 @@ if (host) {
     return from ? `${source.take === 'loser' ? 'Loser' : 'Winner'} of ${fixtureLabel(from)}` : 'a fixture that is gone';
   };
 
-  /**
-   * The result editor, and the only place on this page with a text input.
-   *
-   * It writes into `draft` on every keystroke and repaints NOTHING, which is
-   * the caret rule. The running score beside it is its own node with its own
-   * updater, so it can move without the inputs moving.
-   */
-  function resultEditor(fixture) {
-    const card = el('div', 'sch-result');
-    const tally = el('span', 'sch-result-score');
+  // ------------------------------------------------------------- the modal ---
 
+  /**
+   * The match editor.
+   *
+   * ## Why it is a modal and not a card under the list
+   *
+   * It used to open inline, which put every input on the page underneath
+   * whichever fixture was open - and once the bracket arrived that was two
+   * views of the same match with a column of text boxes beneath both. A match
+   * is one thing to edit and the page is where you choose which; only the
+   * STAGE's own settings stay outside, because those are properties of the
+   * competition rather than of any one match.
+   *
+   * ## It is the only place on this page with a text input, and it repaints
+   * nothing
+   *
+   * Which is the caret rule, met the other way round from the list. The dialog
+   * is built ONCE, lives on `document.body` rather than inside `host`, and is
+   * never touched by `paint()` - so a repaint provoked by anything else cannot
+   * replace the box being typed into. Writes go into a draft and reach the
+   * server only on Save, so Cancel really does mean nothing happened.
+   *
+   * A native `dialog` with `showModal()`, so Escape, the backdrop and the focus
+   * trap are the platform's rather than three more things to get wrong.
+   */
+  function openMatch(fixture) {
+    // One at a time. A second dialog over the first would take the focus trap
+    // with it and strand the one underneath.
+    if (document.querySelector('.sch-modal')) return;
+
+    const draft = {
+      ...structuredClone(fixture),
+      maps: Array.from({ length: fixture.bestOf }, (_, i) => ({ ...emptyMapRow(), ...(fixture.maps[i] ?? {}) })),
+    };
+
+    openFixture = fixture.id;
+    const dialog = el('dialog', 'sch-modal');
+    const form = el('div', 'sch-modal-body');
+
+    const tally = el('span', 'sch-result-score');
+    const maps = el('div', 'sch-maps');
     const retally = () => {
       const score = fixtureScore({ maps: draft.maps });
       const need = mapsNeeded(draft.bestOf);
@@ -400,78 +389,206 @@ if (host) {
       tally.classList.toggle('is-decided', score.left >= need || score.right >= need);
     };
 
-    for (let i = 0; i < draft.maps.length; i += 1) {
-      const row = draft.maps[i];
-      const line = el('div', 'sch-map');
+    // Only the map rows are rebuilt when the series length changes - never the
+    // whole dialog, which would replace the team selects mid-edit.
+    const paintMaps = () => {
+      maps.replaceChildren(...draft.maps.map((row, i) => mapRow(row, i, retally)));
+      retally();
+    };
 
-      const name = el('input', null, { type: 'text', placeholder: `Map ${i + 1}`, maxlength: 40, 'aria-label': `Map ${i + 1} name` });
-      name.value = row.name;
-      name.addEventListener('input', () => {
-        row.name = name.value;
-      });
+    const heading = el('h2', 'sch-modal-title', {}, fixtureLabel(fixture));
+    heading.append(el('span', 'sch-modal-sub', {}, roundName(stageOf(fixture.stageId) ?? {}, fixture)));
 
-      const left = el('input', null, { type: 'number', min: '0', max: '99', 'aria-label': `Map ${i + 1} left score` });
-      left.value = String(row.left);
-      const right = el('input', null, { type: 'number', min: '0', max: '99', 'aria-label': `Map ${i + 1} right score` });
-      right.value = String(row.right);
-      for (const [input, key] of [[left, 'left'], [right, 'right']]) {
-        input.addEventListener('input', () => {
-          row[key] = Number(input.value) || 0;
-          retally();
-        });
-      }
+    form.append(
+      heading,
+      grid(2, [field('Left team', modalSide(draft, 'left')), field('Right team', modalSide(draft, 'right'))]),
+      grid(2, [field('Series', seriesPicker(draft, paintMaps)), field('Result', resultPicker(draft))]),
+      el('div', 'subhead', {}, 'Maps'),
+      maps,
+    );
 
+    const save = el('button', 'btn btn-primary', { type: 'button' }, 'Save');
+    save.addEventListener('click', () => {
       /*
-       * A forfeit on one map. 0-0 is the normal state of a map nobody has
-       * played, so a map won by a walkover cannot be expressed as a score at
-       * all - without this it would either read as unplayed or want a fake 13-0
-       * that then flowed into the round differential on the table.
+       * ONE write, carrying the whole fixture.
+       *
+       * `fixture.save` replaces the record, so the draft has to be complete -
+       * and going through `apply` means propagation, acyclicity and the refusal
+       * to rewrite a match that has already been played all still hold. Two
+       * writes (the teams, then the result) would be two validations with the
+       * first already committed if the second failed.
        */
-      const award = el('select', null, { 'aria-label': `Map ${i + 1} awarded to` });
-      for (const [value, label] of [['', 'By score'], ['left', 'Awarded left'], ['right', 'Awarded right']]) {
-        award.append(el('option', null, { value, selected: value === row.award ? 'selected' : null }, label));
-      }
-      award.addEventListener('change', () => {
-        row.award = award.value;
-        retally();
+      act({ action: 'fixture.save', fixture: draft }, () => {
+        toast(`Saved ${fixtureLabel(draft)}`);
+        dialog.close();
       });
+    });
 
-      line.append(name, left, right, award);
-      card.append(line);
+    const drop = el('button', 'btn btn-ghost sch-modal-drop', { type: 'button' }, 'Remove match');
+    drop.addEventListener('click', () => {
+      if (!window.confirm(`Remove "${fixtureLabel(fixture)}"?`)) return;
+      act({ action: 'fixture.remove', id: fixture.id }, () => dialog.close());
+    });
+
+    const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+    cancel.addEventListener('click', () => dialog.close());
+
+    const foot = el('div', 'sch-modal-foot');
+    foot.append(drop, el('span', 'sch-modal-spacer'), tally, cancel, save);
+
+    dialog.append(form, foot);
+    document.body.append(dialog);
+    paintMaps();
+
+    /*
+     * The one place the dialog is torn down, so Escape, the backdrop, Cancel
+     * and a successful Save all leave exactly the same state behind. `close`
+     * fires for every one of them, which is the whole reason to use a real
+     * dialog rather than a div pretending to be one.
+     */
+    dialog.addEventListener('close', () => {
+      openFixture = '';
+      dialog.remove();
+      paint();
+    });
+    // A click on the backdrop lands on the dialog itself, never on its content.
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+
+    dialog.showModal();
+    paint();
+  }
+
+  /** A team picker, writing into the draft rather than to the server. */
+  function modalSide(draft, which) {
+    const slot = draft[which];
+    const pick = el('select', null, { 'aria-label': `${which} team` });
+    pick.append(el('option', null, { value: '' }, slot.source ? `← ${sourceLabel(slot.source)}` : '- nobody yet -'));
+    for (const team of library) {
+      // The full name, not teamLabel() - that prefers the tricode, which is
+      // right on a graphic at 1920x1080 and useless where "ALP" and "ALT" are
+      // the whole of what an operator has to tell apart.
+      pick.append(
+        el('option', null, { value: team.id, selected: team.id === slot.teamId ? 'selected' : null }, team.name || teamLabel(team)),
+      );
+    }
+    /*
+     * A team that is IN the fixture but not selectable from the library.
+     *
+     * Two ways to get here and both are ordinary: a fixture generated or
+     * imported by name alone carries no `teamId`, and a team picked last month
+     * may since have left the library. Without this the picker reads
+     * "- nobody yet -" for a match that plainly has two teams in its own title,
+     * and the first save silently empties it - which is the shape of bug the
+     * whole copy-not-link rule exists to avoid.
+     *
+     * `__keep` rather than the id, because there may be no id: it means "leave
+     * this slot exactly as it is", which is a third answer the other two
+     * options cannot express.
+     */
+    const known = library.some((team) => team.id === slot.teamId);
+    if (slot.name && !known) {
+      pick.append(el('option', null, { value: '__keep', selected: 'selected' }, `${slot.name} (not from the library)`));
     }
 
-    const result = el('select', null, { 'aria-label': 'Series result' });
+    pick.addEventListener('change', () => {
+      if (pick.value === '__keep') return;
+      const team = library.find((entry) => entry.id === pick.value);
+      // Picking a team by hand is what PINS a slot, so the edge is cleared
+      // explicitly - the sanitiser deliberately arbitrates neither.
+      draft[which] = team ? { ...asSlot(team), source: null } : { ...slot, ...EMPTY_TEAM, teamId: '' };
+    });
+    return pick;
+  }
+
+  /** The series length. Changing it adds or removes map rows there and then. */
+  function seriesPicker(draft, paintMaps) {
+    const pick = el('select', null, { 'aria-label': 'Series length' });
+    for (const value of BEST_OF_CHOICES) {
+      pick.append(
+        el('option', null, { value: String(value), selected: value === draft.bestOf ? 'selected' : null }, `Best of ${value}`),
+      );
+    }
+    pick.addEventListener('change', () => {
+      const wanted = Number(pick.value);
+      /*
+       * Shortening a series drops rows off the end, and it says so.
+       *
+       * The server would slice them silently on the way in - `sanitiseFixture`
+       * runs on LOAD as well as on write, so it cannot refuse - which means a
+       * played map can leave a record with nothing raised. Here it is at least
+       * visible, and Cancel still undoes it because nothing has been written.
+       */
+      const losing = draft.maps.slice(wanted).filter((row) => row.award || row.left || row.right).length;
+      if (losing) toast(`That drops ${losing} recorded map${losing === 1 ? '' : 's'}. Cancel to keep them.`);
+      draft.bestOf = wanted;
+      draft.maps = Array.from({ length: wanted }, (_, i) => ({ ...emptyMapRow(), ...(draft.maps[i] ?? {}) }));
+      paintMaps();
+    });
+    return pick;
+  }
+
+  /** How the series was decided, for the cases the maps cannot express. */
+  function resultPicker(draft) {
+    const pick = el('select', null, { 'aria-label': 'Series result' });
     for (const [value, label] of [
       ['auto', 'From the maps'],
       ['left', 'Left wins (forfeit)'],
       ['right', 'Right wins (forfeit)'],
       ['void', 'Void - no result'],
     ]) {
-      result.append(el('option', null, { value, selected: value === draft.winner ? 'selected' : null }, label));
+      pick.append(el('option', null, { value, selected: value === draft.winner ? 'selected' : null }, label));
     }
-    result.addEventListener('change', () => {
-      draft.winner = result.value;
+    pick.addEventListener('change', () => {
+      draft.winner = pick.value;
+    });
+    return pick;
+  }
+
+  /** One map of the series. The only text input on this page. */
+  function mapRow(row, i, retally) {
+    const line = el('div', 'sch-map');
+
+    const name = el('input', null, {
+      type: 'text',
+      placeholder: `Map ${i + 1}`,
+      maxlength: 40,
+      'aria-label': `Map ${i + 1} name`,
+    });
+    name.value = row.name;
+    name.addEventListener('input', () => {
+      row.name = name.value;
     });
 
-    const save = el('button', 'btn btn-small', { type: 'button' }, 'Save result');
-    save.addEventListener('click', () =>
-      act({ action: 'result', id: fixture.id, maps: draft.maps, winner: draft.winner }, () => {
-        openFixture = '';
-        draft = null;
-        toast(`Saved ${fixtureLabel(fixture)}`);
-      }),
-    );
+    const left = el('input', null, { type: 'number', min: '0', max: '99', 'aria-label': `Map ${i + 1} left score` });
+    left.value = String(row.left);
+    const right = el('input', null, { type: 'number', min: '0', max: '99', 'aria-label': `Map ${i + 1} right score` });
+    right.value = String(row.right);
+    for (const [input, key] of [[left, 'left'], [right, 'right']]) {
+      input.addEventListener('input', () => {
+        row[key] = Number(input.value) || 0;
+        retally();
+      });
+    }
 
-    const cancel = el('button', 'btn btn-small btn-ghost', { type: 'button' }, 'Cancel');
-    cancel.addEventListener('click', () => {
-      openFixture = '';
-      draft = null;
-      paint();
+    /*
+     * A forfeit on one map. 0-0 is the normal state of a map nobody has played,
+     * so a map won by a walkover cannot be expressed as a score at all -
+     * without this it would either read as unplayed or want a fake 13-0 that
+     * then flowed into the round differential on the table.
+     */
+    const award = el('select', null, { 'aria-label': `Map ${i + 1} awarded to` });
+    for (const [value, label] of [['', 'By score'], ['left', 'Awarded left'], ['right', 'Awarded right']]) {
+      award.append(el('option', null, { value, selected: value === row.award ? 'selected' : null }, label));
+    }
+    award.addEventListener('change', () => {
+      row.award = award.value;
+      retally();
     });
 
-    retally();
-    card.append(el('div', 'sch-result-foot', {}, ''), tally, result, save, cancel);
-    return card;
+    line.append(name, left, right, award);
+    return line;
   }
 
   // ---------------------------------------------------------- the standings ---
@@ -485,6 +602,135 @@ if (host) {
    * somebody open the table. Every number a rulebook would use is shown, and
    * the operator reads the rulebook.
    */
+
+  /*
+   * The bracket, drawn.
+   *
+   * ## Every number comes from arithmetic
+   *
+   * `bracketLayout` answers in abstract units - columns and rows, both possibly
+   * fractional - and the four constants below are the only pixels in it. That
+   * is not tidiness: this panel lives behind a sub-tab, sub-tabs are hidden
+   * with `display: none`, and `shell.js` fires no event when one opens. A
+   * layout that measured itself would read zero for everything and stack the
+   * whole bracket on one spot, on the first paint only, which is the kind of
+   * fault that survives every DOM assertion.
+   *
+   * ## It repaints freely
+   *
+   * No text input anywhere in it - cards are buttons - so the caret rule is
+   * satisfied by shape, exactly like the fixture list above it.
+   */
+  const CARD_W = 188;
+  const CARD_H = 44;
+  const COL_GAP = 46;
+  const ROW_H = 56;
+
+  const atX = (column) => column * (CARD_W + COL_GAP);
+  const atY = (row) => row * ROW_H;
+
+  function bracket(stage) {
+    const layout = bracketLayout(doc, stage.id);
+    if (!layout.nodes.length) {
+      return el('p', 'field-help', {}, 'Nothing to draw yet - generate or add a fixture.');
+    }
+
+    const width = layout.columns * (CARD_W + COL_GAP) - COL_GAP;
+    const height = layout.rows * ROW_H;
+
+    // Its own scroll container: a bracket is a diagram and may legitimately be
+    // wider than the panel, which is the one thing allowed to overflow.
+    const scroller = el('div', 'sch-bracket-scroll');
+    const frame = el('div', 'sch-bracket');
+    frame.style.width = `${width}px`;
+    frame.style.height = `${height}px`;
+
+    frame.append(connectors(layout, width, height));
+    for (const node of layout.nodes) frame.append(bracketCard(node));
+
+    scroller.append(frame);
+    return scroller;
+  }
+
+  /**
+   * The elbows between matches, as one SVG behind the cards.
+   *
+   * Drawn from the same coordinates the cards use rather than from anything
+   * measured, so a line cannot drift from the card it points at. An edge into
+   * another band - an upper-bracket loser dropping into the lower - is drawn
+   * like any other, which is the whole reason a double elimination is legible
+   * at all.
+   */
+  function connectors(layout, width, height) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'sch-links');
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    for (const link of layout.links) {
+      const x1 = atX(link.from.column) + CARD_W;
+      const y1 = atY(link.from.row) + CARD_H / 2;
+      const x2 = atX(link.to.column);
+      const y2 = atY(link.to.row) + CARD_H / 2;
+      // Halfway across the gap, then vertically, then in - the square elbow a
+      // bracket is always drawn with. A curve would read as a flow chart.
+      const mid = x1 + Math.max(12, (x2 - x1) / 2);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${x1} ${y1} H ${mid} V ${y2} H ${x2}`);
+      // A loser's path is dashed, because "the loser of this drops to there" is
+      // a different claim from "the winner advances" and a bracket that draws
+      // them alike is one an operator has to trace with a finger.
+      path.setAttribute('class', `sch-link is-${link.take}`);
+      svg.append(path);
+    }
+
+    return svg;
+  }
+
+  /** One match in the bracket. A button, because clicking it opens its result. */
+  function bracketCard(node) {
+    const { fixture } = node;
+    const status = fixtureStatus(fixture);
+    const score = fixtureScore(fixture);
+    const won = fixtureWinner(fixture);
+
+    /*
+     * The tooltip names where an unplayed side COMES from; the card does not.
+     *
+     * In a drawn bracket the connector is the answer to "who plays here" - that
+     * is what the line is for, and it is why the list below needs the words and
+     * this does not. Printing "Winner of Sentinels vs LOUD" in a 188px card
+     * would ellipsis away to "Winner of Sentine..." and say less than the line
+     * already does. So the card stays quiet and the hover is exact.
+     */
+    const describe = (which) =>
+      slotLabel(fixture[which]) || (fixture[which]?.source ? sourceLabel(fixture[which].source) : 'nobody yet');
+    const card = el('button', `sch-node is-${status}${fixture.id === openFixture ? ' is-open' : ''}`, {
+      type: 'button',
+      title: `${describe('left')} v ${describe('right')} - best of ${fixture.bestOf}`,
+    });
+    card.style.left = `${atX(node.column)}px`;
+    card.style.top = `${atY(node.row)}px`;
+    card.style.width = `${CARD_W}px`;
+    card.style.height = `${CARD_H}px`;
+
+    for (const which of ['left', 'right']) {
+      const slot = fixture[which];
+      const line = el('span', `sch-node-side${won === which ? ' is-won' : ''}`);
+      line.append(
+        // slotLabel already answers "Winner of QF1" for a slot with an edge and
+        // no team yet, so an undrawn round reads as a promise rather than blank.
+        el('span', 'sch-node-name', {}, slotLabel(slot) || '—'),
+        el('span', 'sch-node-score', {}, status === 'scheduled' ? '' : String(score[which])),
+      );
+      card.append(line);
+    }
+
+    card.addEventListener('click', () => openMatch(fixture));
+    return card;
+  }
+
   function table(stage) {
     const rows = standings(doc, stage.id);
     const box = el('div', 'sch-table-wrap');
@@ -541,6 +787,16 @@ if (host) {
       ...[
         stageStrip(),
         stage ? stageSettings(stage) : null,
+        /*
+         * The bracket goes ABOVE the list and the table goes below it, and the
+         * asymmetry is the job rather than an oversight. A table is something
+         * an operator CHECKS, so it reads last; a bracket is how they NAVIGATE
+         * a knockout, and clicking a match in it opens that fixture's result
+         * editor in the list - which has to be in the direction you are already
+         * reading, or the thing you just opened is off the top of the screen.
+         */
+        stage && !stageHasTable(stage) ? title('Bracket') : null,
+        stage && !stageHasTable(stage) ? bracket(stage) : null,
         stage ? fixtureList(stage) : el('p', 'field-help', {}, 'Add a stage to start building the schedule.'),
         stage && stageHasTable(stage) ? title('Standings') : null,
         stage && stageHasTable(stage) ? table(stage) : null,

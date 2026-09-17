@@ -24,6 +24,7 @@ const {
   fixtureStatus,
   fixtureWinner,
   mapsNeeded,
+  bracketLayout,
   roundRobinPairs,
   sanitiseFixture,
   sanitiseSchedule,
@@ -420,6 +421,159 @@ const maps = (...rows) => rows.map(([left, right]) => ({ name: 'Ascent', left, r
   ok('37 a slot keeps both a team and its edge', both.left.source !== null && both.left.name === 'Sentinels');
   const pinned = sanitiseFixture({ id: 'a', left: { ...team('Sentinels'), source: null } });
   eq('37b clearing the source is what pins it', pinned.left.source, null);
+}
+
+
+// ------------------------------------------------------------ the bracket ---
+
+/*
+ * The drawing, as arithmetic.
+ *
+ * Here rather than in a browser suite because that is what it IS - a pure
+ * function from a document to coordinates, with no DOM in it. The Schedule
+ * sub-page lives behind a sub-tab and a hidden element measures zero, so a
+ * layout that asked the DOM anything would stack the whole bracket on one spot
+ * on the first paint and nowhere else; keeping the maths measurable without a
+ * browser is the point, not a convenience.
+ */
+{
+  const stage = { id: 's', name: 'Playoffs', kind: 'bracket', order: 0, bestOf: 3 };
+  const fx = (id, round, slot, bracket = 'upper', extra = {}) => ({
+    id,
+    stageId: 's',
+    round,
+    slot,
+    bracket,
+    bestOf: 3,
+    ...extra,
+  });
+  const from = (fixtureId, take = 'winner') => ({ source: { fixtureId, take } });
+  const build = (fixtures) => sanitiseSchedule({ version: 1, stages: [stage], fixtures }).schedule;
+  const rowOf = (layout, id) => layout.nodes.find((node) => node.id === id)?.row;
+  const colOf = (layout, id) => layout.nodes.find((node) => node.id === id)?.column;
+  // The property that matters on every shape: nothing is drawn on top of
+  // anything else. Two fixtures may share a row OR a column, never both.
+  const noOverlap = (layout) => {
+    const cells = layout.nodes.map((node) => `${node.column}:${node.row}`);
+    return new Set(cells).size === cells.length;
+  };
+
+  const single = build([
+    fx('qf1', 1, 0),
+    fx('qf2', 1, 1),
+    fx('qf3', 1, 2),
+    fx('qf4', 1, 3),
+    fx('sf1', 2, 0, 'upper', { left: from('qf1'), right: from('qf2') }),
+    fx('sf2', 2, 1, 'upper', { left: from('qf3'), right: from('qf4') }),
+    fx('gf', 3, 0, 'upper', { left: from('sf1'), right: from('sf2') }),
+  ]);
+  let layout = bracketLayout(single, 's');
+
+  eq('38 a round is a column', layout.columns, 3);
+  eq('38b ...and the first round fills the rows', layout.rows, 4);
+  eq('39 the first round lays out one per row', `${rowOf(layout, 'qf1')},${rowOf(layout, 'qf4')}`, '0,3');
+
+  /*
+   * THE ONE THE WHOLE FUNCTION IS FOR. A match sits centred between the two
+   * that feed it - which is what makes a bracket read as a bracket rather than
+   * as three lists side by side.
+   */
+  eq('40 a match centres between its feeders', rowOf(layout, 'sf1'), 0.5);
+  eq('40b ...on both sides of the draw', rowOf(layout, 'sf2'), 2.5);
+  eq('40c ...and the final centres on those', rowOf(layout, 'gf'), 1.5);
+  eq('41 every edge is drawn', layout.links.length, 6);
+
+  /*
+   * Not `2 ** (round - 1) * (slot + 0.5)`, which is the formula a bracket
+   * drawing usually starts with. It is right only for a full power-of-two
+   * single elimination, and this model deliberately allows byes, sparse slots
+   * and a lower bracket built in whatever order somebody builds one - so the
+   * EDGES decide, and an unfed match takes the next free row in its column.
+   */
+  const bye = build([fx('a', 1, 0), fx('b', 1, 1), fx('x', 2, 0, 'upper', { left: from('a') }), fx('y', 2, 1, 'upper', { left: from('b') })]);
+  layout = bracketLayout(bye, 's');
+  eq('42 a match with ONE feeder sits level with it', rowOf(layout, 'x'), 0);
+  eq('42b ...and the next one with its own', rowOf(layout, 'y'), 1);
+  ok('42c nothing overlaps', noOverlap(layout));
+
+  /*
+   * A bracket nobody has wired yet - the state between pressing Generate and
+   * drawing the edges. Free rows are counted per COLUMN, so this is two tidy
+   * columns rather than a staircase running off the bottom.
+   */
+  const loose = build([fx('a', 1, 0), fx('b', 1, 1), fx('c', 1, 2), fx('d', 1, 3), fx('e', 2, 0), fx('f', 2, 1)]);
+  layout = bracketLayout(loose, 's');
+  eq('43 an unwired bracket starts each column at the top', `${rowOf(layout, 'e')},${rowOf(layout, 'f')}`, '0,1');
+  eq('43b ...so it is as tall as its longest column', layout.rows, 4);
+  eq('43c ...and draws no links', layout.links.length, 0);
+
+  /*
+   * Averaging can want two fixtures on one row - three matches feeding two, or
+   * a half-wired bracket. They are pushed apart rather than drawn on top of
+   * each other, and the order the operator laid out is preserved.
+   */
+  /*
+   * The sources here are chosen to COLLIDE, and that is the whole point.
+   *
+   * The first version of this block used a/b and b/c, which average to 0.5 and
+   * 1.5 - already a row apart, so the push-apart never fired and the assertions
+   * passed against code with it deleted. Caught by breaking it on purpose, which
+   * is the only reason anyone ever finds a vacuous assertion.
+   *
+   *   x and y take the SAME two feeders, so both want row 0.5 exactly.
+   *   z takes a and c, wanting 1.0 - half a row from where y has to end up.
+   */
+  const crowded = build([
+    fx('a', 1, 0),
+    fx('b', 1, 1),
+    fx('c', 1, 2),
+    fx('x', 2, 0, 'upper', { left: from('a'), right: from('b') }),
+    fx('y', 2, 1, 'upper', { left: from('a'), right: from('b') }),
+    fx('z', 2, 2, 'upper', { left: from('a'), right: from('c') }),
+  ]);
+  layout = bracketLayout(crowded, 's');
+  eq('44 two matches wanting one row are pushed apart', rowOf(layout, 'x'), 0.5);
+  eq('44b ...the second to the next row down', rowOf(layout, 'y'), 1.5);
+  eq('44c ...and a third that lands between them follows', rowOf(layout, 'z'), 2.5);
+  ok('44d nothing shares a cell', noOverlap(layout));
+  ok('44e ...and the order laid out is preserved', rowOf(layout, 'x') < rowOf(layout, 'y') && rowOf(layout, 'y') < rowOf(layout, 'z'));
+
+  /*
+   * Double elimination, and the bug this caught when it was written: a lower
+   * bracket match is fed by the LOSERS of the upper bracket, so averaging
+   * against every source dragged the whole lower band up into the upper one and
+   * put the two finals on the same cell. Only same-half sources place a
+   * fixture; a cross-band edge is still drawn.
+   */
+  const double = build([
+    fx('u1', 1, 0),
+    fx('u2', 1, 1),
+    fx('uf', 2, 0, 'upper', { left: from('u1'), right: from('u2') }),
+    fx('l1', 1, 0, 'lower', { left: from('u1', 'loser'), right: from('u2', 'loser') }),
+    fx('lf', 2, 0, 'lower', { left: from('l1') }),
+    fx('gf', 1, 0, 'final', { left: from('uf'), right: from('lf') }),
+  ]);
+  layout = bracketLayout(double, 's');
+  ok('45 the lower bracket does not land on the upper', noOverlap(layout));
+  ok('45b ...it sits BELOW it', rowOf(layout, 'l1') > rowOf(layout, 'uf'));
+  ok('45c ...and a loser edge is still drawn', layout.links.some((link) => link.take === 'loser'));
+  eq('45d the grand final is to the right of everything', colOf(layout, 'gf'), 2);
+  ok(
+    '45e ...and centred between the two bands',
+    rowOf(layout, 'gf') > rowOf(layout, 'uf') && rowOf(layout, 'gf') < rowOf(layout, 'l1'),
+    rowOf(layout, 'gf'),
+  );
+
+  // An edge pointing at a fixture that is gone is dropped rather than drawn to
+  // nowhere - the same rule sanitiseSchedule applies to the record itself.
+  const dangling = build([fx('a', 1, 0), fx('b', 2, 0, 'upper', { left: from('a'), right: from('ghost') })]);
+  layout = bracketLayout(dangling, 's');
+  eq('46 an edge to a fixture that is gone is not drawn', layout.links.length, 1);
+
+  const empty = bracketLayout(build([]), 's');
+  eq('47 an empty stage draws nothing', empty.nodes.length, 0);
+  eq('47b ...and has no size', `${empty.columns}x${empty.rows}`, '0x0');
+  eq('48 a stage id nobody has draws nothing either', bracketLayout(single, 'nope').nodes.length, 0);
 }
 
 rmSync(DIR, { recursive: true, force: true });

@@ -929,3 +929,161 @@ export function nextMapIndex(fixture) {
   const index = open === -1 ? (fixture?.maps ?? []).length : open;
   return index < (fixture?.bestOf ?? 0) ? index : -1;
 }
+
+// ------------------------------------------------------------ the bracket ---
+
+/**
+ * Where every fixture of a bracket sits, in abstract grid units.
+ *
+ * ## Arithmetic, never measurement
+ *
+ * The Schedule sub-page lives behind a sub-tab, and a hidden element measures
+ * ZERO - `shell.js` fires no event when one opens, so a layout that asked the
+ * DOM how big anything was would lay the whole bracket on top of itself and
+ * only on the first paint. Every number here is computed from `round`, `slot`
+ * and the EDGES, and the renderer's only job is to multiply by a card size.
+ *
+ * Units, not pixels, for the same reason the schema has no `WINNER_MAP_ROWS`
+ * in it: a column width is a decision about a dashboard panel, not a fact
+ * about a competition. `column` counts columns and `row` counts card heights,
+ * and both may be fractional - a match sits at row 1.5 when it is centred
+ * between two feeders.
+ *
+ * ## A match is centred between the matches that FEED it
+ *
+ * Not `2^(round-1) * (slot + 0.5)`, which is the formula every bracket drawing
+ * starts with and which is only right for a full power-of-two single
+ * elimination. This model lets an operator build a lower bracket in the order
+ * they actually build one, leave byes as empty slots, and wire any fixture to
+ * any earlier one - so the edges are the truth about what feeds what, and the
+ * arithmetic follows them. A fixture nobody feeds takes the next free row,
+ * which is what makes a first round lay out evenly with no special case.
+ *
+ * ## Overlaps are resolved, not hoped away
+ *
+ * Averaging can put two fixtures of one column on the same row - three matches
+ * feeding two, a half-wired bracket mid-build. After the pass, each column is
+ * sorted and pushed apart to a minimum of one row, which preserves the order
+ * the operator sees and guarantees nothing is drawn underneath anything else.
+ *
+ * @returns {{columns: number, rows: number, nodes: object[], links: object[]}}
+ */
+export function bracketLayout(schedule, stageId) {
+  const all = (schedule?.fixtures ?? []).filter((fixture) => fixture.stageId === stageId);
+  const placed = new Map();
+  const nodes = [];
+
+  let bandTop = 0;
+  let widest = 0;
+
+  /*
+   * The three halves as three BANDS, stacked.
+   *
+   * Upper above lower is how a double elimination is drawn everywhere, and the
+   * grand final belongs to the right of both rather than inside either - which
+   * is why it is laid out last, against the width the other two ended up
+   * needing. A single elimination has only `upper` and the bands cost nothing.
+   */
+  for (const half of BRACKET_HALVES) {
+    const mine = all.filter((fixture) => fixture.bracket === half);
+    if (!mine.length) continue;
+
+    const rounds = [...new Set(mine.map((fixture) => fixture.round))].sort((a, b) => a - b);
+    // The grand final sits after everything else, however many rounds it has
+    // (a bracket reset is two). Everything else starts at the left edge.
+    const columnBase = half === 'final' ? widest : 0;
+    /*
+     * ...and VERTICALLY it centres on the whole drawing rather than taking the
+     * next free row, because it belongs to neither band. Laid out below the
+     * lower bracket it would hang off the bottom corner, which is not where
+     * anybody has ever drawn a grand final.
+     */
+    const centre = half === 'final' ? Math.max(0, bandTop - 2) / 2 : 0;
+    let bandRows = 0;
+
+    for (const [index, round] of rounds.entries()) {
+      const inRound = mine
+        .filter((fixture) => fixture.round === round)
+        .sort((a, b) => a.slot - b.slot || a.order - b.order);
+
+      /*
+       * Free rows are counted per COLUMN, not per band.
+       *
+       * Two fixtures only collide if they share a column, so a column starts
+       * again at the top of its band. Counting across the band instead draws an
+       * unwired bracket as a staircase - four fixtures at rows 0-3 and the next
+       * round beginning at row 4 - which is what an operator sees in the moment
+       * between generating a bracket and wiring it up.
+       */
+      let nextFreeRow = 0;
+
+      const wanted = inRound.map((fixture) => {
+        /*
+         * Only sources in the SAME half place a fixture.
+         *
+         * A lower-bracket match is fed by the LOSERS of the upper bracket, so
+         * averaging against every source would drag the whole lower band up
+         * into the upper one - measured, and it put the upper and lower finals
+         * on the same cell. A band lays itself out; edges arriving from another
+         * band are still drawn, they just do not decide where anything sits.
+         */
+        const sources = edgesOf(fixture)
+          .map((id) => placed.get(id))
+          .filter((at) => at && at.half === half);
+        const row = sources.length
+          ? sources.reduce((sum, source) => sum + source.row, 0) / sources.length
+          : half === 'final'
+            ? centre
+            : bandTop + nextFreeRow++;
+        return { fixture, row };
+      });
+
+      // One column at a time: sorted, then pushed apart. Order is preserved,
+      // so a nudge never reshuffles what the operator laid out.
+      wanted.sort((a, b) => a.row - b.row);
+      let floor = -Infinity;
+      for (const entry of wanted) {
+        entry.row = Math.max(entry.row, floor);
+        floor = entry.row + 1;
+        const at = { column: columnBase + index, row: entry.row, half };
+        placed.set(entry.fixture.id, at);
+        nodes.push({ id: entry.fixture.id, fixture: entry.fixture, ...at });
+        bandRows = Math.max(bandRows, entry.row + 1);
+        widest = Math.max(widest, at.column + 1);
+      }
+    }
+
+    // A blank row between bands, so upper and lower do not touch. The grand
+    // final shares the space rather than opening a band of its own.
+    if (half !== 'final') bandTop = bandRows + 1;
+  }
+
+  /*
+   * The links, as coordinate pairs rather than ids.
+   *
+   * The renderer draws elbows and should not have to look anything up; and an
+   * edge whose source is not in this stage is dropped here rather than drawn
+   * to nowhere.
+   */
+  const links = [];
+  for (const node of nodes) {
+    for (const side of ['left', 'right']) {
+      const id = node.fixture[side]?.source?.fixtureId;
+      const from = id ? placed.get(id) : null;
+      if (!from) continue;
+      links.push({
+        from: { column: from.column, row: from.row },
+        to: { column: node.column, row: node.row },
+        take: node.fixture[side].source.take,
+        side,
+      });
+    }
+  }
+
+  return {
+    columns: widest,
+    rows: nodes.reduce((most, node) => Math.max(most, node.row + 1), 0),
+    nodes,
+    links,
+  };
+}

@@ -3546,6 +3546,225 @@ label.is-off {
  * columns do not fit a phone, and a table is one of the three things allowed
  * its own horizontal scroller.
  */
+
+/* ------------------------------------------------------- the match editor ---
+
+   A native <dialog>. `showModal()` brings Escape, the focus trap and the
+   backdrop with it, which is three things not written here and therefore three
+   things that cannot be got wrong.
+
+   It is the only place on the Schedule page with a text input, and it lives on
+   document.body rather than inside the painted host - see the caret note at the
+   top of schedule-dashboard.js. */
+
+.sch-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(86vh, 900px);
+  padding: 0;
+  border: 1px solid var(--edge, #2a3038);
+  background: var(--bg-panel, #14181d);
+  color: var(--text, #e8ecf1);
+  overflow: hidden;
+  /* The dialog is centred by the platform; this stops a long series pushing
+     the footer off the bottom of the screen. */
+  display: flex;
+  flex-direction: column;
+}
+
+.sch-modal::backdrop {
+  background: rgba(6, 8, 11, 0.66);
+}
+
+.sch-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.sch-modal-title {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 14px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Which round this is, beside the name rather than under it - the name can be
+   long and the round is two words. */
+.sch-modal-sub {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--text-faint, #7d8894);
+}
+
+.sch-maps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Pinned, so a Bo9 scrolls its maps and the buttons stay where the hand is. */
+.sch-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  border-top: 1px solid var(--edge, #2a3038);
+  background: var(--bg-sunken, #10141a);
+}
+
+.sch-modal-spacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * `.btn-primary` is width:100% everywhere in this tool - which is right for the
+ * take bar and the lobby panel, where a primary button owns its row, and wrong
+ * in a footer beside three other controls. Left alone, Save takes the whole
+ * width, wraps onto its own line and reads as a banner. Scoped, not changed:
+ * every other primary button still wants its row.
+ */
+.sch-modal-foot .btn {
+  width: auto;
+}
+
+/* Away from Save, on the other side of the row: the two destructive-adjacent
+   things on this dialog must not be adjacent. */
+.sch-modal-drop {
+  order: -1;
+}
+
+@media (max-width: 520px) {
+  /* The footer wraps at phone width, and Remove must not end up under the
+     thumb that was reaching for Save. */
+  .sch-modal-foot {
+    justify-content: flex-end;
+  }
+
+  .sch-modal-drop {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
+
+/* ------------------------------------------------------------ the bracket ---
+
+   Drawn from arithmetic: `bracketLayout` answers in columns and rows and
+   schedule-dashboard.js multiplies by its own four constants, so nothing here
+   may size a node. The only job of this block is to say what a node LOOKS
+   like - every left/top/width/height is set inline from the layout.
+
+   A diagram is one of the three things allowed to be wider than the page, so
+   it gets its own scroll container rather than making the panel scroll. */
+
+.sch-bracket-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.sch-bracket {
+  position: relative;
+}
+
+/* Behind the cards, and never in front: a line crossing a team name is the
+   difference between a bracket you can read and one you cannot. */
+.sch-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sch-link {
+  fill: none;
+  stroke: var(--edge, #2a3038);
+  stroke-width: 1.5;
+}
+
+/* "The LOSER of this drops to there" is a different claim from "the winner
+   advances", and a bracket that draws them alike is one an operator has to
+   trace with a finger. */
+.sch-link.is-loser {
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+
+.sch-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 3px 7px;
+  background: var(--bg-panel, #14181d);
+  border: 1px solid var(--edge, #2a3038);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sch-node:hover {
+  border-color: var(--accent);
+}
+
+.sch-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sch-node.is-open {
+  border-color: var(--accent);
+}
+
+/* The one worth finding on a bracket of thirty matches. */
+.sch-node.is-live {
+  border-color: var(--warn-edge, #c99a42);
+}
+
+.sch-node.is-void {
+  opacity: 0.55;
+}
+
+.sch-node-side {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+/* Who won, in the accent - the desk's "this is selected" colour, never
+   --on-air, which means an audience can see it. */
+.sch-node-side.is-won {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/* The name must never push the score out of the card - the fitter lesson:
+   whatever is measured against has to be sized by the layout, not the text. */
+.sch-node-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sch-node-score {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
 .sch-table-wrap {
   overflow-x: auto;
   margin-top: 8px;
