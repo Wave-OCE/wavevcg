@@ -238,25 +238,42 @@ try {
    * however well the page is working.
    */
   ok('20a. the Teams sub-page shows the library', await page.isVisible('#tou-teams'));
-  ok('20b. ...with a roster editor', (await page.$('#wed-teams .roster-rows')) !== null);
 
-  await page.fill('#wed-teams input[type=text]', 'Sentinels');
-  await page.click('#wed-teams .roster-rows button:has-text("Add player")');
+  /*
+   * THE PANEL HAS NO TEXT INPUT. Everything about one team is in the modal, and
+   * this is the assertion that keeps it that way - a well-meaning "just put the
+   * name box back on the page" undoes the whole reason the form moved, and every
+   * other assertion in this block would stay green while it happened.
+   */
+  ok(
+    '20a2. the team panel itself carries no text input',
+    (await page.$$('#wed-teams input[type="text"]')).length === 0,
+    String((await page.$$('#wed-teams input[type="text"]')).length),
+  );
+
+  await page.click('#wed-teams button:has-text("Add team")');
+  await wait(500);
+  ok('20b. the editor opens as a modal', await page.isVisible('.rl-modal'));
+  ok('20b2. ...on document.body, outside the painted panel', await page.evaluate(() => document.querySelector('.rl-modal').parentElement === document.body));
+  ok('20b3. ...with a roster editor in it', (await page.$('.rl-modal .roster-rows')) !== null);
+
+  await page.fill('.rl-modal input[type=text]', 'Sentinels');
+  await page.click('.rl-modal .roster-rows button:has-text("Add player")');
   await wait(250);
-  const rosterInputs = await page.$$('#wed-teams .roster-row input');
+  const rosterInputs = await page.$$('.rl-modal .roster-row input');
   ok('20c. a row has a name and a Riot ID', rosterInputs.length === 2);
 
   await rosterInputs[1].fill('not-a-riot-id');
   await wait(150);
   ok(
     '20d. a malformed Riot ID is marked',
-    await page.$eval('#wed-teams .roster-row input:nth-of-type(2)', (i) => i.classList.contains('is-wrong')),
+    await page.$eval('.rl-modal .roster-row input:nth-of-type(2)', (i) => i.classList.contains('is-wrong')),
   );
   await rosterInputs[1].fill('TenZ#SEN');
   await wait(150);
   ok(
     '20e. ...and unmarked once it looks right',
-    await page.$eval('#wed-teams .roster-row input:nth-of-type(2)', (i) => !i.classList.contains('is-wrong')),
+    await page.$eval('.rl-modal .roster-row input:nth-of-type(2)', (i) => !i.classList.contains('is-wrong')),
   );
 
   /*
@@ -291,7 +308,7 @@ try {
    * Every child here is built by el(), so a text node among them is always the
    * bug and never the design.
    */
-  const strays = await page.$eval('#wed-teams .roster-rows', (node) =>
+  const strays = await page.$eval('.rl-modal .roster-rows', (node) =>
     [...node.childNodes].filter((child) => child.nodeType === 3).map((child) => child.data),
   );
   ok('20g. the roster block appends no stray text nodes', strays.length === 0, JSON.stringify(strays));
@@ -304,30 +321,46 @@ try {
    * says why - rather than being absent (leaving an operator to wonder where
    * the feature went) or enabled and failing on click.
    */
-  ok('20h. every roster row carries a verify control', (await page.$('#wed-teams .roster-state .mini-btn')) !== null);
+  ok('20h. every roster row carries a verify control', (await page.$('.rl-modal .roster-state .mini-btn')) !== null);
   ok(
     '20i. ...disabled on a server with no keys',
-    await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.disabled),
+    await page.$eval('.rl-modal .roster-state .mini-btn', (b) => b.disabled),
   );
   ok(
     '20j. ...and it says why rather than just being dead',
     // Both remedies, because there are two reasons the button can be dead and
     // they are fixed by different people: an environment variable and a
     // restart, or an administrator throwing a switch.
-    /RIOT_ACCOUNT_KEY/.test(await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title)) &&
+    /RIOT_ACCOUNT_KEY/.test(await page.$eval('.rl-modal .roster-state .mini-btn', (b) => b.title)) &&
       /HenrikDev fallback/i.test(
-      await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),
+      await page.$eval('.rl-modal .roster-state .mini-btn', (b) => b.title),
     ),
-    await page.$eval('#wed-teams .roster-state .mini-btn', (b) => b.title),
+    await page.$eval('.rl-modal .roster-state .mini-btn', (b) => b.title),
   );
 
-  await page.click('#wed-teams button:has-text("Add team")');
-  await wait(800);
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(900);
+  ok('20k0. saving closes the editor', (await page.$$('.rl-modal')).length === 0);
   const saved = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
   const squad = saved.teams?.[0]?.players ?? [];
   ok('20k. the roster reached the server', squad.length === 1, JSON.stringify(saved.teams?.[0]));
   ok('20l. ...with both fields', squad[0]?.displayName === 'Zekken' && squad[0]?.riotId === 'TenZ#SEN');
   ok('20m. ...and an empty puuid waiting to be filled', squad[0]?.puuid === '');
+
+  /*
+   * ONE WRITE, so Cancel really does mean nothing happened - which a form
+   * saving on every change could never promise, and which is the whole reason
+   * an editor is worth moving into a dialog.
+   */
+  await page.click('#wed-teams .team-card .mini-btn');
+  await wait(600);
+  ok('20m2. a saved team reopens in the modal', await page.isVisible('.rl-modal'));
+  await page.fill('.rl-modal input[type=text]', 'Never Saved');
+  await page.click('.rl-modal-foot .btn-ghost >> nth=-1');
+  await wait(700);
+  const teamsAfterCancel = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok('20m3. cancelling writes nothing', !JSON.stringify(teamsAfterCancel.teams).includes('Never Saved'), JSON.stringify(teamsAfterCancel.teams?.[0]?.name));
+  ok('20m4. ...and closes the editor', (await page.$$('.rl-modal')).length === 0);
 
   // ------------------------------------------------- the player search ---
   /*
@@ -501,9 +534,19 @@ try {
     await page.textContent('.whoami-target span'),
   );
 
-  page.once('dialog', (d) => d.accept('Court 2'));
+  /*
+   * Adding a desk is a dialog now, not a window.prompt. The three prompts this
+   * panel used to raise were replaced because of the REMOVAL one: a prompt
+   * cannot say what it is about to take in a way anybody reads, and the box you
+   * type a new name into and the box you type an existing name into to destroy
+   * a desk were two visually identical prompts one button apart.
+   */
   await page.click('#tou-desks button:has-text("Add production")');
+  await page.waitForSelector('.rl-modal', { timeout: 6000 });
+  await page.fill('.rl-modal input[type=text]', 'Court 2');
+  await page.click('.rl-modal-foot .btn-primary');
   await wait(1200);
+  ok('26f2. the add dialog closes', (await page.$$('.rl-modal')).length === 0);
   ok('26g. an owner can add a desk', (await page.$$('#tou-desks .desk-row')).length === 2, String((await page.$$('#tou-desks .desk-row')).length));
   /*
    * The topbar lives in account.js and was not involved in that write. It
@@ -516,7 +559,30 @@ try {
     (await page.$$eval('#desk-target option', (o) => o.map((x) => x.textContent))).join(',') === 'Main,Court 2',
     await page.$$eval('#desk-target option', (o) => o.map((x) => x.textContent).join(',')),
   );
-  ok('26j. both desks now offer Remove', (await page.$$('#tou-desks button:has-text("Remove")')).length === 2);
+  ok('26j. both desks now offer Manage', (await page.$$('#tou-desks button:has-text("Manage")')).length === 2);
+
+  /*
+   * THE TYPED-BACK NAME, and the half of it worth asserting: the button is dead
+   * until the name matches. A confirm dialog is answered "yes" by reflex and a
+   * name is not, and this takes a whole desk's graphics with it - so the guard
+   * being live BEFORE the click, rather than being a second dialog after it, is
+   * the property that makes it a guard at all.
+   */
+  await page.click('#tou-desks .desk-row:nth-of-type(2) button:has-text("Manage")');
+  await page.waitForSelector('.rl-modal', { timeout: 6000 });
+  const removeBtn = page.locator('.rl-modal-foot .rl-modal-danger');
+  ok('26k. remove starts disabled', await removeBtn.isDisabled());
+  await page.fill('.rl-modal input[aria-label="Type the name to confirm"]', 'not the name');
+  await wait(200);
+  ok('26l. ...and a wrong name does not arm it', await removeBtn.isDisabled());
+  await page.fill('.rl-modal input[aria-label="Type the name to confirm"]', 'Court 2');
+  await wait(200);
+  ok('26m. ...the exact name arms it', !(await removeBtn.isDisabled()));
+
+  // Cancel, because the desks are wanted for the assertions further down.
+  await page.click('.rl-modal-foot .btn-ghost >> nth=-1');
+  await wait(400);
+  ok('26n. cancelling leaves both desks alone', (await page.$$('#tou-desks .desk-row')).length === 2);
 
   /*
    * --- the Schedule sub-page ------------------------------------------------

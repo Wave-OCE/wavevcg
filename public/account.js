@@ -12,7 +12,8 @@
  * stream to subscribe to. Everything is a request and a repaint.
  */
 
-import { el } from './fields.js';
+import { el, help, subhead } from './fields.js';
+import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import { SETTING_FIELDS } from './settings-schema.js';
 import { CAPABILITY_FIELDS } from './capability-schema.js';
 import { COMPANION_GRAPHICS, companionVariables } from './companion-schema.js';
@@ -651,8 +652,14 @@ async function loadAdmin() {
     paintUsers(userData.users ?? []);
     paintHealth(health);
     paintSettings(settingData);
+    // Handed back so an open account modal can re-read the account it is
+    // showing. Without it a toggle would have to close the dialog to see its
+    // own effect, and granting three permissions would be three round trips
+    // through the list.
+    return userData.users ?? [];
   } catch (error) {
     els.admNote.textContent = `Could not load: ${error.message}`;
+    return null;
   }
 }
 
@@ -772,18 +779,84 @@ function paintUsers(list) {
         row.append(el('span', 'admin-meta is-warn', {}, 'no way to sign in'));
       }
 
-      const act = async (label, body, confirmText) => {
-        if (confirmText && !window.confirm(confirmText)) return;
-        try {
-          await post('/api/admin/users', { id: user.id, ...body });
-          await loadAdmin();
-          toast(label);
-        } catch (error) {
-          toast(error.message);
-        }
-      };
+      const manage = el('button', 'btn btn-small', { type: 'button' }, 'Manage');
+      manage.addEventListener('click', () => openAccount(user));
+      row.append(manage);
+      return row;
+    }),
+  );
+}
 
-      const disable = el('button', 'btn btn-small', { type: 'button' }, user.disabled ? 'Enable' : 'Disable');
+/**
+ * One account, in a modal.
+ *
+ * The row used to carry every action: Disable, Make admin, one button per
+ * capability, Unlink Discord, Sign out, Delete. That grew with the schema -
+ * `CAPABILITY_FIELDS` is built from a list, so adding a permission adds a
+ * button to every row - and it had already pushed Delete out through the side
+ * of its panel on an administrator who also held the tracker permission. The
+ * note in CLAUDE.md about a flex row not reporting its own overflow is that
+ * bug; letting the row wrap fixed the symptom.
+ *
+ * This fixes the cause. A row is now a name and a Manage button, so it cannot
+ * grow with the schema at all, and the actions sit in a dialog where there is
+ * room to say what each one does. Two things come free and both matter more
+ * than the layout:
+ *
+ *   Delete is no longer one row away from the next account's Delete. It is
+ *   behind a deliberate second step, under the name of the account you are
+ *   looking at.
+ *
+ *   Each action can carry its consequence in words beside it rather than only
+ *   in a confirm() that appears after the click - which is the wrong moment to
+ *   learn that deleting somebody does not stop them signing back in.
+ */
+function openAccount(account) {
+  if (modalOpen()) return;
+
+  let dialog = null;
+  let user = account;
+  const body = el('div', 'rl-modal-body');
+
+  /**
+   * Do it, then show what it did.
+   *
+   * Most of these actions STAY OPEN and repaint, because granting three
+   * permissions to one person is one visit rather than three. `closes` is for
+   * the two that end the conversation - deleting the account, and unlinking the
+   * identity the dialog is describing.
+   *
+   * The repaint re-reads the account from the reloaded list rather than
+   * patching the local copy: the server is what decides what a write actually
+   * did, and `may` is computed from the role as well as the grant, so guessing
+   * it here would be a second implementation of `adminImplied`.
+   */
+  const act = async (label, patch, confirmText, { closes = false } = {}) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    try {
+      await post('/api/admin/users', { id: user.id, ...patch });
+      const list = await loadAdmin();
+      toast(label);
+      if (closes) {
+        dialog?.close();
+        return;
+      }
+      const fresh = list?.find((entry) => entry.id === user.id);
+      if (!fresh) {
+        dialog?.close();
+        return;
+      }
+      user = fresh;
+      paint();
+    } catch (error) {
+      // The last-admin lock and the last-password-holder lock both answer here.
+      // Neither is a failure, so the dialog stays open and says so.
+      toast(error.message);
+    }
+  };
+
+  function paint() {
+  const disable = el('button', 'btn btn-small', { type: 'button' }, user.disabled ? 'Enable' : 'Disable');
       disable.addEventListener('click', () =>
         act(
           user.disabled ? `${user.username} enabled` : `${user.username} disabled`,
@@ -848,12 +921,12 @@ function paintUsers(list) {
        * somebody lost their Discord account and needs it detached.
        */
       const unlink = el('button', 'btn btn-small', { type: 'button' }, 'Unlink Discord');
-      unlink.hidden = !user.discord;
       unlink.addEventListener('click', () =>
         act(
           `Discord unlinked from ${user.username}`,
           { action: 'unlink-discord' },
           `Unlink ${user.username}'s Discord account?\n\nThey are signed out, and they will need their password to get back in.`,
+          { closes: true },
         ),
       );
 
@@ -874,13 +947,53 @@ function paintUsers(list) {
             (user.discord
               ? `\n\nThis does NOT stop them signing in again: they still hold the Discord role, and a new empty account would be made for them. Remove the role in Discord, or use Disable.`
               : ''),
+          { closes: true },
         ),
       );
 
-      row.append(disable, promote, ...capabilities, unlink, signOut, remove);
-      return row;
-    }),
+  body.replaceChildren(
+    modalTitle(user.username, user.role === 'admin' ? 'Administrator' : 'Operator'),
+    help(
+      user.discord
+        ? `Signs in with Discord as ${user.discord.tag || 'a linked account'}${user.hasPassword ? ' and with a password' : ' and has no password'}.`
+        : user.hasPassword
+          ? 'Signs in with a password.'
+          : 'Has no way to sign in at all - set them a password or link Discord.',
+    ),
+    subhead('Account'),
+    wrapRow([disable, promote, signOut]),
+    subhead('Permissions'),
+    help(
+      'Permissions default closed and are never implied by having an account. One marked (admin) comes with the ' +
+        'role rather than being granted here.',
+    ),
+    wrapRow(capabilities),
+    ...(user.discord ? [subhead('Discord'), wrapRow([unlink])] : []),
   );
+
+  foot.replaceChildren(...modalFoot({ danger: remove, cancel: close }).childNodes);
+  }
+
+  const close = el('button', 'btn btn-ghost', { type: 'button' }, 'Close');
+  close.addEventListener('click', () => dialog?.close());
+
+  /*
+   * The footer is built once and refilled, because `remove` is rebuilt by every
+   * paint (it closes over the account as it now stands) while `close` never
+   * changes - and a footer replaced wholesale would take the button the pointer
+   * is over with it.
+   */
+  const foot = el('div', 'rl-modal-foot');
+  paint();
+
+  dialog = openModal({ body, foot });
+}
+
+/** A row of buttons that wraps rather than growing past its dialog. */
+function wrapRow(children) {
+  const node = el('div', 'rl-modal-row');
+  node.append(...children.filter(Boolean));
+  return node;
 }
 
 els.admCreate.addEventListener('click', async () => {

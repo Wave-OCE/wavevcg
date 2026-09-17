@@ -28,7 +28,8 @@
  * parameter would imply a relationship that does not exist.
  */
 
-import { el, grid, help, makeFields, title } from './fields.js';
+import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
 import { account, refreshAccount, switchDesk } from './session.js';
@@ -198,9 +199,9 @@ if (els.pick) {
   /**
    * The desks, listed and managed.
    *
-   * No text input anywhere in here - the name is edited through a prompt rather
-   * than an inline box, so this block is free to repaint on every change. The
-   * caret rule, obeyed by not having the problem.
+   * No text input anywhere in here - naming a desk happens in a dialog rather
+   * than in an inline box, so this block is free to repaint on every change.
+   * The caret rule, obeyed by not having the problem.
    */
   function buildDesks() {
     if (!current) return;
@@ -225,62 +226,12 @@ if (els.pick) {
         row.append(open);
 
         if (mayEdit()) {
-          const rename = el('button', 'mini-btn', { type: 'button' }, 'Rename');
-          rename.addEventListener('click', async () => {
-            const name = window.prompt(`What should this production be called?`, desk.name);
-            if (name === null || name.trim() === desk.name) return;
-            try {
-              const payload = await send({
-                action: 'production.update',
-                id: current.id,
-                productionId: desk.id,
-                fields: { name: name.trim() },
-              });
-              current = payload.tournament;
-              await refreshAccount();
-              paint();
-            } catch (error) {
-              toast(error.message);
-            }
-          });
-          row.append(rename);
-        }
-
-        /*
-         * Removing takes that desk's whole set of graphics. Owner-only, the
-         * exact name typed back, and never offered for the last one - a
-         * tournament with no desk has no OBS URL and no way back.
-         */
-        if (owner && rows.length > 1) {
-          const drop = el('button', 'mini-btn', { type: 'button', title: 'Remove this desk and its graphics' }, 'Remove');
-          drop.addEventListener('click', async () => {
-            const typed = window.prompt(
-              [
-                `Remove "${desk.name}"?`,
-                '',
-                'Its graphics, its OBS URLs and its stream deck key all go. The teams, the schedule ' +
-                  'and the player names stay - they belong to the tournament.',
-                '',
-                'Type the name to confirm:',
-              ].join('\n'),
-            );
-            if (typed === null) return;
-            try {
-              const payload = await send({
-                action: 'production.remove',
-                id: current.id,
-                productionId: desk.id,
-                confirm: typed,
-              });
-              current = payload.tournament;
-              await refreshAccount();
-              paint();
-              toast(`Removed "${desk.name}"`);
-            } catch (error) {
-              toast(error.message);
-            }
-          });
-          row.append(drop);
+          const manage = el('button', 'mini-btn', { type: 'button' }, 'Manage');
+          // `owner && rows.length > 1` is the whole rule for offering Remove,
+          // and it is decided here rather than in the dialog so the dialog does
+          // not have to know how many desks there are.
+          manage.addEventListener('click', () => openDesk(desk, owner && rows.length > 1));
+          row.append(manage);
         }
 
         return row;
@@ -289,25 +240,143 @@ if (els.pick) {
     );
   }
 
-  function addDeskRow() {
-    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add production');
-    add.addEventListener('click', async () => {
-      const name = window.prompt(
-        ['What is this production called?', '', 'e.g. Court 2, Alpha stream'].join('\n'),
-        'Court 2',
-      );
-      if (!name?.trim()) return;
+  /**
+   * A desk, in a dialog.
+   *
+   * All three of these were `window.prompt()`, and the removal one is why they
+   * stopped being. A prompt cannot say what it is about to take in a way
+   * anybody reads - the consequence had to be crammed into the message string
+   * above the box, which is exactly where a person about to type a name to
+   * confirm something is not looking. It also cannot mark the difference
+   * between the box you type a NEW name into and the box you type an EXISTING
+   * name into to destroy it, which were two visually identical prompts one
+   * button apart.
+   *
+   * The typed-back name stays. A confirm dialog is answered "yes" by reflex and
+   * a name is not, and this takes a whole set of graphics with it.
+   */
+  function openDesk(desk, mayRemove) {
+    if (modalOpen()) return;
+
+    let dialog = null;
+    const body = el('div', 'rl-modal-body');
+
+    const name = el('input', null, { type: 'text', maxlength: 60, 'aria-label': 'Production name' });
+    name.value = desk.name ?? '';
+
+    const save = el('button', 'btn btn-primary', { type: 'button' }, 'Save');
+    save.addEventListener('click', async () => {
+      const wanted = name.value.trim();
+      if (!wanted || wanted === desk.name) {
+        dialog?.close();
+        return;
+      }
       try {
-        const payload = await send({ action: 'production.create', id: current.id, name: name.trim() });
+        const payload = await send({
+          action: 'production.update',
+          id: current.id,
+          productionId: desk.id,
+          fields: { name: wanted },
+        });
         current = payload.tournament;
-        // The topbar's production selector lives in account.js and is built
-        // from the cached account, which knows nothing about this yet.
         await refreshAccount();
+        dialog?.close();
         paint();
-        toast(`Added "${name.trim()}" - it has its own OBS URLs`);
       } catch (error) {
         toast(error.message);
       }
+    });
+
+    const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+    cancel.addEventListener('click', () => dialog?.close());
+
+    let drop = null;
+    if (mayRemove) {
+      const typed = el('input', null, { type: 'text', placeholder: desk.name, 'aria-label': 'Type the name to confirm' });
+      drop = el('button', 'btn btn-ghost rl-modal-danger', { type: 'button' }, 'Remove this production');
+      drop.disabled = true;
+      // The button turns on only when the name matches, so the confirmation is
+      // visible BEFORE the click rather than being a second dialog after it.
+      typed.addEventListener('input', () => {
+        drop.disabled = typed.value.trim() !== desk.name;
+      });
+      drop.addEventListener('click', async () => {
+        try {
+          const payload = await send({
+            action: 'production.remove',
+            id: current.id,
+            productionId: desk.id,
+            confirm: typed.value.trim(),
+          });
+          current = payload.tournament;
+          await refreshAccount();
+          dialog?.close();
+          paint();
+          toast(`Removed "${desk.name}"`);
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+
+      body.append(
+        subhead('Remove'),
+        help(
+          'Its graphics, its OBS URLs and its stream deck key all go, and that cannot be undone. The teams, the ' +
+            'schedule and the player names stay - they belong to the tournament, not to this desk.',
+        ),
+        field('Type the name to confirm', typed),
+      );
+    }
+
+    body.prepend(
+      modalTitle(desk.name || 'Untitled production', desk.hasControlKey ? 'OBS + stream deck' : 'OBS'),
+      field('Name', name),
+    );
+
+    dialog = openModal({ body, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
+  }
+
+  function addDeskRow() {
+    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add production');
+    add.addEventListener('click', () => {
+      if (modalOpen()) return;
+
+      let dialog = null;
+      const body = el('div', 'rl-modal-body');
+      const name = el('input', null, { type: 'text', maxlength: 60, 'aria-label': 'Production name' });
+      name.value = 'Court 2';
+
+      const make = el('button', 'btn btn-primary', { type: 'button' }, 'Add production');
+      make.addEventListener('click', async () => {
+        const wanted = name.value.trim();
+        if (!wanted) return;
+        try {
+          const payload = await send({ action: 'production.create', id: current.id, name: wanted });
+          current = payload.tournament;
+          // The topbar's production selector lives in account.js and is built
+          // from the cached account, which knows nothing about this yet.
+          await refreshAccount();
+          dialog?.close();
+          paint();
+          toast(`Added "${wanted}" - it has its own OBS URLs`);
+        } catch (error) {
+          toast(error.message);
+        }
+      });
+
+      const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+      cancel.addEventListener('click', () => dialog?.close());
+
+      body.append(
+        modalTitle('Add a production'),
+        help(
+          'A second desk: its own graphics, its own OBS URLs and its own stream deck key. The teams, the schedule ' +
+            'and the player names are shared with the rest of the tournament.',
+        ),
+        field('Name', name),
+      );
+
+      dialog = openModal({ body, foot: modalFoot({ cancel, confirm: make }) });
     });
     return add;
   }

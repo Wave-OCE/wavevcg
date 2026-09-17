@@ -546,18 +546,60 @@ try {
   const adminRow = rowFor("boss");
   const opRow = rowFor("operator");
 
-  ok("an admin row shows the permission as implicit", (await adminRow.locator("button", { hasText: "Tracker login" }).textContent()).includes("admin"));
-  ok("and offers no toggle", await adminRow.locator("button", { hasText: "Tracker login" }).isDisabled());
-  ok("a new account starts off", (await opRow.locator("button", { hasText: "Tracker login" }).textContent()).includes("off"));
+  /*
+   * The permissions live in a per-account MODAL now, and the row is a name and
+   * a Manage button. That was not a cosmetic move: CAPABILITY_FIELDS is a list,
+   * so every permission added to the schema added a button to every row, and
+   * the row had already pushed Delete out through the side of its panel on an
+   * administrator who also held the tracker permission.
+   *
+   * So the first thing asserted is the property that keeps it fixed - the row
+   * does not grow with the schema - because every assertion below would stay
+   * green if somebody put the buttons back on the row.
+   */
+  ok(
+    "an account row carries one button, whatever the schema says",
+    (await opRow.locator("button").count()) === 1,
+    String(await opRow.locator("button").count()),
+  );
+
+  const manage = async (row) => {
+    await row.locator("button", { hasText: "Manage" }).click();
+    await page.waitForSelector(".rl-modal", { timeout: 6000 });
+  };
+  const shut = async () => {
+    if (await page.$(".rl-modal")) {
+      await page.locator(".rl-modal-foot .btn-ghost").last().click();
+      await page.waitForFunction(() => !document.querySelector(".rl-modal"), null, { timeout: 6000 });
+    }
+  };
+  const capButton = () => page.locator(".rl-modal button", { hasText: "Tracker login" });
+
+  await manage(adminRow);
+  ok("an admin shows the permission as implicit", (await capButton().textContent()).includes("admin"));
+  ok("and offers no toggle", await capButton().isDisabled());
+  await shut();
+
+  await manage(opRow);
+  ok("a new account starts off", (await capButton().textContent()).includes("off"));
 
   page.once("dialog", (dialog) => dialog.accept());
-  await opRow.locator("button", { hasText: "Tracker login" }).click();
+  await capButton().click();
+  /*
+   * The dialog STAYS OPEN and repaints, which is the point of managing an
+   * account in one place - granting three permissions should be one visit, not
+   * three. Waiting on the modal rather than on the row is also what makes this
+   * assertion about the write rather than about the list behind it.
+   */
   await page.waitForFunction(
-    () => [...document.querySelectorAll(".admin-row")].some((r) => r.textContent.includes("operator") && r.textContent.includes("Tracker login on")),
+    () => {
+      const modal = document.querySelector(".rl-modal");
+      return Boolean(modal) && [...modal.querySelectorAll("button")].some((b) => b.textContent.includes("Tracker login on"));
+    },
     null,
     { timeout: 6000 },
   );
-  ok("granting it takes", true);
+  ok("granting it takes, without closing the editor", true);
 
   const granted = await opPage.evaluate(() => fetch("/api/account/me").then((r) => r.json()).then((d) => d.user.mayOpenTrackerLogin));
   ok("the granted account agrees", granted === true, String(granted));
@@ -565,13 +607,18 @@ try {
   // No dialog handler here: revoking is not confirmed, only granting is. A
   // `once` handler that never fires stays registered and then swallows the next
   // dialog - which is how this collided with the switches block below.
-  await opRow.locator("button", { hasText: "Tracker login" }).click();
+  await capButton().click();
   await page.waitForFunction(
-    () => [...document.querySelectorAll(".admin-row")].some((r) => r.textContent.includes("operator") && r.textContent.includes("Tracker login off")),
+    () => {
+      const modal = document.querySelector(".rl-modal");
+      return Boolean(modal) && [...modal.querySelectorAll("button")].some((b) => b.textContent.includes("Tracker login off"));
+    },
     null,
     { timeout: 6000 },
   );
   ok("revoking it takes", true);
+  await shut();
+  ok("and the editor closes on Close", (await page.$$(".rl-modal")).length === 0);
 
   const revoked = await opPage.evaluate(() => fetch("/api/tracker/login", {
     method: "POST",

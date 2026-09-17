@@ -32,6 +32,7 @@ import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
 import { makeTakeBar } from './take-bar.js';
+import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import {
   canVerify,
   onVerifyConfig,
@@ -822,9 +823,16 @@ function buildStyleEditor() {
  * arrives. Repaint only if it is actually on screen: at page load this answers
  * in milliseconds, long before anybody is typing into it.
  */
-onVerifyConfig(() => {
-  if (document.querySelector('.roster-rows')) buildTeamEditor();
-});
+/*
+ * The roster lives in the modal now, so there is no panel to rebuild - and
+ * rebuilding one under an open dialog would replace the box being typed into,
+ * which is the whole thing the modal was moved out to avoid. The roster paints
+ * itself instead, through the handle the open editor leaves behind.
+ *
+ * In practice this answers in milliseconds at page load, long before anybody
+ * has opened a team. The case it covers is a slow /api/config on a cold server.
+ */
+onVerifyConfig(() => openRosterPaint?.());
 
 async function teamAction(body) {
   const response = await fetch(api('/api/teams'), {
@@ -855,10 +863,13 @@ let draft = { id: null, ...EMPTY_TEAM, players: [] };
  * The one control on the form that depends on what has been typed into the rest
  * of it, and therefore the only thing an edit has to update.
  *
- * Rebuilding the panel instead - which is what this used to do - replaces the
+ * Rebuilding the form instead - which is what this used to do - replaces the
  * very input being typed into, so the caret is gone after each keystroke and a
  * team name has to be entered one letter and one click at a time. Nothing else
  * here reads the draft as it is typed, so there is nothing else to refresh.
+ *
+ * Null while no team is open. The modal sets it and its teardown clears it, so
+ * a stale button from a closed dialog cannot be written to.
  */
 let teamSaveBtn = null;
 
@@ -868,14 +879,117 @@ const syncTeamForm = () => {
 
 const draftFields = makeFields(() => draft, syncTeamForm);
 
+/**
+ * The open team editor's roster repaint, or null.
+ *
+ * One handle rather than a querySelector, because "is the roster on screen" and
+ * "is a team being edited" stopped being the same question when the form moved
+ * into a dialog, and the answer that matters is the second one.
+ */
+let openRosterPaint = null;
+
+/**
+ * Edit a team, in a modal.
+ *
+ * It was an inline form under the library list, and the reason it moved is
+ * recorded in the note above `teamSaveBtn`: rebuilding the panel replaced the
+ * input being typed into and took the caret with it, so the roster had to
+ * repaint itself in careful isolation and the rest of the form could never be
+ * rebuilt at all. That is a workaround being maintained, not a design.
+ *
+ * On `document.body`, so nothing that repaints the panel can reach it - the
+ * same separation the schedule's match editor uses, from the same helper. The
+ * panel underneath is now only a list and two buttons, with no text input in
+ * it, so it may be rebuilt on any change without consequence.
+ *
+ * `draft` stays module-level because draftFields, draftControl, draftLogoField
+ * and rosterEditor all write into it, and threading it through four call sites
+ * to make it local would be churn for no property gained: one dialog at a time
+ * is enforced by modal.js, so there is only ever one draft in flight.
+ */
 function editTeam(team) {
+  if (modalOpen()) return;
+
   // The roster copied, not shared: the form edits rows in place, and without
   // this an abandoned edit would have already changed the library entry it came
   // from - visibly, in every picker, without a save.
   draft = team
     ? { ...team, players: (team.players ?? []).map((p) => ({ ...p })) }
     : { id: null, ...EMPTY_TEAM, players: [] };
-  buildTeamEditor();
+
+  const editing = Boolean(draft.id);
+  const body = el('div', 'rl-modal-body');
+  const roster = rosterEditor();
+  openRosterPaint = roster.paint;
+
+  let dialog = null;
+
+  const save = el('button', 'btn btn-primary', { type: 'button' }, editing ? 'Save team' : 'Add team');
+  teamSaveBtn = save;
+  syncTeamForm();
+  save.addEventListener('click', async () => {
+    try {
+      /*
+       * ONE write, carrying the whole team including its roster - so Cancel
+       * really does mean nothing happened, which a form saving on every change
+       * could never promise. teams.save() treats an absent `players` as "leave
+       * the squad alone" and an empty array as "empty it", and the draft always
+       * carries one, so an operator who deletes every row gets what they asked
+       * for.
+       */
+      const { saved } = await teamAction({ action: 'save', team: draft });
+      toast(`Saved "${saved.name}"`);
+      dialog?.close();
+    } catch (error) {
+      toast(`Could not save: ${error.message}`);
+    }
+  });
+
+  const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+  cancel.addEventListener('click', () => dialog?.close());
+
+  // Delete is offered only for a team that exists. On a new one there is
+  // nothing to delete and the button would be a second Cancel.
+  const drop = editing
+    ? el('button', 'btn btn-ghost rl-modal-danger', { type: 'button' }, 'Delete team')
+    : null;
+  drop?.addEventListener('click', async () => {
+    if (!window.confirm(`Delete "${draft.name}"? Graphics already using it keep their name and logo.`)) return;
+    try {
+      await teamAction({ action: 'delete', id: draft.id });
+      toast(`Deleted "${draft.name}"`);
+      dialog?.close();
+    } catch (error) {
+      // Refused while a fixture names them, which is a real answer rather than
+      // a failure - so the dialog stays open and says so.
+      toast(`Could not delete: ${error.message}`);
+    }
+  });
+
+  body.append(
+    modalTitle(editing ? draft.name || 'Team' : 'Add a team', editing ? 'Editing a saved team' : null),
+    grid(2, TEAM_FIELDS.map(draftControl).filter(Boolean)),
+    draftLogoField(),
+    subhead('Roster'),
+    help(
+      'Who plays for them. Optional, and nothing here goes on air by itself - it is how a player is recognised in ' +
+        'a lobby, and where a Riot ID lives so it can be checked later. The name is also what the agent select ' +
+        'strip calls them. A name an operator corrects mid-match still wins over this one.',
+    ),
+    roster.node,
+  );
+
+  dialog = openModal({
+    className: 'is-wide',
+    body,
+    foot: modalFoot({ danger: drop, cancel, confirm: save }),
+    onClose: () => {
+      openRosterPaint = null;
+      teamSaveBtn = null;
+      draft = { id: null, ...EMPTY_TEAM, players: [] };
+      buildTeamEditor();
+    },
+  });
 }
 
 function draftControl(entry) {
@@ -918,34 +1032,39 @@ function teamCard(team) {
 
   const tools = el('div', 'row-tools');
 
+  /*
+   * One button, and Delete moved into the modal with everything else about one
+   * team. Not tidiness: Delete sat directly beside Edit in a list of cards, one
+   * row apart from the next team's Edit, and it is irreversible for the library
+   * entry. Behind Edit it takes a deliberate second step, next to the name of
+   * the team you are looking at.
+   */
   const edit = el('button', 'mini-btn', { type: 'button' }, 'Edit');
   edit.addEventListener('click', () => editTeam(team));
 
-  const remove = el('button', 'mini-btn', { type: 'button' }, 'Delete');
-  remove.addEventListener('click', async () => {
-    if (!window.confirm(`Delete "${team.name}"? Graphics already using it keep their name and logo.`)) return;
-    try {
-      await teamAction({ action: 'delete', id: team.id });
-      toast(`Deleted "${team.name}"`);
-    } catch (error) {
-      toast(`Could not delete: ${error.message}`);
-    }
+  tools.append(edit);
+  card.append(crest, who, tools);
+
+  // The whole card opens it. A row that has exactly one action should not make
+  // somebody aim at a button the width of the word "Edit".
+  card.addEventListener('click', (event) => {
+    if (event.target.closest('button')) return;
+    editTeam(team);
   });
 
-  tools.append(edit, remove);
-  card.append(crest, who, tools);
   return card;
 }
 
 /**
  * The roster editor.
  *
- * Its own container, repainted on its own, because of the note above
- * `teamSaveBtn`: rebuilding the whole panel replaces the input being typed
- * into, and the caret goes with it. So the text boxes write straight into
- * `draft.players[i]` on every keystroke and repaint NOTHING, and only adding or
- * removing a row - which changes how many boxes there are - repaints this
- * block. The rest of the form never moves.
+ * Its own container, repainted on its own, and that is still true inside the
+ * modal for a narrower reason than it used to be. The caret is safe from the
+ * PANEL now - the dialog is on document.body and nothing out there can reach it
+ * - but adding a row still has to rebuild this block, and rebuilding the whole
+ * dialog to do it would replace the team name input two sections up. So the
+ * text boxes write straight into `draft.players[i]` on every keystroke and
+ * repaint NOTHING, and only adding or removing a row repaints this block.
  *
  * Nothing here validates on the way in. A half-typed Riot ID is the normal
  * state of a Riot ID being typed, so the mark below is advisory and the server
@@ -1286,33 +1405,29 @@ function rosterEditor() {
   }
 
   paint();
-  return rows;
+  // The repaint comes back with the node, because the one thing outside this
+  // block that has to move it - verification arriving late - cannot rebuild the
+  // dialog it sits in without taking the caret with it.
+  return { node: rows, paint };
 }
 
+/**
+ * The team panel: a list, and the two buttons that are not about one team.
+ *
+ * Everything about ONE team - its fields, its logo, its roster, and deleting
+ * it - is in the modal `editTeam` opens. What is left here is the library as a
+ * whole, which is the same division the Schedule page settled on: only the
+ * things that are properties of the collection stay on the page.
+ *
+ * The consequence worth stating is that this block now has NO text input in it,
+ * so it may be rebuilt on any change at all. That is what retires the careful
+ * isolation the roster editor used to need.
+ */
 function buildTeamEditor() {
   const host = els.editors.teams;
-  const editing = Boolean(draft.id);
 
-  const save = el('button', 'btn btn-primary', { type: 'button' }, editing ? 'Update team' : 'Add team');
-  teamSaveBtn = save;
-  syncTeamForm();
-  save.addEventListener('click', async () => {
-    try {
-      const { saved } = await teamAction({ action: 'save', team: draft });
-      toast(`Saved "${saved.name}"`);
-      editTeam(null);
-    } catch (error) {
-      toast(`Could not save: ${error.message}`);
-    }
-  });
-
-  const cancel = el('button', 'btn btn-ghost', { type: 'button' }, editing ? 'New team' : 'Clear');
-  cancel.addEventListener('click', () => editTeam(null));
-
-  const actions = el('div', 'team-form-actions');
-  actions.append(save, cancel);
-
-  const controls = TEAM_FIELDS.map(draftControl).filter(Boolean);
+  const add = el('button', 'btn btn-primary', { type: 'button' }, 'Add team');
+  add.addEventListener('click', () => editTeam(null));
 
   host.replaceChildren(
     title('Team library'),
@@ -1324,20 +1439,8 @@ function buildTeamEditor() {
     ),
     library.length
       ? wrapChildren('team-list', library.map(teamCard))
-      : el('p', 'empty', {}, 'No teams saved yet. Add one below and it will appear on both graphics.'),
-    subhead(editing ? `Editing ${draft.name}` : 'Add a team'),
-    grid(2, controls),
-    draftLogoField(),
-
-    subhead('Roster'),
-    help(
-      'Who plays for them. Optional, and nothing here goes on air by itself - it is how a player is recognised in ' +
-        'a lobby, and where a Riot ID lives so it can be checked later. A name an operator corrects mid-match still ' +
-        'wins over this one.',
-    ),
-    rosterEditor(),
-
-    actions,
+      : el('p', 'empty', {}, 'No teams saved yet. Add one and it will appear on both graphics.'),
+    wrapChildren('team-form-actions', [add]),
     subhead('Share this library'),
     help(
       'Export writes a JSON file of your teams. Import folds somebody else\'s file into yours: it adds and ' +

@@ -40,6 +40,7 @@
 
 import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
+import { modalOpen, openModal } from './modal.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
@@ -368,8 +369,8 @@ if (host) {
    */
   function openMatch(fixture) {
     // One at a time. A second dialog over the first would take the focus trap
-    // with it and strand the one underneath.
-    if (document.querySelector('.sch-modal')) return;
+    // with it and strand the one underneath. The rule lives in modal.js now.
+    if (modalOpen()) return;
 
     const draft = {
       ...structuredClone(fixture),
@@ -377,7 +378,6 @@ if (host) {
     };
 
     openFixture = fixture.id;
-    const dialog = el('dialog', 'sch-modal');
     const form = el('div', 'sch-modal-body');
 
     const tally = el('span', 'sch-result-score');
@@ -407,6 +407,14 @@ if (host) {
       maps,
     );
 
+    /*
+     * Declared before the handlers that close over it and assigned after the
+     * body is built, because openModal wants a finished body and the buttons
+     * inside that body want something to close. `let` rather than threading a
+     * callback through, which would be the same indirection wearing a hat.
+     */
+    let dialog = null;
+
     const save = el('button', 'btn btn-primary', { type: 'button' }, 'Save');
     save.addEventListener('click', () => {
       /*
@@ -420,43 +428,39 @@ if (host) {
        */
       act({ action: 'fixture.save', fixture: draft }, () => {
         toast(`Saved ${fixtureLabel(draft)}`);
-        dialog.close();
+        dialog?.close();
       });
     });
 
     const drop = el('button', 'btn btn-ghost sch-modal-drop', { type: 'button' }, 'Remove match');
     drop.addEventListener('click', () => {
       if (!window.confirm(`Remove "${fixtureLabel(fixture)}"?`)) return;
-      act({ action: 'fixture.remove', id: fixture.id }, () => dialog.close());
+      act({ action: 'fixture.remove', id: fixture.id }, () => dialog?.close());
     });
 
     const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-    cancel.addEventListener('click', () => dialog.close());
+    cancel.addEventListener('click', () => dialog?.close());
 
     const foot = el('div', 'sch-modal-foot');
     foot.append(drop, el('span', 'sch-modal-spacer'), tally, cancel, save);
 
-    dialog.append(form, foot);
-    document.body.append(dialog);
     paintMaps();
 
     /*
-     * The one place the dialog is torn down, so Escape, the backdrop, Cancel
-     * and a successful Save all leave exactly the same state behind. `close`
-     * fires for every one of them, which is the whole reason to use a real
-     * dialog rather than a div pretending to be one.
+     * modal.js owns the scaffolding - on document.body, one teardown path for
+     * Escape / backdrop / Cancel / Save alike, one dialog at a time. The class
+     * is kept so this panel's own width and footer rules still find it.
      */
-    dialog.addEventListener('close', () => {
-      openFixture = '';
-      dialog.remove();
-      paint();
-    });
-    // A click on the backdrop lands on the dialog itself, never on its content.
-    dialog.addEventListener('click', (event) => {
-      if (event.target === dialog) dialog.close();
+    dialog = openModal({
+      className: 'sch-modal',
+      body: form,
+      foot,
+      onClose: () => {
+        openFixture = '';
+        paint();
+      },
     });
 
-    dialog.showModal();
     paint();
   }
 

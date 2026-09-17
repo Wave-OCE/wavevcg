@@ -3557,6 +3557,7 @@ label.is-off {
    document.body rather than inside the painted host - see the caret note at the
    top of schedule-dashboard.js. */
 
+.rl-modal,
 .sch-modal {
   width: min(720px, calc(100vw - 32px));
   max-height: min(86vh, 900px);
@@ -3571,10 +3572,12 @@ label.is-off {
   flex-direction: column;
 }
 
+.rl-modal::backdrop,
 .sch-modal::backdrop {
   background: rgba(6, 8, 11, 0.66);
 }
 
+.rl-modal-body,
 .sch-modal-body {
   display: flex;
   flex-direction: column;
@@ -3583,6 +3586,7 @@ label.is-off {
   overflow-y: auto;
 }
 
+.rl-modal-title,
 .sch-modal-title {
   font-family: var(--font-label, inherit);
   text-transform: uppercase;
@@ -3597,6 +3601,7 @@ label.is-off {
 
 /* Which round this is, beside the name rather than under it - the name can be
    long and the round is two words. */
+.rl-modal-sub,
 .sch-modal-sub {
   font-size: 10px;
   letter-spacing: 0.09em;
@@ -3610,6 +3615,7 @@ label.is-off {
 }
 
 /* Pinned, so a Bo9 scrolls its maps and the buttons stay where the hand is. */
+.rl-modal-foot,
 .sch-modal-foot {
   display: flex;
   align-items: center;
@@ -3620,6 +3626,7 @@ label.is-off {
   background: var(--bg-sunken, #10141a);
 }
 
+.rl-modal-spacer,
 .sch-modal-spacer {
   flex: 1 1 auto;
 }
@@ -3631,12 +3638,14 @@ label.is-off {
  * width, wraps onto its own line and reads as a banner. Scoped, not changed:
  * every other primary button still wants its row.
  */
+.rl-modal-foot .btn,
 .sch-modal-foot .btn {
   width: auto;
 }
 
 /* Away from Save, on the other side of the row: the two destructive-adjacent
    things on this dialog must not be adjacent. */
+.rl-modal-danger,
 .sch-modal-drop {
   order: -1;
 }
@@ -3644,10 +3653,12 @@ label.is-off {
 @media (max-width: 520px) {
   /* The footer wraps at phone width, and Remove must not end up under the
      thumb that was reaching for Save. */
+  .rl-modal-foot,
   .sch-modal-foot {
     justify-content: flex-end;
   }
 
+  .rl-modal-danger,
   .sch-modal-drop {
     order: 1;
     flex-basis: 100%;
@@ -4007,4 +4018,36 @@ body.is-adrift .rail-item[data-section='graphics'],
 body.is-adrift .rail-item[data-tab='setup'],
 body.is-adrift .rail-item[data-tab='global'] {
   opacity: 0.45;
+}
+
+/*
+ * A modal that is mostly a form - the team editor, an account, a production.
+ *
+ * Wider than the schedule's, which holds five short map rows; these hold a
+ * two-column field grid plus a roster, and at 720px the labels wrap before the
+ * inputs do.
+ */
+.rl-modal.is-wide {
+  width: min(880px, calc(100vw - 32px));
+}
+
+/* A destructive button in a footer, kept visibly apart from the safe ones as
+   well as physically apart by the spacer. */
+.rl-modal-danger {
+  color: var(--on-air, #c9424f);
+}
+
+/* Sections inside a form modal. The dialog body is already a gap'd column, so
+   this only has to separate a heading from what came before it. */
+.rl-modal-body .subhead {
+  margin-top: 6px;
+}
+
+/* A row of buttons inside a modal. Wraps rather than growing past the dialog -
+   the same lesson as the admin row it replaced: a flex container does not
+   report its own overflow, it simply gets wider than its parent. */
+.rl-modal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
