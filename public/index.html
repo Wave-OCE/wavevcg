@@ -777,6 +777,14 @@
         </label>
         <button type="button" class="btn btn-small" id="tou-new" hidden>New tournament</button>
         <button type="button" class="btn btn-small" id="tou-archive" hidden>Archive</button>
+        <button type="button" class="btn btn-small" id="tou-export" hidden>Export</button>
+        <!--
+          Only on an archived tournament, which is the archive/delete split made
+          visible: the button an owner cannot reach by mis-clicking a picker is
+          one that is not on the page at all until they have taken the
+          reversible step first.
+        -->
+        <button type="button" class="btn btn-small btn-danger" id="tou-delete" hidden>Delete</button>
         <span class="pill" id="tou-state" hidden></span>
         <span class="tourney-note" id="tou-note"></span>
       </div>

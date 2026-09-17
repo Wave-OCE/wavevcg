@@ -49,6 +49,7 @@ import {
   resolveRiotId,
 } from './riot-account.js';
 import { ROSTER_LIMIT } from './public/teams.js';
+import { sanitiseTournamentFields } from './public/tournament-schema.js';
 import { makeTrackerBrowser } from './browser.js';
 import {
   PASSWORD_MIN,
@@ -3318,6 +3319,101 @@ async function handleTournaments(pathname, req, res, ctx) {
           tournament: saved.id,
         });
         return { tournament: publicTournament(saved), tournaments: tournaments.forUser(user.id).map(publicTournament) };
+      }
+
+      /*
+       * Everything a tournament is, as one JSON document.
+       *
+       * The point of it is delete: a competition that has finished is worth
+       * keeping and not worth leaving on a broadcast machine forever, and
+       * "archive it and never remove it" is what fills a disk. So the answer to
+       * "can I get this back" has to exist BEFORE the answer to "how do I get
+       * rid of it", and the delete branch below refuses unless the caller has
+       * been offered this one.
+       *
+       * What is in it is the workspace's libraries and settings - the things
+       * somebody spent time on. What is deliberately NOT in it:
+       *
+       *   the keys      exporting a live credential into a file that gets
+       *                 emailed around is how a session key leaks. A restored
+       *                 tournament mints its own.
+       *   the members   account ids from this server mean nothing on another,
+       *                 and re-granting access on import would be a way to add
+       *                 yourself to a competition by editing a text file.
+       *   the graphics  they are a moment in a show, not a property of the
+       *                 competition. A restored tournament starts clean rather
+       *                 than putting last season's final score on air.
+       */
+      case 'export': {
+        const { tournament, level } = target();
+        if (!canEditTournament(level)) throw new ProviderError(403, 'You have view-only access to this tournament.');
+
+        const bundle = await sessions.get(tournament.id);
+        return {
+          export: {
+            kind: 'riotline-tournament',
+            version: 1,
+            exportedAt: Date.now(),
+            name: tournament.name,
+            fields: sanitiseTournamentFields(tournament),
+            teams: bundle.teams.list(),
+            aliases: bundle.aliases.list(),
+            presets: bundle.presets.list().filter((entry) => !entry.builtIn),
+          },
+        };
+      }
+
+      /*
+       * Delete, and the three things standing in front of it.
+       *
+       * This is the one action here with no undo: it drops the record AND the
+       * whole workspace tree - every team, alias, preset and graphic. So:
+       *
+       *   1. owner only, like archive and the keys;
+       *   2. it must be ARCHIVED first. That is the archive/delete split, and
+       *      it is what stops a live competition being deleted by a mis-click
+       *      on a picker - archiving is the reversible step, and taking it
+       *      forces a second, deliberate visit;
+       *   3. the exact name has to be typed back. A confirm dialog is answered
+       *      "yes" by reflex; a name is not.
+       *
+       * The sockets go first. A stream deck holding a control key for a
+       * tournament that no longer exists would sit there looking connected, and
+       * the bundle has to be disposed before its directory is removed or its
+       * timers keep writing into a tree that is being deleted underneath them.
+       */
+      case 'delete': {
+        const { tournament, level } = target();
+        if (!isTournamentOwner(level)) throw new ProviderError(403, 'Only an owner may delete a tournament.');
+
+        if (!tournament.archivedAt) {
+          throw new ProviderError(
+            409,
+            'Archive it first.',
+            'Deleting a tournament cannot be undone, so it has to be archived before it can be removed. ' +
+              'Archiving IS reversible - reopen it any time.',
+          );
+        }
+
+        const typed = String(body?.confirm ?? '').trim();
+        const wanted = String(tournament.name ?? '').trim();
+        if (typed !== wanted) {
+          throw new ProviderError(
+            400,
+            'That is not the name of this tournament.',
+            `Type "${wanted}" exactly to confirm. Nothing has been deleted.`,
+          );
+        }
+
+        // Named BEFORE the record goes, because after it there is nothing left
+        // to name it with - and this line is the only trace that will remain.
+        const label = wanted || 'Untitled tournament';
+        companion.closeForOwner(tournament.id, 'That tournament was deleted.');
+        await sessions.destroy(tournament.id);
+        tournaments.remove(tournament.id);
+        log.warn('tournament', `${user.username} DELETED "${label}" and its whole workspace`, { tournament: tournament.id });
+
+        return { deleted: tournament.id, tournaments: tournaments.forUser(user.id).map(publicTournament) };
       }
 
       /*

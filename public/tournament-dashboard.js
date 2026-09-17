@@ -41,6 +41,8 @@ const els = {
   pick: $('tou-select'),
   fresh: $('tou-new'),
   archive: $('tou-archive'),
+  export: $('tou-export'),
+  delete: $('tou-delete'),
   state: $('tou-state'),
   note: $('tou-note'),
   settings: $('tou-settings'),
@@ -336,6 +338,24 @@ if (els.pick) {
     els.archive.hidden = !current || !isOwner();
     els.archive.textContent = current?.archivedAt ? 'Reopen' : 'Archive';
 
+    /*
+     * Export is for anybody who may edit - it reads what they can already see,
+     * and an editor wanting a copy of the team library before a season ends is
+     * an ordinary thing to want.
+     *
+     * Delete is owner-only AND archived-only, which is the archive/delete split
+     * made visible rather than merely enforced: the irreversible button is not
+     * on the page until the reversible step has been taken.
+     */
+    /*
+     * NOT mayEdit(), which is false on an archived tournament - that would hide
+     * Export at the exact moment it matters, since the only way to reach Delete
+     * is to archive first. Exporting reads what the caller can already see, so
+     * it is a level question and not an archived one.
+     */
+    els.export.hidden = !current || !['owner', 'editor'].includes(levelOf(current));
+    els.delete.hidden = !current || !isOwner() || !current.archivedAt;
+
     paintPicker();
     if (current) {
       buildSettings();
@@ -440,6 +460,80 @@ if (els.pick) {
       all = all.map((entry) => (entry.id === current.id ? { ...current, level: levelOf(current) } : entry));
       paint();
       toast(`"${tournamentLabel(current)}" ${reopening ? 'reopened' : 'archived'}`);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  /*
+   * Write the whole tournament out as one file.
+   *
+   * Deliberately its own button next to Delete rather than something tucked
+   * inside Settings: it is the answer to "can I get this back", and the answer
+   * has to be beside the question. An owner who is about to delete a season
+   * should not have to go looking for it.
+   *
+   * Not downloadLibraryFile, which builds the { kind, exported, entries } shape
+   * the teams and aliases files use. This is a whole workspace rather than one
+   * library, and giving it that envelope would make it look importable by the
+   * library reader, which would take the first list it recognised and silently
+   * drop the rest.
+   */
+  els.export.addEventListener('click', async () => {
+    if (!current) return;
+    try {
+      const { export: bundle } = await send({ action: 'export', id: current.id });
+      const stamp = new Date(bundle.exportedAt).toISOString().slice(0, 10);
+      const slug = (bundle.name || 'tournament').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }),
+      );
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `riotline-tournament-${slug || 'untitled'}-${stamp}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(
+        `Exported ${bundle.teams.length} team${bundle.teams.length === 1 ? '' : 's'} and ` +
+          `${bundle.aliases.length} alias${bundle.aliases.length === 1 ? '' : 'es'}`,
+      );
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  /*
+   * The one control here with no undo.
+   *
+   * Two gates, and they guard different mistakes. The button only exists on an
+   * archived tournament, which is what stops a live competition going in a
+   * mis-click - archiving is reversible, so reaching this at all takes a second
+   * deliberate visit. Then the name has to be typed: a confirm dialog is
+   * answered "yes" by reflex, and a name is not.
+   *
+   * A prompt rather than a confirm for exactly that reason. The server checks
+   * the typed name again and is what actually enforces it - this one is here so
+   * the refusal happens before the request rather than after.
+   */
+  els.delete.addEventListener('click', async () => {
+    if (!current) return;
+    const label = tournamentLabel(current);
+    const typed = window.prompt(
+      `Delete "${label}" for good?\n\n` +
+        'This removes the tournament AND its whole workspace - every team, alias, preset and graphic. ' +
+        'It cannot be undone, and Export is the only copy you will have.\n\n' +
+        `Type the name to confirm:`,
+    );
+    if (typed === null) return;
+
+    try {
+      const payload = await send({ action: 'delete', id: current.id, confirm: typed });
+      all = payload.tournaments.map((entry) => ({ ...entry, level: levelOf(entry) }));
+      // Whatever is left, or nothing. paint() handles an empty list already -
+      // it is the state a fresh install is in.
+      current = all[0] ?? null;
+      paint();
+      toast(`Deleted "${label}"`);
     } catch (error) {
       toast(error.message);
     }

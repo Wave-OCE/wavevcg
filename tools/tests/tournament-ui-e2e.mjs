@@ -378,6 +378,31 @@ try {
   await wait(300);
   ok('28. an editor gets no Add row', !(await guest.isVisible('#tou-add')));
 
+  /*
+   * --- the archive/delete split, as the owner sees it ---------------------
+   *
+   * The split is enforced on the server, but this is where it is EXPRESSED:
+   * the irreversible button is not on the page at all until the reversible
+   * step has been taken, so it cannot be reached by a mis-click on a picker.
+   */
+  ok('28a. an owner sees Export on a live tournament', await page.isVisible('#tou-export'));
+  ok('28b. ...and no Delete', !(await page.isVisible('#tou-delete')));
+  ok('28c. an editor gets no Delete either', !(await guest.isVisible('#tou-delete')));
+
+  await post('/api/tournaments', { action: 'archive', id: cupId, archived: true });
+  await page.reload();
+  await wait(1000);
+  await page.click('.rail-item[data-tab="tournament"]');
+  await wait(500);
+  ok('28d. Delete appears once it is archived', await page.isVisible('#tou-delete'));
+  /*
+   * And Export must SURVIVE archiving, which is the one that was wrong first
+   * time: it was hidden behind mayEdit(), which is false on an archived
+   * tournament - so the only copy an owner could take of a competition
+   * disappeared at exactly the moment the Delete button appeared beside it.
+   */
+  ok('28e. ...and Export is still there, which is the whole point', await page.isVisible('#tou-export'));
+
   // --- archived is read-only, and says so -----------------------------------
 
   await post('/api/tournaments', { action: 'archive', id: cupId, archived: true });

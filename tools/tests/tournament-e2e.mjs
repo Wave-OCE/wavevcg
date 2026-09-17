@@ -8,7 +8,7 @@
  *   node tools/tests/tournament-e2e.mjs
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -276,21 +276,101 @@ try {
   r = await sam('/api/tournaments', json({ action: 'nonsense', id: cup.id }));
   ok('45. an unknown action is a 400', r.status === 400, String(r.status));
 
+  // ------------------------------------------------ export, and then delete ---
+  //
+  // In that order on purpose: Export is the answer to "can I get this back",
+  // and the delete branch is only defensible because it exists.
+
+  const doomed = (await alex('/api/tournaments', json({ action: 'create', name: 'Spring Open' }))).json.tournament;
+  await alex(`/api/teams?session=${doomed.id}`, json({ action: 'save', team: { name: 'Sentinels', shortName: 'SEN' } }));
+  await alex(
+    `/api/aliases?session=${doomed.id}`,
+    json({ action: 'save', player: { riotId: 'old#name', name: 'NewName' } }),
+  );
+
+  r = await alex('/api/tournaments', json({ action: 'export', id: doomed.id }));
+  const dump = r.json?.export;
+  ok('46. an owner can export a tournament', r.status === 200, r.text.slice(0, 160));
+  ok('47. the export carries the team library', dump?.teams?.length === 1, JSON.stringify(dump?.teams));
+  ok('48. ...and the alias library', dump?.aliases?.length === 1, JSON.stringify(dump?.aliases));
+  ok('49. ...and the settings', dump?.fields?.name === 'Spring Open', JSON.stringify(dump?.fields));
+
+  /*
+   * What must NOT be in it. A session key in a file that gets emailed around is
+   * how a key leaks, and account ids from this server mean nothing on another -
+   * re-granting access on import would be a way to add yourself to a
+   * competition by editing a text file.
+   */
+  const dumped = JSON.stringify(dump);
+  ok('50. the export carries no session key', !dumped.includes(doomed.sessionKey), 'a key reached the file');
+  ok('51. ...and no membership', !dumped.includes('members') && !dumped.includes(alexId));
+
+  r = await chief('/api/tournaments', json({ action: 'export', id: doomed.id }));
+  ok('52. a stranger - an administrator, even - cannot export it', r.status === 404, String(r.status));
+
+  // The archive/delete split: the irreversible step needs the reversible one first.
+  r = await alex('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: 'Spring Open' }));
+  ok('53. a live tournament cannot be deleted', r.status === 409, r.text.slice(0, 120));
+  ok('54. ...and it says archiving is the reversible step', /reversible/i.test(r.json?.error?.hint ?? ''));
+
+  await alex('/api/tournaments', json({ action: 'archive', id: doomed.id, archived: true }));
+
+  r = await alex('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: 'spring open' }));
+  ok('55. the wrong name is refused', r.status === 400, String(r.status));
+  ok('56. ...and says nothing has been deleted', /Nothing has been deleted/.test(r.json?.error?.hint ?? ''));
+  r = await alex('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: '' }));
+  ok('57. an empty confirmation is refused too', r.status === 400, String(r.status));
+  ok('58. ...and it really is still there', (await alex('/api/tournaments')).json.tournaments.some((t) => t.id === doomed.id));
+
+  // Membership, not ownership, is what an editor has - and delete is an owner's.
+  await alex('/api/tournaments', json({ action: 'member', id: doomed.id, userId: samId, level: 'editor' }));
+  r = await sam('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: 'Spring Open' }));
+  ok('59. an editor cannot delete', r.status === 403, String(r.status));
+  r = await sam('/api/tournaments', json({ action: 'export', id: doomed.id }));
+  ok('60. ...but an editor CAN export, archived and all', r.status === 200, r.text.slice(0, 120));
+
+  // A key shows a graphic. It does not carry a competition off the server.
+  for (const action of ['export', 'delete']) {
+    const keyed = await fetch(`${BASE}/api/tournaments?key=${encodeURIComponent(doomed.sessionKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, id: doomed.id, confirm: 'Spring Open' }),
+    });
+    ok(`61.${action} a session key cannot reach it`, keyed.status === 403, String(keyed.status));
+  }
+
+  const doomedDir = path.join(STATE, 'tournaments', doomed.id);
+  ok('62. the workspace is on disk before the delete', existsSync(doomedDir));
+
+  r = await alex('/api/tournaments', json({ action: 'delete', id: doomed.id, confirm: 'Spring Open' }));
+  ok('63. the owner deleted it', r.status === 200 && r.json.deleted === doomed.id, r.text.slice(0, 160));
+  ok('64. ...and the whole workspace tree went with it', !existsSync(doomedDir));
+  ok('65. ...and the old session key stops resolving', (await fetch(`${BASE}/api/graphic?key=${encodeURIComponent(doomed.sessionKey)}`)).status === 404);
+  ok('66. ...and it is gone from the list', !(await alex('/api/tournaments')).json.tournaments.some((t) => t.id === doomed.id));
+
+  /*
+   * At warn, not info. It is the only trace that will remain of a competition
+   * somebody spent a season on, and it has to be findable in a log an
+   * administrator is skimming for what went wrong.
+   */
+  ok('67. the deletion is logged at warn with the name', /warn.*DELETED "Spring Open"/is.test(log), 'no warn line');
+  ok('68. ...and the log carries no key', !log.includes(doomed.sessionKey));
+
   // ---------------------------------- deleting an account keeps the event ---
 
   r = await boss('/api/admin/users', json({ action: 'delete', id: samId }));
-  ok('46. the admin deleted the last owner', r.status === 200, r.text.slice(0, 160));
+  ok('69. the admin deleted the last owner', r.status === 200, r.text.slice(0, 160));
 
   // alex is not a member any more, so re-add through a fresh owner to look.
   r = await boss('/api/admin/users', json({ action: 'update', id: alexId, capabilities: { manageTournaments: true } }));
   const after = await alex('/api/tournaments');
-  ok('47. the tournament was NOT deleted with the account', after.status === 200);
-  ok('48. ...and the server said it is ownerless', log.includes('has no owner left'), 'no warn line');
+  ok('70. the tournament was NOT deleted with the account', after.status === 200);
+  ok('71. ...and the server said it is ownerless', log.includes('has no owner left'), 'no warn line');
 
   // -------------------------------------------------------------- restart ---
 
   const restartLog = log;
-  ok('49. nothing was logged as unsaved', !restartLog.includes('tournaments not saved'));
+  ok('72. nothing was logged as unsaved', !restartLog.includes('tournaments not saved'));
 } catch (error) {
   failed += 1;
   console.log(`  FAIL  threw - ${error.message}`);
