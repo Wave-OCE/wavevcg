@@ -349,6 +349,13 @@ const maps = (...rows) => rows.map(([left, right]) => ({ name: 'Ascent', left, r
   }, { strict: false }).schedule;
 
   const table = standings(doc, 'group-a');
+  /*
+   * Everybody in the stage has a row from the start. A table that grew a row
+   * each time somebody finished a match would leave an operator checking the
+   * draw unable to tell a missing team from one that had not played yet.
+   */
+  eq('24a every team in the stage has a row', table.length, 4);
+  eq('24b ...including one whose only fixture was void', table.find((r) => r.name === 'Bravo')?.played, 1);
   eq('25 a half-played fixture contributes nothing', table.find((r) => r.name === 'Alpha').played, 1);
   eq('25b a void fixture contributes nothing either', table.find((r) => r.name === 'Delta').played, 1);
   eq('26 wins are counted', table.find((r) => r.name === 'Alpha').won, 1);

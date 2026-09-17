@@ -41,6 +41,7 @@ const els = {
   pick: $('tou-select'),
   fresh: $('tou-new'),
   archive: $('tou-archive'),
+  schedule: $('tou-schedule'),
   export: $('tou-export'),
   delete: $('tou-delete'),
   state: $('tou-state'),
@@ -318,7 +319,27 @@ if (els.pick) {
         : 'You are not on any tournament yet. Whoever runs one can add you to it.';
   }
 
+  /** Which tournament the sub-pages last painted for, so the event fires on a CHANGE. */
+  let announced = null;
+
   function paint() {
+    /*
+     * Tell the sub-pages built by other modules which tournament this is.
+     *
+     * schedule-dashboard.js reads a tournament-scoped route and is built at
+     * page load, which on a fresh install happens while there is nothing to
+     * read - so without this it would fetch once, get a 403, and never try
+     * again. The operator would create their first tournament and find an empty
+     * Schedule tab with nothing saying why.
+     *
+     * On a CHANGE rather than on every paint, because paint runs on every
+     * keystroke in Settings and a refetch per keystroke is a different bug.
+     */
+    if (current?.id !== announced) {
+      announced = current?.id ?? null;
+      window.dispatchEvent(new CustomEvent('tournament-changed', { detail: current }));
+    }
+
     // shell.js hides a sub-tab whose panel is hidden, so hiding these is also
     // what removes the strip - there is no second thing to keep in step.
     els.settings.hidden = !current;
@@ -331,6 +352,7 @@ if (els.pick) {
      */
     els.teams.hidden = !current;
     els.players.hidden = !current;
+    els.schedule.hidden = !current;
     els.fresh.hidden = !mayCreate;
 
     // Archiving is the owner's, and it is the only control here that says what

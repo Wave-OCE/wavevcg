@@ -385,6 +385,61 @@ try {
    * the irreversible button is not on the page at all until the reversible
    * step has been taken, so it cannot be reached by a mis-click on a picker.
    */
+  /*
+   * --- the Schedule sub-page ------------------------------------------------
+   *
+   * The shape first, as the note at the top of this file says: a panel
+   * correctly hidden and a panel never wired look identical to every DOM
+   * assertion, and the difference surfaces eight seconds later as a timeout
+   * naming nothing.
+   */
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-schedule"]');
+  await wait(600);
+  ok('27a. the Schedule panel opens', await page.isVisible('#tou-schedule'));
+  ok('27b. ...and the module built into it', (await page.$('#sch-body .sch-stages')) !== null, 'schedule-dashboard.js did not paint');
+  ok(
+    '27c. ...saying what to do first',
+    (await page.textContent('#sch-body')).includes('Add a stage'),
+    (await page.textContent('#sch-body')).slice(0, 80),
+  );
+
+  page.once('dialog', (d) => d.accept('Playoffs'));
+  await page.click('#sch-body button:has-text("Add stage")');
+  await wait(900);
+  ok('27d. a stage can be added', (await page.textContent('.sch-stage')).startsWith('Playoffs'), await page.textContent('.sch-stage'));
+  ok('27e. ...and its fixture count is on the pill', (await page.textContent('.sch-stage')).includes('(0)'));
+
+  await page.click('#sch-body button:has-text("Add fixture")');
+  await wait(800);
+  ok('27f. a fixture can be added', (await page.$$('.sch-fixture')).length === 1, String((await page.$$('.sch-fixture')).length));
+  ok('27g. ...and starts as scheduled', (await page.textContent('.sch-fixture .sch-status')) === 'Scheduled');
+
+  /*
+   * No stray text nodes. replaceChildren STRINGIFIES what it is handed, so a
+   * conditional child resolving to null paints the word "null" on the page -
+   * which happened under the roster editor and took a screenshot to see. Asked
+   * of the node types, because a textContent regexp for /null/ was ALSO
+   * green against that bug: the strays concatenate against their neighbours and
+   * have no word boundary on either side.
+   */
+  const schedStrays = await page.$eval('#sch-body', (node) => {
+    const out = [];
+    const walk = (parent) => {
+      for (const child of parent.childNodes) {
+        if (child.nodeType === 3 && child.data.trim()) out.push(child.data.trim());
+        else if (child.nodeType === 1) walk(child);
+      }
+    };
+    walk(node);
+    return out.filter((textNode) => /^(null|undefined)$/.test(textNode));
+  });
+  ok('27h. the Schedule panel appends no stray null', schedStrays.length === 0, JSON.stringify(schedStrays));
+
+  // Back to Settings, or the assertions below type into a hidden card. A
+  // remembered sub-tab is not restored by returning to the section.
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-settings"]');
+  await wait(400);
+
   ok('28a. an owner sees Export on a live tournament', await page.isVisible('#tou-export'));
   ok('28b. ...and no Delete', !(await page.isVisible('#tou-delete')));
   ok('28c. an editor gets no Delete either', !(await guest.isVisible('#tou-delete')));

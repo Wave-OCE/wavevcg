@@ -3327,3 +3327,239 @@ label.is-off {
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
+
+/*
+ * The Schedule sub-page.
+ *
+ * Every row here can grow with the data - a stage strip grows with the stages,
+ * a fixture row with the length of two org names - so every one of them WRAPS.
+ * A flex container does not report its own overflow; it simply gets wider than
+ * its parent, nothing measures it and nothing fails, which is how the Admin
+ * accounts row grew a button straight out through the side of its panel.
+ */
+.sch-stages,
+.sch-stage-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sch-stage {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--edge, #2a3038);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Selected, not on air. --accent is what is chosen; --on-air is what an
+   audience can see, and nothing on this page can reach a stream. */
+.sch-stage.is-open {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sch-label {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.sch-round {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  opacity: 0.75;
+  margin: 16px 0 6px;
+}
+
+.sch-fixtures {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* The one child that must NOT stretch. A full-width Add button reads as a bar
+   across the panel rather than as the small action it is. */
+.sch-fixtures > .btn {
+  align-self: flex-start;
+  margin-top: 6px;
+}
+
+/*
+ * A fixture row.
+ *
+ * Grid rather than flex so the score column lines up down the whole stage -
+ * reading a page of fixtures for the one that is still live is the actual job,
+ * and a ragged score column makes it a hunt. It collapses to a stack at phone
+ * width rather than squeezing, because two org names and a score in 400px is
+ * three things that each need their own line.
+ */
+.sch-fixture {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 96px auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--edge, #2a3038);
+}
+
+.sch-fixture.is-open {
+  border-color: var(--accent);
+}
+
+.sch-side {
+  display: flex;
+  min-width: 0;
+}
+
+.sch-side select {
+  width: 100%;
+  min-width: 0;
+}
+
+.sch-side.is-winner select {
+  color: var(--accent);
+}
+
+.sch-score {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  opacity: 0.85;
+}
+
+.sch-status {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  opacity: 0.6;
+  text-align: right;
+}
+
+/* In progress is the one worth finding on a page of forty fixtures. */
+.sch-status.is-live {
+  color: var(--warn-edge, #c99a42);
+  opacity: 1;
+}
+
+.sch-status.is-void {
+  text-decoration: line-through;
+}
+
+.sch-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-top: 0;
+}
+
+.sch-result-foot {
+  flex-basis: 100%;
+  height: 0;
+}
+
+.sch-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 64px 130px;
+  gap: 6px;
+  flex-basis: 100%;
+}
+
+.sch-result-score {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  opacity: 0.7;
+}
+
+.sch-result-score.is-decided {
+  opacity: 1;
+  color: var(--accent);
+}
+
+/*
+ * The table scrolls on its own rather than widening the page. Seven numeric
+ * columns do not fit a phone, and a table is one of the three things allowed
+ * its own horizontal scroller.
+ */
+.sch-table-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.sch-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The name column absorbs the slack and the numeric ones shrink to their
+ * content. Without this the table is width:100% over seven narrow columns and
+ * spreads them the full width of the panel, so reading one row means tracking
+ * a number across four hundred pixels of nothing.
+ */
+.sch-table th:nth-child(2),
+.sch-table td:nth-child(2) {
+  width: 100%;
+}
+
+.sch-table th:not(:nth-child(2)),
+.sch-table td:not(:nth-child(2)) {
+  white-space: nowrap;
+}
+
+.sch-table th {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  opacity: 0.65;
+  text-align: left;
+  padding: 4px 10px 4px 0;
+}
+
+.sch-table td {
+  padding: 5px 10px 5px 0;
+  border-top: 1px solid var(--edge, #2a3038);
+}
+
+.sch-rank {
+  font-family: var(--font-mono, monospace);
+  opacity: 0.8;
+}
+
+/* Amber, because a tie is a decision waiting rather than something broken -
+   the same thing --warn means on the take bar. */
+.sch-table tr.is-tied .sch-rank {
+  color: var(--warn-edge, #c99a42);
+}
+
+@media (max-width: 720px) {
+  .sch-fixture {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .sch-map {
+    grid-template-columns: minmax(0, 1fr) 1fr 1fr;
+  }
+
+  .sch-map select {
+    grid-column: 1 / -1;
+  }
+}

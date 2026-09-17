@@ -118,6 +118,7 @@
             <button type="button" class="subtab" data-view="tou-settings" aria-selected="true">Settings</button>
             <button type="button" class="subtab" data-view="tou-teams" aria-selected="false">Teams</button>
             <button type="button" class="subtab" data-view="tou-players" aria-selected="false">Players</button>
+            <button type="button" class="subtab" data-view="tou-schedule" aria-selected="false">Schedule</button>
             <button type="button" class="subtab" data-view="tou-access" aria-selected="false">Access</button>
           </nav>
 
@@ -813,6 +814,26 @@
           <section class="panel-inner" id="sed-aliases"></section>
         </section>
 
+        <!--
+          The schedule: stages, the fixtures inside them, and the table that
+          falls out of the results.
+
+          Built by schedule-dashboard.js. Unlike the two above it this panel has
+          no wrapper and no borrowed id - it is new, so there was nothing to
+          keep in step, and a display:contents wrapper has no layout box and
+          therefore defeats isVisible(), boundingBox() and every overflow check
+          a test might want to make of it.
+        -->
+        <section class="panel" id="tou-schedule" hidden>
+          <h2 class="panel-title">Schedule</h2>
+          <p class="field-help">
+            Stages hold fixtures, and a fixture is two teams and a series. Results are
+            recorded here and nothing goes on air by itself - a table and a bracket are
+            worked out from what has been played, never stored.
+          </p>
+          <div id="sch-body"></div>
+        </section>
+
         <section class="panel" id="tou-access" hidden>
           <h2 class="panel-title">Access</h2>
           <p class="field-help">
@@ -1083,6 +1104,7 @@
     <script src="/global-dashboard.js" type="module"></script>
     <script src="/lobby-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
+    <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->
     <script src="/shell.js" type="module"></script>
   </body>
