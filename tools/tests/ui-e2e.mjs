@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 
-import { grantCapability, makeTournament, openAsAdmin, signIn } from './harness.mjs';
+import { grantCapability, makeAccount, makeTournament, openAsAdmin, signIn } from './harness.mjs';
 
 // The checkout this suite lives in, resolved from the suite's own location so
 // that moving the tree does not break it.
@@ -377,6 +377,68 @@ try {
   const { cookie: opCookie } = await signIn(BASE, 'operator', 'another-long-password');
   const ownShow = await makeTournament(BASE, opCookie, 'Operator own show');
   ok('the operator has a production of their own', Boolean(ownShow.key));
+
+  // ------------------------------------------- an account on no tournament ---
+  /*
+   * The ordinary first minute of using this program, and it used to be the
+   * worst-looking one.
+   *
+   * An account on no tournament gets a 403 from every per-tournament route,
+   * which is correct - but the panels below just came out empty, so "there is
+   * nothing here yet" and "this is broken" looked identical. Global was worse
+   * than empty: it read `.state` off the 403 body and threw, so what actually
+   * reached a brand new operator on first sign-in was a toast reading
+   * "Global settings unavailable: Cannot read properties of undefined (reading
+   * 'mapName')".
+   *
+   * This account is made and signed in BEFORE it is given anything, which is
+   * the only way to see that state - every other account in this file already
+   * owns a tournament by the time a browser reaches it.
+   */
+  await makeAccount(BASE, bossCookie, 'nomad', 'yet-another-password');
+  const lost = await browser.newContext();
+  const lostPage = await lost.newPage();
+  const lostErrors = [];
+  lostPage.on('pageerror', (error) => lostErrors.push(String(error)));
+  await lostPage.goto(`${BASE}/login.html`);
+  await lostPage.fill('#login-username', 'nomad');
+  await lostPage.fill('#login-password', 'yet-another-password');
+  await lostPage.click('#login-submit');
+  await lostPage.waitForSelector('#whoami:not([hidden])', { timeout: 8000 });
+  await new Promise((r) => setTimeout(r, 900));
+
+  ok(
+    'an account on no tournament is TOLD so',
+    await lostPage.evaluate(() => {
+      const banner = document.getElementById('no-tournament');
+      return Boolean(banner) && !banner.hidden && banner.textContent.trim().length > 0;
+    }),
+  );
+  ok(
+    'and the page carries the cue, not just a line of text',
+    await lostPage.evaluate(() => document.body.classList.contains('is-adrift')),
+  );
+  /*
+   * NOT the guest border. Those two cues must stay distinguishable: the guest
+   * one means "careful, somebody else's stream" and is the only thing on this
+   * dashboard that stops a graphic going to the wrong show. If a brand new
+   * account saw it on first sign-in, operators would learn to ignore it.
+   */
+  ok(
+    'and it is not the on-air guest warning',
+    await lostPage.evaluate(() => !document.body.classList.contains('is-guest')),
+  );
+
+  // Global is the panel that threw. It must now explain itself instead.
+  await lostPage.click('.rail-item[data-tab="global"]');
+  await new Promise((r) => setTimeout(r, 700));
+  ok(
+    'the Global panel says why it is empty rather than throwing',
+    /no tournament/i.test(await lostPage.textContent('#ged-shared')),
+    await lostPage.textContent('#ged-shared'),
+  );
+  ok('no page error reached a brand new account', lostErrors.length === 0, JSON.stringify(lostErrors.slice(0, 2)));
+  await lost.close();
 
   const second = await browser.newContext();
   const opPage = await second.newPage();

@@ -178,6 +178,17 @@
       </div>
     </header>
 
+    <!--
+      Nothing is selected, so nothing on this page is connected to anything.
+
+      Above the panels rather than inside one, because it is true of the WHOLE
+      dashboard: with no tournament there are no graphics, no teams, no schedule
+      and no key, and every panel below reads as empty rather than as
+      disconnected. An operator seeing blank pickers on four tabs has no way to
+      tell "there is nothing here yet" from "this is broken".
+    -->
+    <div id="no-tournament" class="banner banner-warn" role="status" hidden></div>
+
     <div id="key-warning" class="banner banner-warn" hidden></div>
 
     <main class="layout" id="tab-lookup" role="tabpanel">
@@ -855,7 +866,19 @@
           <section class="panel-inner" id="wed-teams"></section>
         </section>
 
+        <!--
+          The Players page: a search across BOTH libraries, then what is left of
+          the old alias panel below it.
+
+          The search is new and owns its own section. The panel beneath keeps the
+          id select-dashboard.js has always found it by, because what still lives
+          there is the library as a whole - confirming a match the feed raised,
+          writing somebody in before an event, import, export, and forgetting
+          everyone unnamed. The per-player LIST that used to be in it is gone: it
+          is what the search above replaced.
+        -->
         <section class="panel" id="tou-players" hidden>
+          <section class="panel-inner" id="tou-players-search"></section>
           <section class="panel-inner" id="sed-aliases"></section>
         </section>
 
@@ -1149,6 +1172,7 @@
     <script src="/global-dashboard.js" type="module"></script>
     <script src="/lobby-dashboard.js" type="module"></script>
     <script src="/fixture-dashboard.js" type="module"></script>
+    <script src="/players-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

@@ -329,6 +329,81 @@ try {
   ok('20l. ...with both fields', squad[0]?.displayName === 'Zekken' && squad[0]?.riotId === 'TenZ#SEN');
   ok('20m. ...and an empty puuid waiting to be filled', squad[0]?.puuid === '');
 
+  // ------------------------------------------------- the player search ---
+  /*
+   * The Players page, which is a search across BOTH libraries now.
+   *
+   * It used to be a list of the alias library - every account the agent select
+   * feed had reported, newest first - and the thing wrong with that was not the
+   * ordering. A squad typed onto the Teams page an hour before doors is not in
+   * the feed's library at all, so searching for a player by name on the page
+   * called Players found nothing while the Teams page had them all along.
+   *
+   * So the first assertion is that the player just saved on the Teams tab is
+   * findable here. Nothing else in this file would notice if the merge in
+   * players-index.js silently dropped one of its two sources.
+   */
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-players"]');
+  await wait(900);
+
+  ok('20n. the Players sub-page is a search', (await page.$('#ply-search')) !== null);
+  ok(
+    '20o. ...and a roster player is IN it, not only feed records',
+    (await page.$$('.ply-row')).length >= 1 && /Zekken/.test(await page.textContent('.ply-results')),
+    await page.textContent('.ply-count'),
+  );
+  ok(
+    '20p. ...showing which team they are on',
+    /SEN|Sentinels/.test(await page.textContent('.ply-origin')),
+    await page.textContent('.ply-origin'),
+  );
+
+  /*
+   * THE CARET, and here it is met by the SHAPE of the panel rather than by a
+   * modal: the search box and the results are siblings and only the results are
+   * ever replaced. A well-meaning refactor that rebuilt the whole panel on each
+   * keystroke would leave every assertion above green and make the box unusable
+   * - one letter, then focus gone.
+   */
+  await page.click('#ply-search');
+  await page.type('#ply-search', 'Zekken', { delay: 30 });
+  await wait(350);
+  ok('20q. typing in the search keeps every letter', (await page.inputValue('#ply-search')) === 'Zekken');
+  ok(
+    '20r. ...and the box still has focus after the list repaints',
+    await page.evaluate(() => document.activeElement?.id === 'ply-search'),
+    await page.evaluate(() => document.activeElement?.id ?? 'none'),
+  );
+  ok('20s. the search actually filters', (await page.$$('.ply-row')).length === 1, String((await page.$$('.ply-row')).length));
+
+  await page.fill('#ply-search', 'nobody-by-that-name');
+  await wait(300);
+  ok('20t. ...and says so when nothing matches', (await page.$$('.ply-row')).length === 0);
+
+  /*
+   * Renaming here writes the ROSTER, not a second copy. One name in one place
+   * whichever door you came in by - which is the whole point of folding the
+   * alias library into the player editor, and is invisible to any assertion
+   * that only looks at the page.
+   */
+  await page.fill('#ply-search', 'Zekken');
+  await wait(300);
+  await page.fill('.ply-controls input', 'ZEK');
+  await page.evaluate(() => document.querySelector('.ply-controls input').blur());
+  await wait(900);
+  const renamed = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok(
+    '20u. a rename on the Players page writes the team roster',
+    renamed.teams?.[0]?.players?.[0]?.displayName === 'ZEK',
+    JSON.stringify(renamed.teams?.[0]?.players?.[0]),
+  );
+  const folded = await (await fetch(`${BASE}/api/aliases`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok(
+    '20v. ...and folds through to the alias library, so the cards say it too',
+    (folded.players ?? []).some((row) => row.alias === 'ZEK'),
+    JSON.stringify(folded.players),
+  );
+
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
   await wait(300);
 

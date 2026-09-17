@@ -128,13 +128,39 @@ async function start() {
   if (!host) return;
 
   const [global, assetData] = await Promise.all([
-    fetch(api('/api/global')).then((r) => r.json()),
+    fetch(api('/api/global')).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => null) })),
     fetch('/api/valorant-assets')
       .then((r) => (r.ok ? r.json() : { maps: [] }))
       .catch(() => ({ maps: [] })),
   ]);
 
-  state = global.state;
+  /*
+   * No tournament, no globals - and that is an ordinary state, not a fault.
+   *
+   * This used to read `.state` straight off the parsed body, so an account on
+   * no tournament (a brand new one; the first minute of using this program)
+   * got a 403 whose body has no `state`, and the next line threw. What reached
+   * the operator was a toast reading "Global settings unavailable: Cannot read
+   * properties of undefined (reading 'mapName')" - a JavaScript error message,
+   * on first sign-in, about a page they had not touched.
+   *
+   * Says so in the panel instead. The banner at the top of the page explains
+   * what to do about it; this one only has to stop pretending something broke.
+   */
+  if (!global.ok || !global.body?.state) {
+    host.replaceChildren(
+      title('Shared settings'),
+      help(
+        global.ok
+          ? 'These settings could not be read.'
+          : 'No tournament is selected, so there are no shared settings to edit yet. Make or join one from the ' +
+            'Tournament page and this fills in.',
+      ),
+    );
+    return;
+  }
+
+  state = global.body.state;
   catalogue = assetData;
 
   // Resolved again here for the same reason the other pages do it: a map code

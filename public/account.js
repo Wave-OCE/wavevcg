@@ -215,7 +215,52 @@ function paintTopbar() {
   document.body.classList.toggle('is-guest', guest);
   document.body.dataset.guestNote = guest ? `${mine.level} on ${mine.name}` : '';
 
+  paintNoTournament(mine);
+
   if (els.adminTab) els.adminTab.hidden = me.user.role !== 'admin';
+}
+
+/**
+ * Say so when there is nothing on screen to be looking at.
+ *
+ * Two states rather than one, because they are answered by different people.
+ * Being on no tournament at all is either "make one" or "ask somebody to add
+ * you", depending on a permission; having a `?session=` that resolves to
+ * nothing is a stale link or an access that was revoked, and the fix is to pick
+ * one of the tournaments this account IS on.
+ *
+ * Deliberately not an error. A brand new account is on no tournament, which is
+ * the ordinary first minute of using this - so it reads as "here is what to do
+ * next" rather than as something having gone wrong.
+ */
+function paintNoTournament(mine) {
+  const banner = document.getElementById('no-tournament');
+  if (!banner) return;
+
+  if (mine) {
+    banner.hidden = true;
+    banner.textContent = '';
+    document.body.classList.remove('is-adrift');
+    return;
+  }
+
+  banner.textContent = me.sessions.length
+    ? 'That tournament is not available to this account any more. Pick another from the Tournament selector above - ' +
+      'until you do, the graphics, teams and schedule on this page belong to nothing.'
+    : /*
+       * One message for both halves of "what do I do about it", because this
+       * page cannot tell them apart: whether this account may CREATE a
+       * tournament is `mayCreate` on /api/tournaments, which the Tournament
+       * page reads and this one does not. Guessing from the role would give an
+       * operator who holds manageTournaments the wrong advice - and the page
+       * that knows is one click away and named in the sentence.
+       */
+      'No tournament yet. Nothing on this dashboard is connected to a competition until one exists - open ' +
+      'Tournament to make one, or ask an owner to add this account to theirs.';
+  banner.hidden = false;
+  // A whole-page cue as well as a line of text, for the same reason .is-guest
+  // is one: the panels an operator is actually looking at are further down.
+  document.body.classList.add('is-adrift');
 }
 
 /*

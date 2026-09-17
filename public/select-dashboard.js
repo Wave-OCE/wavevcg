@@ -42,7 +42,6 @@ import {
   isAgentSelectScene,
   selectProgress,
   sideSlots,
-  stripTagline,
   timerRemainingMs,
 } from './select-schema.js';
 
@@ -92,7 +91,6 @@ let catalogue = { maps: [], agents: [] };
 let saveTimer = null;
 let saveGeneration = 0;
 let saveInFlight = false;
-let aliasFilter = '';
 
 /*
  * Hand-written aliases that now look like somebody the feed has reported.
@@ -517,58 +515,6 @@ async function aliasAction(body) {
 }
 
 /**
- * Two rows, not three columns.
- *
- * Who they are is a Riot ID and a UUID; what you call them is an input and a
- * button. Side by side in one row those four fight for the width of a dashboard
- * column and the identity loses - the name truncates to a letter and the id to
- * nothing, which is exactly the half that has to be readable to know which of
- * two similar handles you are naming.
- */
-function aliasRow(player) {
-  const row = el('div', 'alias-row');
-
-  const who = el('div', 'alias-who');
-  who.append(el('div', 'alias-riot', {}, player.riotId || '(unknown Riot ID)'));
-  // A hand-written alias has no account id yet, and saying so is more use than
-  // an empty line: it tells the operator this one matches on the name.
-  who.append(el('div', 'alias-id', {}, player.id || 'typed in - matches on the Riot ID'));
-
-  const input = el('input', null, {
-    type: 'text',
-    spellcheck: 'false',
-    maxlength: 32,
-    // What the card would say with no alias, so the box shows what it is
-    // replacing rather than sitting there empty.
-    placeholder: stripTagline(player.riotId) || 'Alias',
-  });
-  input.value = player.alias ?? '';
-
-  // Committed on blur rather than per keystroke: this writes through the server
-  // and re-resolves every card that player is on, which is not something to do
-  // eight times while somebody types a name.
-  const commit = () => {
-    if ((player.alias ?? '') === input.value) return;
-    aliasAction({ action: 'save', player: { id: player.id, riotId: player.riotId, alias: input.value } }).catch(
-      (error) => toast(`Alias not saved: ${error.message}`),
-    );
-  };
-  input.addEventListener('change', commit);
-  input.addEventListener('blur', commit);
-
-  const remove = el('button', 'mini-btn', { type: 'button', title: 'Forget this player' }, 'Forget');
-  remove.addEventListener('click', () => {
-    aliasAction({ action: 'delete', key: player.key }).catch((error) => toast(`Not removed: ${error.message}`));
-  });
-
-  const controls = el('div', 'alias-controls');
-  controls.append(input, remove);
-
-  row.append(who, controls);
-  return row;
-}
-
-/**
  * The alias list has to follow the feed.
  *
  * New players only ever appear because a roster event arrived, and that happens
@@ -697,26 +643,21 @@ function pendingRow(entry) {
   return row;
 }
 
+/**
+ * What is left of the alias panel, which is the LIBRARY rather than the players.
+ *
+ * The list of players and the box that filtered it both moved to the search on
+ * the Players page (players-dashboard.js), which shows team rosters beside the
+ * feed's records instead of only the second - the people an operator is usually
+ * hunting for were never in here.
+ *
+ * What stays is everything that is about the library as a whole and has nowhere
+ * else to be: confirming a match the feed raised, writing somebody in before an
+ * event, import, export, and forgetting everyone unnamed. The id is unchanged
+ * because this module has always found the host by it.
+ */
 function buildAliasEditor() {
   const host = els.editors.aliases;
-  const needle = aliasFilter.trim().toLowerCase();
-  const shown = players.filter(
-    (player) =>
-      !needle ||
-      player.riotId.toLowerCase().includes(needle) ||
-      (player.alias ?? '').toLowerCase().includes(needle),
-  );
-
-  const filter = el('input', null, { type: 'search', spellcheck: 'false', placeholder: 'Filter by name or alias' });
-  filter.value = aliasFilter;
-  filter.addEventListener('input', () => {
-    aliasFilter = filter.value;
-    buildAliasEditor();
-    // Rebuilding blows away focus, which is unusable in a box you are typing in.
-    const next = host.querySelector('input[type="search"]');
-    next?.focus();
-    next?.setSelectionRange(filter.value.length, filter.value.length);
-  });
 
   const tidy = el('button', 'mini-btn', { type: 'button' }, 'Forget everyone unnamed');
   tidy.addEventListener('click', () => {
@@ -766,12 +707,11 @@ function buildAliasEditor() {
   host.replaceChildren(
     title('Player aliases', el('span', 'pill', {}, `${named} named of ${players.length}`)),
     help(
-      'Every player the feed reports is recorded here, whether or not you have named one. With no alias a card ' +
-        'shows their Riot ID without the tagline. Anyone the feed has seen is keyed on their account id, so a ' +
-        'player who renames themselves keeps their alias; one written in below is keyed on the Riot ID until you ' +
-        'confirm which account it belongs to.',
+      'Every player the feed reports is recorded here, whether or not you have named one - search and name them ' +
+        'in the panel above. Anyone the feed has seen is keyed on their account id, so a player who renames ' +
+        'themselves keeps their name; one written in below is keyed on the Riot ID until you confirm which ' +
+        'account it belongs to.',
     ),
-    grid(null, [field('Search', filter)]),
     ...(pendingAliases.length
       ? [
           subhead(`Confirm ${pendingAliases.length === 1 ? 'a match' : `${pendingAliases.length} matches`}`),
@@ -782,9 +722,6 @@ function buildAliasEditor() {
           wrapChildren('alias-list', pendingAliases.map(pendingRow)),
         ]
       : []),
-    shown.length
-      ? wrapChildren('alias-list', shown.map(aliasRow))
-      : el('p', 'empty', {}, players.length ? 'Nobody matches that.' : 'No players seen yet. Run a lobby with the webhook pointed here, or write one in below.'),
     aliasDraftForm(),
     subhead('Share this library'),
     help(

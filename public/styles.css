@@ -3862,3 +3862,149 @@ label.is-off {
   font-size: 10px;
   opacity: 0.55;
 }
+
+/* --------------------------------------------------- the player search --- */
+
+/*
+ * The Players page. Same two-line shape as the alias rows it replaced, and for
+ * the same reason: who somebody is (a handle, a team, an account id) and what
+ * you call them (a box and a button) cannot share one row's width without the
+ * identity truncating, which is the half you need to tell two similar handles
+ * apart before naming one of them.
+ */
+.ply-results {
+  margin-top: 12px;
+}
+
+/*
+ * The two halves of the Players page are separate panel-inners in one panel -
+ * the search, and what is left of the library management under it. Without a
+ * rule between them the last result row butts straight into the next heading
+ * and the page reads as one list with a stray title in the middle of it.
+ */
+#tou-players #sed-aliases {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.ply-count {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.ply-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.ply-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+
+.ply-who {
+  min-width: 0;
+}
+
+.ply-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ply-riot {
+  margin-top: 2px;
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--text-dim, var(--text-faint));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where this row came from. A row can wrap - a player on two teams is rare and
+   is usually a mistake worth seeing rather than one worth hiding behind an
+   ellipsis. */
+.ply-origin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ply-pill,
+.ply-seen {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+}
+
+.ply-seen {
+  color: var(--accent);
+  background: rgba(109, 183, 232, 0.12);
+}
+
+.ply-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ply-controls input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ply-controls .mini-btn,
+.ply-controls .roster-state {
+  flex: none;
+}
+
+/* A row with no team has nowhere to store a verified identity, so it says so
+   rather than offering a button that would drop its own answer. */
+.ply-state {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 0 6px;
+}
+
+/*
+ * Nothing selected.
+ *
+ * A dimmed inset rather than .is-guest's solid warn border, because the two
+ * cues must not be mistaken for each other: the guest border means "careful,
+ * this is somebody else's stream" and this means "there is nothing here yet".
+ * An operator seeing the loud one on their first sign-in would learn to ignore
+ * it, and it is the only cue on this dashboard that stops a graphic going to
+ * the wrong show.
+ *
+ * They cannot both be on: paintTopbar computes `guest` as "there IS a
+ * tournament and I do not own it", so it is false exactly when this is true.
+ * Worth writing down, because otherwise the order these two rules appear in
+ * looks like it matters and somebody will one day reorder them.
+ */
+body.is-adrift {
+  box-shadow: inset 0 0 0 2px rgba(224, 168, 74, 0.35);
+}
+
+body.is-adrift .rail-item[data-tab='lookup'],
+body.is-adrift .rail-item[data-section='graphics'],
+body.is-adrift .rail-item[data-tab='setup'],
+body.is-adrift .rail-item[data-tab='global'] {
+  opacity: 0.45;
+}
