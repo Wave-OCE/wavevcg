@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { openAsAdmin } from './harness.mjs';
+import { LINEUP_FORMATS } from '../../public/lineup-schema.js';
 
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
 const PORT = 8181;
@@ -183,6 +184,45 @@ try {
 
   r = await post('/api/lineup', { action: 'load', id: 'nope' }, '&bus=preview');
   eq('16 loading a team that is gone is refused', r.status, 404);
+
+  // -------------------------------------------- a Riot ID never reaches air ---
+  /*
+   * NOT CARRIED, rather than merely not painted, and that distinction is the
+   * whole assertion.
+   *
+   * A Riot ID is not broadcast information: it is the handle somebody is added
+   * by and messaged on, and a full-screen lineup is the easiest frame in a
+   * broadcast to pause and read. There used to be a `detailed` format that
+   * printed one under every name, and the `names` layout printed one too.
+   *
+   * A value that is only unpainted is still copied out of the roster on Load,
+   * written to lineup.json, and pushed over SSE to every browser source on
+   * every keystroke - so the next contributor to render "just to see" puts it
+   * on air. 16a asks about the STATE for that reason; an assertion about the
+   * page would pass against a graphic one line away from leaking.
+   *
+   * The roster it was copied from definitely has one - 16c pins that, so this
+   * cannot quietly start passing because the fixture stopped carrying Riot IDs.
+   */
+  await post('/api/lineup', { action: 'load', id: cru.id }, '&bus=preview');
+  r = await get('/api/lineup', '&bus=preview');
+  ok('16a no player on the lineup carries a Riot ID', !/riotid/i.test(JSON.stringify(r.state)), JSON.stringify(r.state.players?.[0]));
+  eq('16b ...and a seat is a name and a photo, nothing else', Object.keys(r.state.players[0] ?? {}).sort().join(','), 'name,photo');
+  const roster = (await get('/api/teams')).teams.find((team) => team.id === cru.id);
+  ok('16c ...while the roster it was copied FROM still has them', Boolean(roster?.players?.[0]?.riotId), JSON.stringify(roster?.players?.[0]));
+
+  /*
+   * The format that printed them is gone, and a state saved carrying it lands
+   * somewhere this build can draw. Left to the ordinary unknown-value fallback
+   * it would have kept `detailed` for ever, because that fallback returns the
+   * PREVIOUS value - which on a saved state is `detailed` itself.
+   */
+  ok('16d the Riot ID format is not offered any more', !JSON.stringify(LINEUP_FORMATS).includes('detailed'), JSON.stringify(LINEUP_FORMATS.map((f) => f.key)));
+  const retired = await post('/api/lineup', { state: { ...r.state, format: 'detailed' } }, '&bus=preview');
+  eq('16e ...and a state saved with it lands on photos', retired.body.state.format, 'photos');
+
+  // The tricode is copied in, because the graphic captions the org with it.
+  eq('16f the tricode reaches the graphic', retired.body.state.shortName, 'CRU');
 
   // -------------------------------------------------------- the head to head ---
   r = await post('/api/headtohead', { action: 'side', side: 'left', id: cru.id }, '&bus=preview');

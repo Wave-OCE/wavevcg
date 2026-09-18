@@ -16,8 +16,27 @@
  * everything has arrived. `names` is not a fallback for a broken state; it is a
  * design somebody may prefer.
  *
- * `photos` is what the reference board does. `detailed` adds the Riot ID under
- * the name, which is what a qualifier with unfamiliar rosters wants.
+ * `photos` is what the reference board does; `names` is the one to use before a
+ * portrait shoot.
+ *
+ * ---------------------------------------------------------------------------
+ * A RIOT ID NEVER REACHES THIS GRAPHIC
+ * ---------------------------------------------------------------------------
+ *
+ * There was a third format, `detailed`, which printed each player's Riot ID
+ * under their name - and the `names` layout printed one too. Both are gone, and
+ * the field went with them rather than merely being left unpainted.
+ *
+ * A Riot ID is not broadcast information. It is the handle somebody is added by
+ * and messaged on, it is half of what an impersonator needs, and a full-screen
+ * lineup is the single easiest frame in a broadcast to pause and read. Nothing
+ * on air is improved by it.
+ *
+ * Deleting the FIELD rather than the paint is the point. A value that is merely
+ * not rendered is still copied out of the roster on Load, written to
+ * `lineup.json`, pushed over SSE to every browser source on every keystroke,
+ * and sitting in the state any future contributor renders "just to see". Not
+ * carrying it is the only version of this that cannot come back.
  */
 
 import { ROSTER_LIMIT } from './teams.js';
@@ -33,12 +52,17 @@ export const LINEUP_FORMATS = [
     label: 'Names only',
     help: 'No portraits at all - large names in a column beside the crest. The one to use before a photo shoot.',
   },
-  {
-    key: 'detailed',
-    label: 'Photos, names and Riot IDs',
-    help: 'As photos, with the Riot ID under each name. Worth it for a qualifier where nobody knows the rosters.',
-  },
 ];
+
+/**
+ * Formats this graphic used to have.
+ *
+ * `detailed` was photos plus each player's Riot ID. Remapped rather than left
+ * to the unknown-value fallback, because that fallback returns the PREVIOUS
+ * value - which on a saved state is `detailed` itself, so the graphic would
+ * have kept a format it no longer has a design for.
+ */
+const RETIRED_FORMATS = { detailed: 'photos' };
 
 export const LINEUP_FORMAT_KEYS = LINEUP_FORMATS.map((entry) => entry.key);
 
@@ -54,11 +78,15 @@ const whole = (value, min, max, fallback = min) => {
   return Math.min(max, Math.max(min, number));
 };
 
+/*
+ * A name and a face. NOT a Riot ID - see the header, and do not add one back.
+ * `sanitiseLineup` runs every seat through this, so a state saved when the
+ * field existed loses it the first time it is read.
+ */
 const seat = (input) => {
   const source = input && typeof input === 'object' ? input : {};
   return {
     name: text(source.name, 32),
-    riotId: text(source.riotId, 64),
     photo: text(source.photo, 500),
   };
 };
@@ -80,13 +108,19 @@ export const DEFAULT_LINEUP = {
   anim: { visible: false, cue: 0 },
 };
 
+/** A format this build still has a design for, or null. */
+const formatOf = (value) => {
+  const wanted = RETIRED_FORMATS[value] ?? value;
+  return LINEUP_FORMAT_KEYS.includes(wanted) ? wanted : null;
+};
+
 export function sanitiseLineup(input, fallback = DEFAULT_LINEUP) {
   const source = input && typeof input === 'object' ? input : {};
   const base = fallback ?? DEFAULT_LINEUP;
 
   return {
     version: 1,
-    format: LINEUP_FORMAT_KEYS.includes(source.format) ? source.format : base.format,
+    format: formatOf(source.format) ?? formatOf(base.format) ?? 'photos',
     teamId: text(source.teamId ?? base.teamId, 64),
     teamName: text(source.teamName ?? base.teamName, 32),
     shortName: text(source.shortName ?? base.shortName, 8),
@@ -134,8 +168,10 @@ export function lineupFromTeam(team, { slots = LINEUP_SLOTS } = {}) {
     logo: String(team.logo ?? ''),
     colour: String(team.colour ?? ''),
     defaultPhoto: String(team.playerPhoto ?? ''),
+    // No riotId in the copy, deliberately - see the header. The roster has one
+    // and this graphic must not.
     players: (team.players ?? []).slice(0, slots).map((player) =>
-      seat({ name: player.displayName, riotId: player.riotId, photo: player.photo }),
+      seat({ name: player.displayName, photo: player.photo }),
     ),
   };
 }
@@ -155,12 +191,18 @@ export function lineupIsStale(state, team) {
   const shown = JSON.stringify({
     name: state.teamName,
     logo: state.logo,
-    players: (state.players ?? []).map((p) => [p.name, p.riotId, p.photo]),
+    players: (state.players ?? []).map((p) => [p.name, p.photo]),
   });
+  /*
+   * Both sides drop the Riot ID together, and that pairing is load-bearing
+   * rather than tidy: the graphic no longer carries one, so comparing it
+   * against a roster that does would make EVERY loaded lineup read as stale,
+   * for ever, with a badge nobody could clear.
+   */
   const live = JSON.stringify({
     name: team.name ?? '',
     logo: team.logo ?? '',
-    players: (team.players ?? []).slice(0, LINEUP_SLOTS).map((p) => [p.displayName ?? '', p.riotId ?? '', p.photo ?? '']),
+    players: (team.players ?? []).slice(0, LINEUP_SLOTS).map((p) => [p.displayName ?? '', p.photo ?? '']),
   });
   return shown !== live;
 }

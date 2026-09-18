@@ -83,6 +83,21 @@ body {
   line-height: 1;
 }
 
+/* The tricode under the full name, which is how this org is captioned on every
+   other graphic here. Wide letterspacing and the accent, so three letters read
+   as a deliberate mark rather than as a truncated word. */
+.head-tricode {
+  margin-top: 10px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  /* Trailing space is eaten by the tracking on the last glyph; the padding puts
+     it back so a right-aligned block does not read as one letter short. */
+  padding-right: 0.34em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
 /* --------------------------------------------------- photos and detailed --- */
 
 /*
@@ -170,12 +185,9 @@ body {
   white-space: nowrap;
 }
 
-.seat-riot {
-  font-size: 14px;
-  letter-spacing: 0.06em;
-  color: var(--ink-dim);
-  white-space: nowrap;
-}
+/* `.seat-riot` was here and is gone with the field it painted. See the header
+   of lineup-schema.js: a Riot ID is not broadcast information, and the rule is
+   that this graphic does not carry one rather than merely not showing it. */
 
 /* ------------------------------------------------------------ names only --- */
 
@@ -199,10 +211,6 @@ body {
   font-size: 68px;
   letter-spacing: 0.04em;
   color: var(--ink);
-}
-
-.names .seat-riot {
-  font-size: 20px;
 }
 
 .crest {

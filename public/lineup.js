@@ -31,6 +31,7 @@ const names = document.getElementById('names');
 const crest = document.getElementById('crest');
 const crestImg = document.getElementById('crest-img');
 const teamName = document.getElementById('team-name');
+const tricode = document.getElementById('head-tricode');
 const eyebrow = document.getElementById('eyebrow');
 const eventLogo = document.getElementById('event-logo');
 const eventLogoImg = document.getElementById('event-logo-img');
@@ -83,14 +84,14 @@ function photoSeat() {
   const photo = el('div', 'seat-photo');
   photo.append(el('img', null, { alt: '' }), el('span', 'seat-stand'));
   const plate = el('div', 'seat-plate');
-  plate.append(el('div', 'seat-name'), el('div', 'seat-riot'));
+  plate.append(el('div', 'seat-name'));
   seat.append(photo, plate);
   return seat;
 }
 
 function nameSeat() {
   const seat = el('div', 'seat');
-  seat.append(el('div', 'seat-name'), el('div', 'seat-riot'));
+  seat.append(el('div', 'seat-name'));
   return seat;
 }
 
@@ -124,9 +125,16 @@ function render(state) {
 
   const format = LINEUP_FORMAT_KEYS.includes(state.format) ? state.format : 'photos';
   const withPhotos = format !== 'names';
-  const withRiot = format === 'detailed';
 
   teamName.textContent = (state.teamName || '').toUpperCase();
+  /*
+   * The tricode under the name, which is how the org is captioned everywhere
+   * else in a broadcast - the scoreboard, the bracket and the score line all
+   * lead with it. Hidden rather than blank when a team has none, so the block
+   * does not reserve a line of air for nothing.
+   */
+  tricode.textContent = (state.shortName || '').toUpperCase();
+  tricode.hidden = !state.shortName;
   eyebrow.textContent = (state.heading || '').toUpperCase();
   eyebrow.hidden = !state.heading;
 
@@ -163,9 +171,6 @@ function render(state) {
       stand.textContent = (state.shortName || '').toUpperCase();
 
       seat.querySelector('.seat-name').textContent = (player.name || '').toUpperCase();
-      const riot = seat.querySelector('.seat-riot');
-      riot.textContent = withRiot ? player.riotId || '' : '';
-      riot.hidden = !withRiot || !player.riotId;
     });
     stagger(row);
   } else {
@@ -173,7 +178,6 @@ function render(state) {
     players.forEach((player, index) => {
       const seat = names.children[index];
       seat.querySelector('.seat-name').textContent = (player.name || '').toUpperCase();
-      seat.querySelector('.seat-riot').textContent = player.riotId || '';
     });
     stagger(names);
   }

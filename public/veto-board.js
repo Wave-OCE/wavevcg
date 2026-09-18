@@ -32,6 +32,45 @@ const stage = document.getElementById('stage');
 const board = document.getElementById('board');
 const strip = document.getElementById('strip');
 const full = document.getElementById('full');
+/*
+ * The map art, resolved at PAINT TIME from the live catalogue rather than
+ * copied into the snapshot.
+ *
+ * That looks like it contradicts the copy-not-link rule this graphic is built
+ * on, and it does not: what the snapshot must freeze is the COMPETITION - who
+ * banned what, in which order - because that is what two people with no account
+ * drive from their phones and what a schedule edit must not be able to move. A
+ * map's official splash is a catalogue asset, the same as an agent portrait,
+ * and every other output page here resolves one the same way (post-match.js and
+ * select.js both do exactly this). Freezing it would mean a board loaded before
+ * an art refresh painting last season's key art beside a board loaded after it.
+ *
+ * Retried, and it never blocks a render: names and boxes go to air regardless
+ * and the art upgrades the frame when it lands. A source that started before
+ * the server had the catalogue would otherwise draw every veto of the broadcast
+ * with empty boxes.
+ */
+let mapsByName = new Map();
+
+const mapKey = (value) => String(value ?? '').trim().toLowerCase();
+
+const mapArt = (name) => mapsByName.get(mapKey(name))?.splash ?? '';
+
+async function loadCatalogue(attempt = 1) {
+  try {
+    const response = await fetch('/api/valorant-assets');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    mapsByName = new Map((data.maps ?? []).map((entry) => [mapKey(entry.name), entry]));
+    if (latestState) render(latestState);
+    return;
+  } catch (error) {
+    console.warn(`valorant-api catalogue unavailable (${error.message}) - drawing the board without map art`);
+  }
+  if (attempt >= 6) return;
+  setTimeout(() => loadCatalogue(attempt + 1), Math.min(2000 * 2 ** attempt, 30000));
+}
+
 const fullBans = document.getElementById('full-bans');
 const fullMaps = document.getElementById('full-maps');
 const logoBar = document.getElementById('logo-bar');
@@ -45,8 +84,30 @@ function el(tag, className, attrs = {}) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (tag === 'img') guard(node);
   return node;
 }
+
+/*
+ * An image that fails to load must be INVISIBLE, not a broken-image marker.
+ *
+ * The house rule, applied here because this page now paints map art from a
+ * remote catalogue: a splash URL that 404s - an art refresh that moved, a CDN
+ * that changed - would otherwise put Chrome's broken-image icon in the middle
+ * of a veto board on air, with nothing about the state saying anything is
+ * wrong, because nothing is. The box degrades to the flat panel it used to be.
+ */
+function guard(node) {
+  node.addEventListener('error', () => {
+    node.hidden = true;
+  });
+  node.addEventListener('load', () => {
+    node.hidden = false;
+  });
+  return node;
+}
+
+for (const img of document.querySelectorAll('img')) guard(img);
 
 /** What the head of a lower-third cell says: who, and what they did. */
 const headWords = (row) => {
@@ -117,6 +178,38 @@ function paintLower(state) {
   });
 }
 
+/**
+ * Point an <img> at a map splash, or at nothing.
+ *
+ * Compared before assigning, because writing the same `src` restarts the decode
+ * and, on a box that is mid-transition, visibly flickers.
+ *
+ * IT MUST NOT SET `hidden`, and that is the whole reason this is a function
+ * with a note on it. `[hidden]` is `display: none` in this stylesheet, and an
+ * element arriving from `display: none` has no previous computed style to
+ * transition FROM - so the art snapped to full opacity while the name beside it
+ * faded in, and the reveal the operator had just pressed was half an animation.
+ * Caught by measuring the box 140ms after a reveal; every state assertion
+ * around it was green, and a stylesheet that declares a transition looks
+ * identical to one that is actually triggered.
+ *
+ * So an unrevealed box simply has no `src`. An <img> with no source and an
+ * empty `alt` paints nothing, it is already at `opacity: 0` from not carrying
+ * `.is-revealed`, and it keeps a computed style for the transition to start
+ * from. `hidden` is left to `guard()` and means one thing only: this URL did not
+ * load, so show nothing rather than a broken-image marker on air.
+ */
+function setArt(img, src) {
+  if (!img) return;
+  // A blank src would make the browser re-request the PAGE, so the attribute
+  // goes rather than being emptied.
+  if (!src) {
+    img.removeAttribute('src');
+    return;
+  }
+  if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+}
+
 // ------------------------------------------------------------ full screen ---
 
 function paintFull(state) {
@@ -132,27 +225,66 @@ function paintFull(state) {
    * that reached back into the record would make the board evidence of an order
    * nobody played.
    */
+  /*
+   * ALWAYS TWO ROWS, columns derived - `ceil(bans / 2)`.
+   *
+   * It was a fixed two columns, so a Bo1's six bans drew three rows deep and
+   * three columns wide of empty frame sat beside them; the block was taller
+   * than the maps it was next to and the whole board read bottom-heavy. Two
+   * rows is the constant because the maps block beside it is one row of tall
+   * panels, and the two only balance when the bans are wide rather than deep.
+   *
+   * Arithmetic written into a custom property, not a measurement: this page is
+   * rendered by OBS while nothing is on screen, and anything asking its own
+   * width there reads zero. The same rule the bracket's layout follows.
+   */
+  fullBans.style.setProperty('--ban-cols', String(Math.max(1, Math.ceil(bans.length / 2))));
+
   while (fullBans.children.length < bans.length) {
-    fullBans.append(el('div', 'full-ban'));
+    const node = el('div', 'full-ban');
+    /*
+     * Both lines exist from the start and cross-fade, which is the same shape
+     * the lower third's `.cell-map` / `.cell-wait` pair uses - and the reason
+     * is the same: swapping one element's textContent cannot be animated, and
+     * building the revealed line when it arrives would resize the box.
+     */
+    node.append(
+      el('img', 'full-ban-art', { alt: '' }),
+      el('span', 'full-ban-wait'),
+      el('span', 'full-ban-done'),
+    );
+    fullBans.append(node);
   }
   while (fullBans.children.length > bans.length) fullBans.lastElementChild.remove();
   bans.forEach((row, index) => {
     const node = fullBans.children[index];
     const who = (row.byShort || row.by || '').toUpperCase();
     // Unrevealed says WHO is banning and not what - the tile is there, waiting.
-    node.textContent = row.shown ? `${who} BANS ${(row.map || '').toUpperCase()}` : `${who} TO BAN`;
+    node.querySelector('.full-ban-wait').textContent = `${who} TO BAN`;
+    node.querySelector('.full-ban-done').textContent = `${who} BANS ${(row.map || '').toUpperCase()}`;
+    // A banned map shows its art too, darkened and struck through: the audience
+    // is being told what is GONE, and a name alone is the weakest way to say it.
+    setArt(node.querySelector('.full-ban-art'), row.shown ? mapArt(row.map) : '');
     node.classList.add('is-shown');
     node.classList.toggle('is-revealed', row.shown);
   });
 
   while (fullMaps.children.length < maps.length) {
     const node = el('div', 'full-map');
-    node.append(el('div', 'full-map-name'), el('div', 'full-map-meta'));
+    // The art first, so it sits under the scrim and the type in paint order
+    // rather than needing a z-index to say the same thing.
+    node.append(
+      el('img', 'full-map-art', { alt: '' }),
+      el('div', 'full-map-scrim'),
+      el('div', 'full-map-name'),
+      el('div', 'full-map-meta'),
+    );
     fullMaps.append(node);
   }
   while (fullMaps.children.length > maps.length) fullMaps.lastElementChild.remove();
   maps.forEach((row, index) => {
     const node = fullMaps.children[index];
+    setArt(node.querySelector('.full-map-art'), row.shown ? mapArt(row.map) : '');
     node.querySelector('.full-map-name').textContent = row.shown ? (row.map || '').toUpperCase() : '';
     const meta = node.querySelector('.full-map-meta');
     meta.textContent = '';
@@ -175,8 +307,18 @@ function paintFull(state) {
 
 let lastCue = null;
 
+/*
+ * The last state drawn, kept so the CATALOGUE arriving can redraw it.
+ *
+ * Without it a board that went up before the art landed would stay artless for
+ * the whole broadcast - the stream only pushes on a change, and a veto that is
+ * already complete makes none.
+ */
+let latestState = null;
+
 function render(state) {
   if (!state) return;
+  latestState = state;
 
   const layout = VETO_BOARD_LAYOUT_KEYS.includes(state.layout) ? state.layout : 'lower';
   board.classList.toggle('is-lower', layout === 'lower');
@@ -238,3 +380,7 @@ stream.addEventListener('vetoBoard', (event) => {
 });
 
 stream.addEventListener('error', () => console.warn('veto board stream dropped - reconnecting'));
+
+// After the stream is subscribed, so the first frame is never held up by the
+// art - names and boxes go to air and the splashes upgrade the frame later.
+loadCatalogue();

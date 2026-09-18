@@ -313,9 +313,19 @@ body {
   justify-content: center;
 }
 
+/*
+ * ALWAYS TWO ROWS. The column count is arithmetic, written by veto-board.js
+ * into `--ban-cols` - `ceil(bans / 2)`, so six bans draw 3x2 and four draw 2x2.
+ *
+ * It was a fixed two columns, which made a Bo1's six bans three rows deep: a
+ * block taller than the map panels beside it, with the board reading
+ * bottom-heavy and a column of empty frame to its right. The fallback here is
+ * the old value, so a board that somehow paints before the property is set is
+ * wrong in the old way rather than collapsed into one column.
+ */
 .full-bans {
   display: grid;
-  grid-template-columns: repeat(2, 214px);
+  grid-template-columns: repeat(var(--ban-cols, 2), 214px);
   gap: 12px;
 }
 
@@ -329,6 +339,8 @@ body {
   height: 178px;
   background: linear-gradient(180deg, #2a1015, #5a1a22);
   border: 1px solid rgba(255, 70, 85, 0.55);
+  /* The art is absolutely positioned inside, so the box must clip it. */
+  overflow: hidden;
   display: flex;
   align-items: flex-end;
   padding: 12px;
@@ -348,6 +360,7 @@ body {
   width: 236px;
   height: 370px;
   background: var(--panel-2);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -357,6 +370,72 @@ body {
   transition:
     opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
     transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/*
+ * The banned map's own art, darkened and drained.
+ *
+ * A name alone is the weakest way to say "this one is gone" - the audience is
+ * reading this for two seconds on a stream, and a recognisable image with a
+ * cross through it lands before the word does. Desaturated and dim so a revealed
+ * BAN can never be mistaken for a revealed PICK at a glance, which is the whole
+ * distinction the board exists to draw.
+ */
+.full-ban-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  filter: grayscale(1) brightness(0.42);
+  transform: scale(1.06);
+  transition:
+    opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.full-ban.is-revealed .full-ban-art {
+  opacity: 0.55;
+  transform: scale(1);
+}
+
+/*
+ * The two lines, stacked in the same place and cross-faded.
+ *
+ * Same shape as the lower third's `.cell-map` / `.cell-wait` pair, for the same
+ * two reasons: one element whose textContent is swapped cannot be animated at
+ * all, and building the revealed line only when it arrives would change the
+ * box's size - the layout moving when the data changes.
+ */
+.full-ban-wait,
+.full-ban-done {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  transition:
+    opacity 300ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.full-ban-wait {
+  opacity: 1;
+}
+
+.full-ban-done {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.full-ban.is-revealed .full-ban-wait {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.full-ban.is-revealed .full-ban-done {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* The cross, drawn rather than imported - two rules through the middle, which
@@ -387,11 +466,80 @@ body {
   transform: translateY(0);
 }
 
+/*
+ * The map's own art, arriving with the reveal.
+ *
+ * Scaled slightly past its box and settling, which is the house motion: the
+ * card arrives, it does not pop. Paired with the scrim below rather than
+ * dimmed on its own, because the name sits over the bottom third and a splash
+ * with a bright sky there would make it unreadable at 1920x1080.
+ */
+.full-map-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1.08);
+  transition:
+    opacity 460ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 700ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.full-map.is-revealed .full-map-art {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/*
+ * Legibility, not decoration. It fades in WITH the art, so a box with no art -
+ * unrevealed, or a splash that failed to load - is the flat panel it always
+ * was rather than a panel with a dark band across the bottom of it.
+ */
+.full-map-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 10, 14, 0.15) 30%, rgba(8, 10, 14, 0.88) 100%);
+  opacity: 0;
+  transition: opacity 460ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/*
+ * `[src]`, not `:not([hidden])`.
+ *
+ * The art is no longer hidden when a box is unrevealed - it simply has no
+ * source, because `display: none` kills the transition it is supposed to arrive
+ * on (see setArt). So "is there art here" is now a question about the ATTRIBUTE,
+ * and a panel whose splash is missing or failed keeps the flat look it always
+ * had rather than growing a dark band across the bottom for no reason.
+ */
+.full-map.is-revealed .full-map-art[src]:not([hidden]) ~ .full-map-scrim {
+  opacity: 1;
+}
+
 .full-map-name {
+  /* Above the art and the scrim, both of which are absolutely positioned - a
+     position of its own is what puts it there without a z-index race. */
+  position: relative;
   font-weight: 800;
   font-size: 34px;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+  /* Revealed, not merely filled in: the name rises the way the cards do.
+     Keyed off `is-revealed` rather than off the text being non-empty, so the
+     two halves of one reveal move together. */
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 380ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 380ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: 90ms;
+}
+
+.full-map.is-revealed .full-map-name {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* Two lines' worth whatever it holds, so the map NAME sits on the same
@@ -399,6 +547,10 @@ body {
    picked map carries two, and without this its title drops 18px below its
    neighbours - the kind of thing only a screenshot shows. */
 .full-map-meta {
+  /* Over the scrim, like the name. It is NOT animated on reveal: it says who is
+     picking and is on screen from the first frame, so fading it in would be
+     re-animating information the audience has already read. */
+  position: relative;
   min-height: 42px;
   margin-top: 8px;
   font-size: 15px;
