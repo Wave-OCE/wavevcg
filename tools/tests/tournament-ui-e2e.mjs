@@ -382,7 +382,7 @@ try {
   ok('20n. the Players sub-page is a search', (await page.$('#ply-search')) !== null);
   ok(
     '20o. ...and a roster player is IN it, not only feed records',
-    (await page.$$('.ply-row')).length >= 1 && /Zekken/.test(await page.textContent('.ply-results')),
+    (await page.$$('.ply-card')).length >= 1 && /Zekken/.test(await page.textContent('.ply-results')),
     await page.textContent('.ply-count'),
   );
   ok(
@@ -407,26 +407,91 @@ try {
     await page.evaluate(() => document.activeElement?.id === 'ply-search'),
     await page.evaluate(() => document.activeElement?.id ?? 'none'),
   );
-  ok('20s. the search actually filters', (await page.$$('.ply-row')).length === 1, String((await page.$$('.ply-row')).length));
+  ok('20s. the search actually filters', (await page.$$('.ply-card')).length === 1, String((await page.$$('.ply-card')).length));
 
   await page.fill('#ply-search', 'nobody-by-that-name');
   await wait(300);
-  ok('20t. ...and says so when nothing matches', (await page.$$('.ply-row')).length === 0);
+  ok('20t. ...and says so when nothing matches', (await page.$$('.ply-card')).length === 0);
+
+  /*
+   * The SHAPE of a card, asked before anything types into one.
+   *
+   * A box has to hold four things to be worth being a box - a face, the name
+   * that goes on air, the handle underneath it, and the two controls - and a
+   * card missing one of them still paints, still lays out, and looks fine in a
+   * grid of one. The fifth part of this is the interesting one: the card must
+   * hold NO input at all, which is what makes the search caret safe by
+   * structure rather than by a rule somebody has to remember. Put an inline
+   * name box back and this goes red before any of the caret assertions run.
+   */
+  await page.fill('#ply-search', 'Zekken');
+  await wait(300);
+  const card = await page.evaluate(() => {
+    const box = document.querySelector('.ply-card');
+    if (!box) return null;
+    const photo = box.querySelector('.ply-card-photo');
+    return {
+      photo: !!photo,
+      placeholder: photo?.classList.contains('is-empty') ?? false,
+      initials: photo?.querySelector('.ply-card-initials')?.textContent ?? '',
+      name: box.querySelector('.ply-name')?.textContent ?? '',
+      riot: box.querySelector('.ply-riot')?.textContent ?? '',
+      verify: box.querySelector('.roster-state .mini-btn')?.textContent ?? '',
+      tools: [...box.querySelectorAll('.ply-card-tools > .mini-btn')].map((b) => b.textContent),
+      fields: box.querySelectorAll('input, textarea, select').length,
+      width: Math.round(box.getBoundingClientRect().width),
+    };
+  });
+  ok('20t2. a card has somewhere for a face', card?.photo === true, JSON.stringify(card));
+  ok(
+    '20t3. ...a blank placeholder when there is no photo, carrying their initials',
+    card?.placeholder === true && card?.initials === 'ZE',
+    `${card?.placeholder} ${card?.initials}`,
+  );
+  ok('20t4. ...the name that goes on air', /Zekken/.test(card?.name ?? ''), card?.name);
+  ok('20t5. ...the Riot ID under it', /#/.test(card?.riot ?? ''), card?.riot);
+  ok('20t6. ...a verify control', card?.verify === 'Verify' || card?.verify === '\u2713', card?.verify);
+  ok('20t7. ...and one Edit button', JSON.stringify(card?.tools) === '["Edit"]', JSON.stringify(card?.tools));
+  ok('20t8. a card holds no input, so the search caret cannot be taken by a repaint', card?.fields === 0, String(card?.fields));
+
+  /*
+   * Several cards across the width rather than one band each - the whole reason
+   * this stopped being a list. A card that filled the panel would leave every
+   * assertion above green and the page looking exactly as oddly spaced as it
+   * did before.
+   */
+  const panelWidth = await page.evaluate(() => Math.round(document.querySelector('.ply-grid').getBoundingClientRect().width));
+  ok(
+    '20t9. ...and a card is a box, not a full-width row',
+    card.width < panelWidth * 0.75,
+    `card ${card.width} of ${panelWidth}`,
+  );
 
   /*
    * Renaming here writes the ROSTER, not a second copy. One name in one place
    * whichever door you came in by - which is the whole point of folding the
    * alias library into the player editor, and is invisible to any assertion
    * that only looks at the page.
+   *
+   * Through the MODAL now, which is also where the photo went: the inline box
+   * this replaced committed on blur, and the media control beside it wrote on
+   * every keystroke of a pasted URL, so a half-typed address reached the roster
+   * and the lineup graphic before the paste had finished.
    */
-  await page.fill('#ply-search', 'Zekken');
-  await wait(300);
-  await page.fill('.ply-controls input', 'ZEK');
-  await page.evaluate(() => document.querySelector('.ply-controls input').blur());
+  await page.click('.ply-card-tools > .mini-btn');
+  await wait(600);
+  ok('20u1. Edit opens the editor', await page.isVisible('.rl-modal'));
+  ok(
+    '20u2. ...with the photo control in it, not a bare URL box',
+    (await page.$('.rl-modal .logo-preview')) !== null,
+  );
+  await page.fill('.rl-modal input[type=text] >> nth=0', 'ZEK');
+  await page.click('.rl-modal-foot .btn-primary');
   await wait(900);
+  ok('20u3. ...and saving closes it', (await page.$$('.rl-modal')).length === 0);
   const renamed = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
   ok(
-    '20u. a rename on the Players page writes the team roster',
+    '20u4. a rename on the Players page writes the team roster',
     renamed.teams?.[0]?.players?.[0]?.displayName === 'ZEK',
     JSON.stringify(renamed.teams?.[0]?.players?.[0]),
   );

@@ -3877,11 +3877,19 @@ label.is-off {
 /* --------------------------------------------------- the player search --- */
 
 /*
- * The Players page. Same two-line shape as the alias rows it replaced, and for
- * the same reason: who somebody is (a handle, a team, an account id) and what
- * you call them (a box and a button) cannot share one row's width without the
- * identity truncating, which is the half you need to tell two similar handles
- * apart before naming one of them.
+ * The Players page: a grid of boxes, one per person.
+ *
+ * It was a column of full-width rows, which wasted the whole right-hand side of
+ * a 1500px panel on nothing and made forty people forty identical bands. A box
+ * is the shape that fits what a person IS here - a face, a name, a handle, and
+ * two controls - and putting several across the width means a search result is
+ * read at a glance rather than scrolled.
+ *
+ * Every card is the same size whatever it holds, because `auto-fill` tracks and
+ * `align-items: start` on the row would otherwise make a card with two team
+ * pills taller than its neighbours and leave the grid looking broken. Names and
+ * handles ellipsis instead; the identity is one line each and the box does not
+ * grow to suit it.
  */
 .ply-results {
   margin-top: 12px;
@@ -3905,26 +3913,95 @@ label.is-off {
   color: var(--text-faint);
 }
 
-.ply-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 520px;
+/*
+ * `auto-fill` rather than a column count: this panel is one width on a laptop
+ * and another beside the rest of the Tournament page, and a fixed three would
+ * either overflow the narrow case or waste the wide one. 224px is the smallest
+ * a card can be with a 52px portrait and a Riot ID beside it.
+ */
+.ply-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+  gap: 8px;
+  max-height: 560px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
-.ply-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/*
+ * Named areas rather than nested flex, so the tools row spans the full card
+ * width instead of sitting under the text and leaving the portrait's column
+ * empty beneath it.
+ */
+.ply-card {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-areas:
+    'photo body'
+    'tools tools';
+  gap: 8px 10px;
   padding: 10px;
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-2, rgba(255, 255, 255, 0.03));
 }
 
-.ply-who {
+.ply-card-photo {
+  grid-area: photo;
+  position: relative;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ply-card-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Initials, centred by grid so they hold whatever the two characters are. */
+.ply-card-photo.is-empty {
+  display: grid;
+  place-items: center;
+}
+
+.ply-card-initials {
+  font-family: var(--font-display, inherit);
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+/* `min-width: 0` is what lets the two ellipsis rules below actually fire: a
+   grid item's automatic minimum is its content, so without this a long Riot ID
+   widens the track and pushes the card out of its own column. */
+.ply-card-body {
+  grid-area: body;
   min-width: 0;
+}
+
+.ply-card-tools {
+  grid-area: tools;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * Verify on the left where the lamp is read, Edit pushed to the far corner -
+ * the two are different weights of press and should not sit as a pair.
+ *
+ * A DIRECT child, deliberately: the verify control is a `.roster-state` span
+ * wrapping its own `.mini-btn`, and that button is the last child of the span,
+ * so a descendant selector would push it right as well and both controls would
+ * end up in the corner.
+ */
+.ply-card-tools > .mini-btn {
+  margin-left: auto;
 }
 
 .ply-name {
@@ -3952,6 +4029,11 @@ label.is-off {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+  /* One line of pills. A player on two teams is rare and usually a mistake
+     worth seeing - but not worth every card in the grid growing a row for, so
+     the overflow is clipped and the modal is where the detail lives. */
+  max-height: 19px;
+  overflow: hidden;
 }
 
 .ply-pill,
@@ -3967,22 +4049,6 @@ label.is-off {
 .ply-seen {
   color: var(--accent);
   background: rgba(109, 183, 232, 0.12);
-}
-
-.ply-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ply-controls input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.ply-controls .mini-btn,
-.ply-controls .roster-state {
-  flex: none;
 }
 
 /* A row with no team has nowhere to store a verified identity, so it says so
@@ -4146,39 +4212,6 @@ body.is-adrift .rail-item[data-tab='global'] {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
-}
-
-/* A player's photo on the Players page: a thumbnail that opens the real media
-   control below the row. One at a time - forty upload boxes is not a list. */
-.ply-photo {
-  flex: none;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-2, rgba(255, 255, 255, 0.04));
-  cursor: pointer;
-}
-
-.ply-photo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.ply-photo-empty {
-  color: var(--text-faint);
-  font-size: 18px;
-  line-height: 36px;
-}
-
-.ply-photo-edit {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
 }
 
 /*

@@ -31,15 +31,17 @@
  * The search box and the results are siblings, and only the results are ever
  * replaced. So a keystroke in the box filters the list beneath it without ever
  * touching the box itself, and the caret stays where it was - the schedule
- * page's problem, solved by the shape of the panel rather than by a modal,
- * because here there is exactly one text input that is not inside a row.
+ * page's problem, solved by the shape of the panel rather than by a modal.
  *
- * The alias boxes inside a row DO get replaced on a repaint, which is why they
- * commit on `change`/`blur` rather than per keystroke and why nothing repaints
- * the list while one is focused.
+ * And now there is nothing else to get right: the cards hold no inputs at all,
+ * so every text box on this page is either that search field or inside the Edit
+ * modal, which lives on `document.body` and is never touched by a repaint. The
+ * rule the old rows needed - nothing may repaint the list while an alias box is
+ * focused - has no way left to be broken.
  */
 
-import { el, field, help, subhead, title } from './fields.js';
+import { el, field, help, title } from './fields.js';
+import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { api } from './session.js';
 import { indexPlayers, matchesPlayer, playerOrigin } from './players-index.js';
@@ -71,16 +73,6 @@ let aliases = [];
 let needle = '';
 let host = null;
 let results = null;
-/*
- * Which row has its photo control open, by row key.
- *
- * One at a time, and that is the whole reason this is a module-level key rather
- * than state inside a row. The media control is a preview, a URL box and three
- * buttons - a hundred pixels of it per row would make a list of forty players
- * unusable, and a page of upload boxes is not what somebody searching for a
- * handle came here for.
- */
-let openPhoto = '';
 
 // ------------------------------------------------------------------ data ---
 
@@ -141,67 +133,151 @@ const saveAlias = (row, alias) =>
 // ------------------------------------------------------------------ paint ---
 
 /**
- * One person.
+ * One person, as a box.
  *
- * Two lines rather than one wide row, for the same reason the alias editor was
- * built that way: who they are is a handle and an account id, what you call
- * them is a box and a button, and side by side in a dashboard column those four
- * fight for width until the identity truncates - which is exactly the half that
- * has to be readable to tell two similar handles apart.
+ * It was a two-line ROW: identity above, a name box and two buttons below. That
+ * reads fine for three people and badly for forty - every row the same shape and
+ * the same height, nothing for the eye to land on, and a photo with nowhere to
+ * go but behind a 38px thumbnail. A box gives the portrait somewhere to be and
+ * makes the list scannable by FACE, which is how somebody actually looks for a
+ * player they cannot spell.
+ *
+ * Nothing in a box is editable. Everything that types is in the modal Edit
+ * opens, which is what lets this list repaint on every keystroke in the search
+ * above it - the caret rule, met by separation rather than by care. The row it
+ * replaced held an input and therefore a rule that nothing may repaint the list
+ * while one is focused; that rule is now structural instead of remembered.
  */
-function playerRow(row, repaint) {
-  const node = el('div', 'ply-row');
+function playerCard(row, repaint) {
+  const card = el('div', 'ply-card');
 
-  const who = el('div', 'ply-who');
-  who.append(el('div', 'ply-name', {}, row.name || '(unnamed)'));
-  who.append(el('div', 'ply-riot', {}, row.riotId || 'no Riot ID yet'));
-  const origin = el('div', 'ply-origin');
-  origin.append(el('span', 'ply-pill', {}, playerOrigin(row)));
-  if (row.accountId) origin.append(el('span', 'ply-seen', { title: 'Reported by the agent select feed' }, 'account linked'));
-  who.append(origin);
+  // --------- the face ---------
+  const photo = el('div', 'ply-card-photo');
+  const shot = row.player?.photo || '';
+  if (shot) {
+    const img = el('img', null, { src: shot, alt: '' });
+    /*
+     * A URL that 404s must not paint Chrome's broken-image marker forty times.
+     * Same guard as the graphics pages use, for the same reason: a photo is
+     * somebody else's link and this page is where you find out it has rotted.
+     */
+    img.addEventListener('error', () => {
+      img.remove();
+      photo.classList.add('is-empty');
+      photo.append(el('span', 'ply-card-initials', {}, initials(row)));
+    });
+    photo.append(img);
+  } else {
+    photo.classList.add('is-empty');
+    // Initials rather than a silhouette: they say WHICH player has no photo,
+    // which is the thing somebody curating a lineup wants to see at a glance.
+    photo.append(el('span', 'ply-card-initials', {}, initials(row)));
+  }
+  card.append(photo);
 
-  // --------- the name that goes on air ---------
-  const alias = el('input', null, {
+  // --------- who ---------
+  const body = el('div', 'ply-card-body');
+  body.append(el('div', 'ply-name', {}, row.name || '(unnamed)'));
+  body.append(el('div', 'ply-riot', {}, row.riotId || 'no Riot ID yet'));
+
+  const marks = el('div', 'ply-origin');
+  marks.append(el('span', 'ply-pill', {}, playerOrigin(row)));
+  if (row.accountId) marks.append(el('span', 'ply-seen', { title: 'Reported by the agent select feed' }, 'linked'));
+  body.append(marks);
+  card.append(body);
+
+  // --------- what you can do to them ---------
+  const tools = el('div', 'ply-card-tools');
+  tools.append(verifyButton(row, repaint));
+
+  const edit = el('button', 'mini-btn', { type: 'button', title: 'Edit their name and photo.' }, 'Edit');
+  edit.addEventListener('click', () => openPlayer(row, repaint));
+  tools.append(edit);
+  card.append(tools);
+
+  return card;
+}
+
+/** Two letters for a box with no photo, off the on-air name and then the handle. */
+function initials(row) {
+  const from = row.name || stripTagline(row.riotId) || '?';
+  return from.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '?';
+}
+
+/**
+ * Editing one person, in a modal.
+ *
+ * The name is written to WHICHEVER library the row came from: a row on a roster
+ * writes the roster - the team save folds it through to the alias library on the
+ * server, so naming somebody here is identical to naming them on the Teams page
+ * - and a row with no team writes the library directly. One name, one place,
+ * whichever door you came in by.
+ *
+ * It saves ONCE, on Save, so Cancel really does mean nothing happened. The
+ * inline box this replaced committed on blur and could never promise that: the
+ * photo control wrote on every keystroke of a pasted URL, so a half-typed
+ * address reached the roster and the lineup graphic before the paste finished.
+ */
+function openPlayer(row, repaint) {
+  if (modalOpen()) return;
+
+  let dialog = null;
+  const body = el('div', 'rl-modal-body');
+
+  const name = el('input', null, {
     type: 'text',
     spellcheck: 'false',
     maxlength: 32,
     'aria-label': `Name for ${row.riotId || row.name}`,
-    // What a card would say with no alias, so the box shows what it replaces
+    // What a card would say with no name, so the box shows what it replaces
     // rather than sitting there empty.
     placeholder: stripTagline(row.riotId) || 'Name',
   });
-  alias.value = row.player ? (row.player.displayName ?? '') : row.alias;
+  name.value = row.player ? (row.player.displayName ?? '') : row.alias;
 
   /*
-   * Committed on blur, and written to WHICHEVER library this row came from.
+   * The photo is drafted, not written, and declared BEFORE the control that
+   * reads it: `mediaControl` calls its getter while it builds, so a `let`
+   * underneath would be a temporal-dead-zone throw on open rather than a
+   * mistake anybody would see in review.
    *
-   * A row on a roster writes the roster - the team save folds it through to the
-   * alias library on the server, so naming somebody here is identical to naming
-   * them on the Teams page. A row with no team writes the library directly.
-   * One name, one place, whichever door you came in by.
+   * Offered only for a row that belongs to a TEAM. A photo lives on the player
+   * record and the alias library has no column for one - the same reason
+   * verification is offered to one and not the other, and inventing a column
+   * there would make a second store of record for one fact.
    */
-  const commit = async () => {
-    const value = alias.value.trim();
-    const before = row.player ? (row.player.displayName ?? '') : row.alias;
-    if (before === value) return;
+  let draftPhoto = row.player?.photo ?? '';
+  const photoField =
+    row.player && row.team
+      ? mediaControl(
+          'Photo',
+          () => draftPhoto,
+          (value) => {
+            draftPhoto = value;
+          },
+        )
+      : null;
+
+  const save = el('button', 'btn btn-primary', { type: 'button' }, 'Save');
+  save.addEventListener('click', async () => {
+    const wanted = name.value.trim();
     try {
       if (row.player && row.team) {
-        row.player.displayName = value;
+        row.player.displayName = wanted;
+        row.player.photo = draftPhoto;
         await saveTeam(row.team);
-      } else {
-        await saveAlias(row, value);
+      } else if (wanted !== row.alias) {
+        await saveAlias(row, wanted);
       }
+      dialog?.close();
       repaint();
     } catch (error) {
-      toast(`Name not saved: ${error.message}`);
+      toast(`Not saved: ${error.message}`);
     }
-  };
-  alias.addEventListener('change', commit);
-  alias.addEventListener('blur', commit);
+  });
 
-  // --------- verification ---------
-  const controls = el('div', 'ply-controls');
-  controls.append(alias, verifyButton(row, repaint));
+  const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+  cancel.addEventListener('click', () => dialog?.close());
 
   /*
    * Forget is offered only for a row with no team, and that is not squeamishness.
@@ -212,66 +288,43 @@ function playerRow(row, repaint) {
    * A player leaves a squad on the Teams page; a dictionary entry is dropped
    * here.
    */
+  let drop = null;
   if (!row.teams.length && row.aliasRecord?.key) {
-    const forget = el('button', 'mini-btn', { type: 'button', title: 'Drop this entry from the player library.' }, 'Forget');
-    forget.addEventListener('click', async () => {
+    drop = el(
+      'button',
+      'btn btn-ghost rl-modal-danger',
+      { type: 'button', title: 'Drop this entry from the player library.' },
+      'Forget',
+    );
+    drop.addEventListener('click', async () => {
       try {
         const payload = await post('/api/aliases', { action: 'delete', key: row.aliasRecord.key });
         aliases = payload.players ?? aliases;
+        dialog?.close();
         repaint();
       } catch (error) {
         toast(`Not removed: ${error.message}`);
       }
     });
-    controls.append(forget);
   }
 
-  /*
-   * The photo, behind a thumbnail.
-   *
-   * Only for a row that belongs to a TEAM: a photo lives on the player record,
-   * and the alias library has nowhere to put one - the same reason verification
-   * is offered to one and not the other. Inventing a column for it there would
-   * make a second store of record for one fact.
-   */
-  if (row.player && row.team) {
-    const thumb = el('button', 'ply-photo', {
-      type: 'button',
-      title: row.player.photo ? 'Change their photo' : 'Add a photo for the lineup graphic',
-    });
-    if (row.player.photo) thumb.append(el('img', null, { src: row.player.photo, alt: '' }));
-    else thumb.append(el('span', 'ply-photo-empty', {}, '+'));
-    thumb.addEventListener('click', () => {
-      openPhoto = openPhoto === row.key ? '' : row.key;
-      repaint();
-    });
-    controls.insertBefore(thumb, controls.firstChild);
-  }
+  body.append(
+    modalTitle(row.name || 'Player', row.riotId || 'no Riot ID'),
+    field('Name on air', name),
+    help('Saving writes the roster if they are on a team, and the player library if they are not.'),
+    ...(photoField
+      ? [
+          // No heading above it: mediaControl labels itself "Photo", and a
+          // subhead saying the same word stacked two identical labels.
+          photoField,
+          help('Their face on the team lineup graphic. A team-wide default covers anybody without one - set that on the Teams page.'),
+        ]
+      : [help('A photo lives on a team roster, so add them to a team to give them one.')]),
+  );
 
-  node.append(who, controls);
-
-  if (openPhoto === row.key && row.player && row.team) {
-    const slot = el('div', 'ply-photo-edit');
-    slot.append(
-      mediaControl(
-        'Photo',
-        () => row.player.photo ?? '',
-        async (value) => {
-          row.player.photo = value;
-          try {
-            await saveTeam(row.team);
-          } catch (error) {
-            toast(`Photo not saved: ${error.message}`);
-          }
-        },
-      ),
-      help('Their face on the team lineup graphic. A team-wide default covers anybody without one - set that on the Teams page.'),
-    );
-    node.append(slot);
-  }
-
-  return node;
+  dialog = openModal({ body, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
 }
+
 
 /**
  * The lamp and the button, which is the roster editor's control with the team
@@ -451,7 +504,7 @@ function paintResults() {
         rows.length === 1 ? '1 player' : `${rows.length} players${rows.length > PAGE ? ` - showing the first ${PAGE}` : ''}`,
       ),
       shown.length
-        ? wrap('ply-list', shown.map((row) => playerRow(row, repaint)))
+        ? wrap('ply-grid', shown.map((row) => playerCard(row, repaint)))
         : el(
             'p',
             'empty',
