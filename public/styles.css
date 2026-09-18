@@ -4016,6 +4016,7 @@ body.is-adrift {
 body.is-adrift .rail-item[data-tab='lookup'],
 body.is-adrift .rail-item[data-section='match'],
 body.is-adrift .rail-item[data-section='team'],
+body.is-adrift .rail-item[data-section='bracket'],
 body.is-adrift .rail-item[data-tab='setup'],
 body.is-adrift .rail-item[data-tab='global'] {
   opacity: 0.45;

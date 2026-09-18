@@ -43,6 +43,7 @@ import { DEFAULT_SETTINGS, sanitiseSettings } from './public/settings-schema.js'
 import { DEFAULT_VETO_BOARD, sanitiseVetoBoard } from './public/veto-board-schema.js';
 import { DEFAULT_LINEUP, sanitiseLineup } from './public/lineup-schema.js';
 import { DEFAULT_HEADTOHEAD, sanitiseHeadToHead } from './public/headtohead-schema.js';
+import { DEFAULT_BRACKET_GRAPHIC, sanitiseBracketGraphic } from './public/bracket-graphic-schema.js';
 import {
   COLOUR_SOURCE_KEYS,
   DEFAULT_GLOBAL,
@@ -1634,6 +1635,11 @@ export const makeVetoBoardStore = (filePath) => makeStateStore(filePath, sanitis
  * whole of the Node side - the same shape as the veto board above. */
 export const makeLineupStore = (filePath) => makeStateStore(filePath, sanitiseLineup, DEFAULT_LINEUP);
 export const makeHeadToHeadStore = (filePath) => makeStateStore(filePath, sanitiseHeadToHead, DEFAULT_HEADTOHEAD);
+/* The bracket. Holds a DRAWING - nodes and links in abstract units - rather
+ * than a competition, so the output page multiplies by four constants and never
+ * walks a graph while it paints. See bracket-graphic-schema.js. */
+export const makeBracketGraphicStore = (filePath) =>
+  makeStateStore(filePath, sanitiseBracketGraphic, DEFAULT_BRACKET_GRAPHIC);
 
 // -------------------------------------------------------------- presets ---
 

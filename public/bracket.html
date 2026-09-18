@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VALORANT Bracket - Output</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/bracket.css" />
+  </head>
+
+  <!--
+    OBS browser source: 1920 x 1080, transparent, "Shutdown source when not
+    visible" off.
+
+    The draw sheet. The state carries a DRAWING - nodes and links in abstract
+    units, teams and scores already resolved - rather than a competition, so
+    this page multiplies numbers by four constants and never walks a graph
+    while it paints. See bracket-graphic-schema.js.
+
+    `reveal` counts ROUNDS, so an operator walks the sheet out a column at a
+    time while a caster talks over it. The flow animates only the edges
+    somebody actually progressed along.
+
+    Every node and every link is built in bracket.js, because their count comes
+    from the draw and not from a shape written out here.
+  -->
+  <body>
+    <div id="stage">
+      <div class="board" id="board">
+        <div class="head">
+          <div class="head-eyebrow" id="eyebrow" hidden></div>
+          <div class="head-stage" id="stage-name"></div>
+        </div>
+
+        <div id="draw">
+          <svg class="links" id="links" aria-hidden="true"></svg>
+          <div id="nodes"></div>
+        </div>
+
+        <div class="winner" id="winner">
+          <div class="winner-footer" id="winner-top"></div>
+          <!-- The middle is its own flex column so the heading and the label
+               stay centred together when there is no crest to show. Without it
+               the art area holds the space open and the panel has a hole in
+               it - which on a show with no logos is every time. -->
+          <div class="winner-middle">
+            <div class="winner-heading" id="winner-heading"></div>
+            <div class="winner-art" id="winner-art"><img id="winner-image" alt="" /></div>
+            <div class="winner-label" id="winner-label"></div>
+          </div>
+          <div class="winner-footer" id="winner-bottom"></div>
+        </div>
+
+        <div class="event-logo" id="event-logo" hidden><img id="event-logo-img" alt="" /></div>
+      </div>
+    </div>
+
+    <script src="/bracket.js" type="module"></script>
+  </body>
+</html>

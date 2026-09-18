@@ -44,6 +44,7 @@ const SECTION_OF = {
   lineup: 'team',
   headToHead: 'team',
   vetoBoard: 'team',
+  bracket: 'bracket',
   global: 'global',
   tournament: 'tournament',
   account: 'account',
@@ -61,8 +62,11 @@ const SECTION_OF = {
 const GROUP_TABS = {
   match: ['graphic', 'winner', 'select'],
   team: ['lineup', 'headToHead', 'vetoBoard'],
+  // One screen today, and a group anyway: the rail item then behaves like the
+  // other two, and a second bracket graphic costs a line rather than a redesign.
+  bracket: ['bracket'],
 };
-const lastOf = { match: 'graphic', team: 'lineup' };
+const lastOf = { match: 'graphic', team: 'lineup', bracket: 'bracket' };
 
 /**
  * The heading, per tab.
@@ -79,6 +83,7 @@ const PAGE = {
   lineup: ['Team lineup', 'A squad, full screen'],
   headToHead: ['Head to head', 'Two orgs before a match'],
   vetoBoard: ['Map veto', 'The bans and picks, on air'],
+  bracket: ['Bracket', 'The draw sheet'],
   global: ['Global', 'Settings and libraries shared by every graphic'],
   tournament: ['Tournament', 'The competition, and who may work on it'],
   account: ['Account', 'Your keys, your sessions, and who may reach them'],

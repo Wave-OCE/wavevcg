@@ -64,6 +64,7 @@ const els = {
     lineup: $('tab-lineup'),
     headToHead: $('tab-headToHead'),
     vetoBoard: $('tab-vetoBoard'),
+    bracket: $('tab-bracket'),
     // No preview and no stream of its own - see index.html.
     global: $('tab-global'),
     tournament: $('tab-tournament'),

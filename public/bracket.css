@@ -1,0 +1,339 @@
+/*
+ * The bracket, on air. Its own stylesheet like every other output page.
+ * Fixed 1920x1080 scaled as a whole - do not switch to viewport units.
+ */
+
+:root {
+  --ink: #ffffff;
+  --ink-dim: rgba(255, 255, 255, 0.5);
+  --slot: #12161d;
+  --slot-won: #c8aa6e;
+  --line: rgba(255, 255, 255, 0.34);
+  --flow: #c8aa6e;
+  --accent: #c8aa6e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: Gabarito, 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+}
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: top left;
+}
+
+.board {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 360ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.board.is-on {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- header --- */
+
+.head {
+  position: absolute;
+  left: 72px;
+  top: 52px;
+}
+
+.head-eyebrow {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.head-stage {
+  margin-top: 4px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------------- the draw --- */
+
+/*
+ * The drawing is positioned ABSOLUTELY from numbers the schema carries, so
+ * nothing here reflows when a result lands. `#draw` is the origin; every node
+ * and every link is placed against it.
+ */
+/* Positioned from bracket.js, which centres it in the space the winner panel
+   leaves. The numbers there are arithmetic over `columns` and `rows`. */
+#draw {
+  position: absolute;
+  left: 72px;
+  top: 168px;
+}
+
+.links {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.link {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2;
+}
+
+/* A loser edge is a different claim from a winner edge - "they drop to here"
+   rather than "they go through" - so it is drawn differently. */
+.link.is-loser {
+  stroke-dasharray: 6 6;
+  opacity: 0.6;
+}
+
+/* An edge somebody actually came along is brighter, animated or not - the
+   line itself still has to read as "this is the route that was taken". */
+.link.is-live {
+  stroke: var(--flow);
+  opacity: 0.85;
+}
+
+/*
+ * The flow, as a SECOND path on top of the line rather than as the line itself.
+ *
+ * The first version put `stroke-dasharray` on `.link` and animated the offset,
+ * which does not add a highlight - it replaces the line with 14px of ink in
+ * every 164, so what reached the screen was one short dash per edge and no
+ * bracket connectors at all. The elbows have to stay solid; the travelling part
+ * is drawn over them.
+ */
+.flow {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 18 260;
+  opacity: 0;
+}
+
+.board.is-flowing .flow.is-live {
+  opacity: 0.95;
+  animation: flow 2.6s linear infinite;
+}
+
+@keyframes flow {
+  from {
+    stroke-dashoffset: 278;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.node {
+  position: absolute;
+  width: 224px;
+  opacity: 0;
+  transform: translateX(-14px);
+  transition:
+    opacity 340ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.node.is-shown {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--slot);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.slot + .slot {
+  margin-top: 2px;
+}
+
+/* The winner of a match wears the accent. That is the whole read of a bracket
+   from across a room - who went through. */
+.slot.is-won {
+  background: var(--slot-won);
+  color: #13100a;
+}
+
+.slot-logo {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.slot-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-score {
+  flex: none;
+  width: 26px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+}
+
+.slot.is-won .slot-score {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+/* ------------------------------------------------------------ the winner --- */
+
+/*
+ * The panel the sheet leads to. Pinned to the right of the frame rather than
+ * placed after the drawing, because the drawing's width varies with the format
+ * and the panel must not move between a quarter-final and a grand final.
+ */
+.winner {
+  position: absolute;
+  right: 72px;
+  top: 96px;
+  bottom: 96px;
+  width: 330px;
+  background: #05070b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 26px 22px;
+  opacity: 0;
+  transform: scale(0.97);
+  transition:
+    opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.board.is-on .winner.is-shown {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* The corner marks. Drawn rather than imported - four borders and no asset. */
+.winner::before,
+.winner::after {
+  content: '';
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  border: 5px solid #c9424f;
+}
+
+.winner::before {
+  left: -5px;
+  top: -5px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.winner::after {
+  right: -5px;
+  bottom: -5px;
+  border-left: 0;
+  border-top: 0;
+}
+
+.winner-footer,
+.winner-heading {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.winner-heading {
+  font-size: 22px;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+}
+
+.winner-middle {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.winner-art {
+  flex: 0 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 0;
+}
+
+.winner-art img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.winner-label {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* ---------------------------------------------------------------- footer --- */
+
+.event-logo {
+  position: absolute;
+  left: 72px;
+  bottom: 48px;
+}
+
+.event-logo img {
+  max-height: 54px;
+  max-width: 300px;
+  object-fit: contain;
+}

@@ -79,6 +79,12 @@
             </span>
             <span class="rail-label">Team</span>
           </button>
+          <button type="button" class="rail-item rail-group" data-section="bracket" aria-selected="false" title="Bracket">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><line x1="1.6" y1="3.4" x2="5.4" y2="3.4" /><line x1="1.6" y1="7" x2="5.4" y2="7" /><line x1="5.4" y1="3.4" x2="5.4" y2="7" /><line x1="5.4" y1="5.2" x2="9.2" y2="5.2" /><line x1="1.6" y1="9.6" x2="5.4" y2="9.6" /><line x1="1.6" y1="13.2" x2="5.4" y2="13.2" /><line x1="5.4" y1="9.6" x2="5.4" y2="13.2" /><line x1="5.4" y1="11.4" x2="9.2" y2="11.4" /><line x1="9.2" y1="5.2" x2="9.2" y2="11.4" /><line x1="9.2" y1="8.3" x2="14.4" y2="8.3" /></svg>
+            </span>
+            <span class="rail-label">Bracket</span>
+          </button>
           <button type="button" class="rail-item tab" role="tab" data-tab="global" aria-selected="false" title="Global">
             <span class="rail-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2" /><line x1="1.8" y1="8" x2="14.2" y2="8" /><line x1="8" y1="1.8" x2="8" y2="14.2" /></svg>
@@ -124,6 +130,10 @@
             <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
             <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
             <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
+          </nav>
+
+          <nav class="subtabs" data-for="bracket" role="tablist" aria-label="Bracket graphics" hidden>
+            <button type="button" class="tab" role="tab" data-tab="bracket" aria-selected="false">Bracket</button>
           </nav>
 
           <nav class="subtabs" data-for="team" role="tablist" aria-label="Team graphics" hidden>
@@ -811,6 +821,70 @@
       </div>
     </main>
 
+    <!-- ========================================================= bracket === -->
+    <!--
+      The draw sheet.
+
+      Its state carries a DRAWING - nodes and links in abstract units, teams and
+      scores already resolved - rather than a competition, so the output page
+      multiplies by four constants and never walks a graph while it paints. The
+      reveal counts ROUNDS, because a round at a time is how a caster walks a
+      bracket out.
+    -->
+    <main class="graphic-tab" id="tab-bracket" role="tabpanel" hidden>
+      <div class="graphic-toolbar">
+        <button type="button" id="b-reset" class="btn btn-ghost">Reset graphic</button>
+        <span class="toolbar-gap"></span>
+        <label class="obs-url">
+          <span>OBS browser source</span>
+          <span class="obs-url-row">
+            <code id="b-obs-url">/bracket.html</code>
+            <button type="button" class="btn-copy" data-copy-target="b-obs-url" title="Copy URL">Copy</button>
+            <a class="btn btn-ghost" id="b-open" href="/bracket.html" target="_blank" rel="noopener">Open</a>
+          </span>
+        </label>
+        <span id="b-status" class="save-status">Saved</span>
+      </div>
+
+      <div class="cue-bar">
+        <span class="cue-state" id="b-air">
+          <span class="cue-dot" aria-hidden="true"></span>
+          <span id="b-air-label">Off air</span>
+        </span>
+        <button type="button" id="b-show" class="btn btn-cue">Show</button>
+        <button type="button" id="b-hide" class="btn btn-ghost">Hide</button>
+        <span class="toolbar-gap"></span>
+        <button type="button" id="b-none" class="btn btn-ghost" title="Hide every round">None</button>
+        <button type="button" id="b-back" class="btn btn-ghost" title="Take the last round back off">Back</button>
+        <button type="button" id="b-next" class="btn btn-cue" title="Reveal the next round">Reveal round</button>
+        <button type="button" id="b-all" class="btn btn-ghost" title="Show the whole draw">All</button>
+        <span class="cue-note" id="b-reveal-note"></span>
+      </div>
+
+      <div class="take-bar" id="b-take-bar">
+        <span class="prog-state" id="b-prog">
+          <span class="prog-dot" aria-hidden="true"></span>
+          <span id="b-prog-label">Off air</span>
+        </span>
+        <button type="button" id="b-take" class="btn btn-take">Send to program</button>
+        <button type="button" id="b-revert" class="btn btn-ghost">Revert to air</button>
+        <span class="toolbar-gap"></span>
+        <span class="staged-note" id="b-staged" hidden>Preview differs from air</span>
+      </div>
+
+      <section class="panel preview-panel">
+        <h2 class="panel-title">Live preview <span class="pill">1920 &times; 1080</span></h2>
+        <div class="preview-frame checker" id="b-preview-frame">
+          <iframe id="b-preview" data-src="/bracket.html" title="Bracket preview" scrolling="no"></iframe>
+        </div>
+      </section>
+
+      <div class="editor-grid" data-cards="bracket">
+        <section class="panel" id="bed-stage"></section>
+        <section class="panel" id="bed-style"></section>
+      </div>
+    </main>
+
     <!-- ========================================================== lineup === -->
     <main class="graphic-tab" id="tab-lineup" role="tabpanel" hidden>
       <div class="graphic-toolbar">
@@ -1389,6 +1463,7 @@
     <script src="/veto-board-dashboard.js" type="module"></script>
     <script src="/lineup-dashboard.js" type="module"></script>
     <script src="/headtohead-dashboard.js" type="module"></script>
+    <script src="/bracket-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

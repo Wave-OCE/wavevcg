@@ -51,6 +51,7 @@
  */
 
 import {
+  makeBracketGraphicStore,
   makeGraphicStore,
   makeHeadToHeadStore,
   makeLineupStore,
@@ -130,6 +131,18 @@ export const BUS_KINDS = {
   headToHead: {
     file: 'headtohead.json',
     make: makeHeadToHeadStore,
+    transport: (state) => [state.anim.visible],
+    cue: (state) => state.anim.cue ?? 0,
+    withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),
+  },
+  /*
+   * The bracket. Visibility only, like the veto board and for the same reason:
+   * `reveal` walks rounds out of a sheet that is already up, and bumping the
+   * cue for that would fly the whole draw on again every time.
+   */
+  bracket: {
+    file: 'bracket.json',
+    make: makeBracketGraphicStore,
     transport: (state) => [state.anim.visible],
     cue: (state) => state.anim.cue ?? 0,
     withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),

@@ -53,10 +53,14 @@ import { playedMaps, publicView, sanitiseVeto, vetoComplete } from './public/vet
 import { boardFromVeto } from './public/veto-board-schema.js';
 import { lineupFromTeam } from './public/lineup-schema.js';
 import { halfFromTeam, headToHeadFromFixture } from './public/headtohead-schema.js';
+import { bracketFromStage } from './public/bracket-graphic-schema.js';
 import {
+  bracketLayout,
   emptyMapRow,
   fixtureLabel,
   fixtureMapName,
+  fixtureScore,
+  fixtureWinner,
   fixturePatch,
   fixturesFedBy,
   nextMapIndex,
@@ -1483,6 +1487,7 @@ async function handleApi(pathname, params, ctx) {
   const vetoBoard = ctx.bundle?.vetoBoard?.of(readBus);
   const lineup = ctx.bundle?.lineup?.of(readBus);
   const headToHead = ctx.bundle?.headToHead?.of(readBus);
+  const bracket = ctx.bundle?.bracket?.of(readBus);
   const select = ctx.bundle?.select?.of(readBus);
 
   // The configured default, unless it is the source an administrator has just
@@ -1695,6 +1700,9 @@ async function handleApi(pathname, params, ctx) {
 
     case '/api/headtohead':
       return { revision: headToHead.revision, state: headToHead.state };
+
+    case '/api/bracket':
+      return { revision: bracket.revision, state: bracket.state };
 
     case '/api/global':
       return { revision: globals.revision, state: globals.state };
@@ -3373,6 +3381,8 @@ const KEYED_ROUTES = new Set([
   '/api/lineup/events',
   '/api/headtohead',
   '/api/headtohead/events',
+  '/api/bracket',
+  '/api/bracket/events',
   '/api/events',
   '/api/roster',
   '/api/game',
@@ -5575,6 +5585,7 @@ async function handleStream(pathname, req, res, ctx, params) {
   const vetoBoard = ctx.bundle.vetoBoard.of(streamBus);
   const lineup = ctx.bundle.lineup.of(streamBus);
   const headToHead = ctx.bundle.headToHead.of(streamBus);
+  const bracket = ctx.bundle.bracket.of(streamBus);
 
   if (pathname === '/api/graphic/events') return streamState(graphics, 'graphic', req, res), true;
   if (pathname === '/api/winner/events') return streamState(winner, 'winner', req, res), true;
@@ -5582,6 +5593,7 @@ async function handleStream(pathname, req, res, ctx, params) {
   if (pathname === '/api/veto-board/events') return streamState(vetoBoard, 'vetoBoard', req, res), true;
   if (pathname === '/api/lineup/events') return streamState(lineup, 'lineup', req, res), true;
   if (pathname === '/api/headtohead/events') return streamState(headToHead, 'headToHead', req, res), true;
+  if (pathname === '/api/bracket/events') return streamState(bracket, 'bracket', req, res), true;
 
   /*
    * Every graphic on one connection, for the dashboard.
@@ -5629,6 +5641,8 @@ async function handleStream(pathname, req, res, ctx, params) {
         ['lineupPreview', ctx.bundle.lineup.preview],
         ['headToHead', ctx.bundle.headToHead.program],
         ['headToHeadPreview', ctx.bundle.headToHead.preview],
+        ['bracket', ctx.bundle.bracket.program],
+        ['bracketPreview', ctx.bundle.bracket.preview],
         ['global', globals],
         ['lookup', lookups],
         ['matchFeed', matchFeed],
@@ -5703,6 +5717,7 @@ async function handlePost(pathname, req, res, ctx, params) {
   const vetoBoard = bundle.vetoBoard.of(writeBus);
   const lineup = bundle.lineup.of(writeBus);
   const headToHead = bundle.headToHead.of(writeBus);
+  const bracket = bundle.bracket.of(writeBus);
   const select = bundle.select.of(writeBus);
   // The webhooks' select, pinned to air whatever the query string says.
   const selectAir = bundle.select.program;
@@ -5840,6 +5855,67 @@ async function handlePost(pathname, req, res, ctx, params) {
         const body = await readJsonBody(req);
         const state = globals.replace(body?.state ?? body);
         return { revision: globals.revision, state, pushed: pushGlobal(bundle) };
+      });
+
+    /*
+     * The bracket.
+     *
+     * `load` runs bracketLayout - the SAME function the Schedule sub-page draws
+     * from - and stores its output. The graphic then holds a drawing rather
+     * than a competition, so the output page multiplies numbers by four
+     * constants and never walks a graph while it paints, and the two drawings
+     * cannot disagree because there is only one implementation of the geometry.
+     *
+     * Done here rather than in the browser so the copy is taken from the
+     * document as the server holds it, not from whatever the dashboard last
+     * polled.
+     */
+    case '/api/bracket':
+      return handleWrite(res, async () => {
+        const body = await readJsonBody(req);
+        const action = String(body?.action ?? '');
+
+        if (action === 'load') {
+          const stageId = String(body?.id ?? '');
+          const stage = bundle.schedule.stage(stageId);
+          if (!stage) throw new ProviderError(404, 'No such stage.');
+
+          const drawing = bracketFromStage({
+            layout: bracketLayout(bundle.schedule.document(), stageId),
+            stage,
+            score: fixtureScore,
+            winnerOf: fixtureWinner,
+          });
+          if (!drawing.nodes.length) {
+            throw new ProviderError(400, 'That stage has no matches to draw.', 'Add fixtures to it first.');
+          }
+
+          /*
+           * Patched, not replaced. The winner panel's wording, the event logo
+           * and the flow switch are the operator's and were set before the
+           * show; a Load means "the draw has moved", not "start again".
+           */
+          const state = bracket.patch(drawing);
+          log.info('air', `bracket loaded: ${stage.name}`, {
+            tournament: ctx.owner?.id,
+            bus: writeBus,
+            who: ctx.user?.username ?? '(key)',
+          });
+          return { bus: writeBus, revision: bracket.revision, state };
+        }
+
+        if (action === 'reveal') {
+          // Absolute rather than a delta, so two presses racing cannot leave
+          // the board somewhere neither of them asked for.
+          const current = bracket.state;
+          const wanted = body?.to === undefined ? current.reveal + 1 : Number.parseInt(body.to, 10);
+          if (!Number.isInteger(wanted)) throw new ProviderError(400, 'Reveal to which round?');
+          const state = bracket.patch({ reveal: wanted });
+          return { bus: writeBus, revision: bracket.revision, state };
+        }
+
+        const state = body?.reset === true ? bracket.reset() : bracket.replace(body?.state ?? body);
+        return { bus: writeBus, revision: bracket.revision, state };
       });
 
     /*
