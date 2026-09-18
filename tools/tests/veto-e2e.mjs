@@ -98,6 +98,18 @@ try {
   ok('6 ...taking a copy of the pool', veto.pool.length === 7);
   ok('7 ...and a copy of both teams, never an id reference', veto.a.name === 'Crusaders' && veto.b.shortName === 'JAIL');
 
+  /*
+   * The read carries the tournament id, because the dashboard cannot work it
+   * out. It composes `/veto.html?session=<this>&k=<token>` and used to take the
+   * id from its own address bar, which is empty whenever an operator opens the
+   * dashboard at `/` - so every link it ever produced was unusable. Delete this
+   * field and the browser suite's 28j goes red.
+   */
+  {
+    const mine = await (await fetch(at('/api/veto'), { headers: { Cookie: cookie } })).json();
+    eq('1a the read says which tournament it is, for the links', mine.session, tournamentId);
+  }
+
   // ------------------------------------------------------------ the links ---
   r = await get('/api/veto');
   const tokens = r.body?.tokens?.[veto.id];

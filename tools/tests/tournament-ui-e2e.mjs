@@ -30,6 +30,7 @@ const STATE = mkdtempSync(path.join(tmpdir(), 'rl-tou-ui-'));
 
 let passed = 0;
 let failed = 0;
+const eqv = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
 const ok = (name, condition, detail = '') => {
   if (condition) passed += 1;
   else {
@@ -549,6 +550,82 @@ try {
     await page.evaluate((t) => !document.documentElement.outerHTML.includes(t), vetoToken),
     'A VETO LINK IS ON SCREEN',
   );
+
+
+  /*
+   * WHAT THE COPY BUTTON ACTUALLY PRODUCES - and this is the assertion that
+   * was missing, not a nice-to-have.
+   *
+   * veto-e2e has 57 assertions about the public route and every one of them
+   * builds its own URL from a tournament id it already knows. So the ROUTE was
+   * covered from every angle - wrong token, wrong tournament, out of turn,
+   * rotation, redaction - and the one line that composes the address a captain
+   * is actually sent was covered by nothing at all. It read the tournament id
+   * out of the dashboard's own query string, which is empty in the ordinary
+   * case (an operator with one tournament opens the dashboard at `/` and the
+   * server resolves which from the cookie), so every link ever copied was
+   * `?session=&k=...` and every captain who opened one was told the link was
+   * incomplete.
+   *
+   * Nothing above would have caught it: 28f counts the buttons, 28g checks a
+   * token exists, 28h checks it is not painted. So this one presses the button
+   * and opens what it produces, in a FRESH context with no cookie, which is
+   * what a captain on a phone actually is.
+   */
+  let prompted = '';
+  /*
+   * Registered for this click ONLY, and taken off again straight after.
+   *
+   * The Copy handler falls back to window.prompt when the clipboard is refused,
+   * so a listener is needed - but a standing one eats the next dialog in the
+   * file as well, and the later `page.once('dialog')` then fails with "cannot
+   * accept dialog which is already handled". A listener that outlives what it
+   * was for is a fixture that breaks somebody else's test.
+   */
+  const grabPrompt = async (dialog) => {
+    prompted = dialog.defaultValue();
+    await dialog.dismiss();
+  };
+  page.on('dialog', grabPrompt);
+  await page.evaluate(() => {
+    window.__copied = '';
+    try {
+      navigator.clipboard.writeText = async (text) => {
+        window.__copied = text;
+      };
+    } catch {
+      /* the prompt path above catches it */
+    }
+  });
+  await page.click('.veto-links .mini-btn');
+  await wait(500);
+  page.off('dialog', grabPrompt);
+  const copied = (await page.evaluate(() => window.__copied)) || prompted;
+  ok('28i. the Copy button produces a link at all', /\/veto\.html\?/.test(copied), copied || '(nothing copied)');
+
+  /*
+   * The id is read back off the PICKER rather than out of the same /api/veto
+   * response the dashboard used - otherwise this would only be asserting that
+   * the server agrees with itself.
+   */
+  const tournamentId = await page.$eval('#tou-select', (node) => node.value);
+  const copiedSession = new URL(copied).searchParams.get('session');
+  eqv('28j. ...naming the tournament, not an empty session', copiedSession, tournamentId);
+  ok('28k. ...and carrying the token', new URL(copied).searchParams.get('k') === vetoToken, 'wrong or missing token');
+
+  // `captainBox`, not `guest` - this file already has a `guest` further down,
+  // and it is a signed-in stranger rather than somebody with no account at all.
+  const captainBox = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const phone = await captainBox.newPage();
+  await phone.goto(copied);
+  await wait(1400);
+  // Whitespace collapsed, because the page is mostly indentation and a raw
+  // slice of it prints as a blank failure detail - which is what the first run
+  // of this assertion did, and a failure that says nothing is half a test.
+  const captain = (await phone.textContent('body')).replace(/\s+/g, ' ').trim();
+  ok('28l. a captain with no account can open it', !/link is incomplete/i.test(captain), captain.slice(0, 160) || '(the page painted nothing)');
+  ok('28m. ...and is shown the veto they were sent', /Crusaders|Jail Time/.test(captain), captain.slice(0, 200) || '(the page painted nothing)');
+  await captainBox.close();
 
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-access"]');
   await wait(300);

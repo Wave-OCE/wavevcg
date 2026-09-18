@@ -1756,6 +1756,23 @@ async function handleApi(pathname, params, ctx) {
       return {
         veto: ctx.bundle.veto.document(),
         tokens: mayRun ? vetoTokens(ctx.bundle) : null,
+        /*
+         * Which tournament this is, because the browser cannot work it out.
+         *
+         * A public veto link is `/veto.html?session=<tournament>&k=<token>` and
+         * the dashboard composes it. It used to read the id out of its OWN
+         * address bar - which is empty in the ordinary case, because an
+         * operator on their only tournament opens the dashboard at `/` and the
+         * SERVER resolves which one they mean from the cookie. So every link
+         * ever copied carried `session=` with nothing after it, and every
+         * captain who opened one was told the link was incomplete.
+         *
+         * The server is the only side that knows this for certain, so it says
+         * so. It is not a credential - a tournament id names a competition and
+         * opens nothing without the token beside it, and `?session=` is already
+         * in every shared dashboard URL.
+         */
+        session: ctx.owner?.id ?? '',
       };
     }
 

@@ -44,6 +44,17 @@ const wrap = (className, children) => {
 
 let doc = { pool: [], vetoes: [] };
 let tokens = null;
+/*
+ * Which tournament the links must name, as the SERVER answered it.
+ *
+ * Never read out of `location.search` again. That is where this came from and
+ * the failure was total and silent at this end: the dashboard is opened at `/`
+ * whenever an operator has one tournament, the server resolves which from the
+ * cookie, so the id was the empty string, every link copied was
+ * `?session=&k=...`, and the only person who ever saw a problem was the captain
+ * on a phone being told the link was incomplete.
+ */
+let session = '';
 let catalogue = [];
 let fixtures = [];
 let host = null;
@@ -81,6 +92,7 @@ async function load() {
   doc = vetoData?.veto ?? { pool: [], vetoes: [] };
   // null when the reader is a viewer - they see the board and get no links.
   tokens = vetoData?.tokens ?? null;
+  session = vetoData?.session ?? '';
   catalogue = (assets?.maps ?? []).map((map) => map.name).filter(Boolean);
   fixtures = scheduleData?.schedule?.fixtures ?? [];
 }
@@ -160,10 +172,15 @@ function statusLine(veto) {
 /**
  * The three links.
  *
- * Copy rather than display, and the URL is composed here from the page's own
- * origin - the server hands over the token alone, deliberately, so that the
- * address an operator sends to a captain can never be influenced by a Host
- * header somebody else supplied.
+ * Copy rather than display, and the ORIGIN is composed here from the page's own
+ * rather than taken from the server - deliberately, so that the address an
+ * operator sends to a captain can never be influenced by a Host header
+ * somebody else supplied.
+ *
+ * Everything after the origin comes from the SERVER: the token, which only it
+ * can mint, and the tournament id, which only it knows. Composing half an
+ * address from the page's own query string is what made every link ever copied
+ * from here unusable.
  */
 function linkRow(veto) {
   if (!tokens?.[veto.id]) return null;
@@ -172,7 +189,7 @@ function linkRow(veto) {
   const labels = { a: veto.a.shortName || veto.a.name || 'Team A', b: veto.b.shortName || veto.b.name || 'Team B', referee: 'Referee' };
 
   for (const role of ['a', 'b', 'referee']) {
-    const url = `${location.origin}/veto.html?session=${encodeURIComponent(new URLSearchParams(location.search).get('session') ?? '')}&k=${encodeURIComponent(tokens[veto.id][role] ?? '')}`;
+    const url = `${location.origin}/veto.html?session=${encodeURIComponent(session)}&k=${encodeURIComponent(tokens[veto.id][role] ?? '')}`;
     const button = el('button', 'mini-btn', { type: 'button', title: 'Copy this link. It is never shown on screen.' }, `Copy ${labels[role]} link`);
     button.addEventListener('click', async () => {
       try {
