@@ -46,6 +46,28 @@
  * press; revealing round three animates round three.
  */
 
+/*
+ * How big the sheet may get on its own, and how far the operator may take it.
+ *
+ * `BRACKET_AUTO_MAX` is keyed to TYPE rather than picked because it looks
+ * round. A slot name is 17px and the stage name above the whole graphic is
+ * 40px, so 2.2 puts the team names at 37px - the largest they can be while
+ * still reading as the content of a graphic rather than as its headline.
+ * Uncapped, a stage holding one match fits at 7.9x, which is not a bracket any
+ * more, it is the head-to-head graphic, and that one already exists.
+ *
+ * The manual range is keyed to the same number at the other end: 17 x 0.6 is
+ * 10px, the smallest type worth putting on a 1080 frame.
+ */
+export const BRACKET_AUTO_MAX = 2.2;
+export const BRACKET_SCALE_MIN = 0.6;
+export const BRACKET_SCALE_MAX = 2.5;
+export const BRACKET_SCALE_STEP = 0.05;
+
+/** What a hand-set size and an automatic fit may ever multiply out to. */
+const BRACKET_SCALE_FLOOR = 0.3;
+const BRACKET_SCALE_CEIL = 3;
+
 const text = (value, max) =>
   typeof value === 'string' ? value.slice(0, max).replace(/[\x00-\x1f\x7f]/g, '').trim() : '';
 
@@ -71,6 +93,22 @@ const hex = (value) => {
 const number = (value, fallback = 0) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+/*
+ * A multiplier, two decimals, clamped to the field's own range.
+ *
+ * The same shape as `scale` in graphics.js and written out again rather than
+ * imported for the reason every other helper in this file is: graphics.js is
+ * the NODE side, and this module is loaded by the output page. Note what it is
+ * NOT - a ratio. `ratio` caps at 1 because everything it guards is a
+ * proportion, and running an enlargement through one silently clamps every
+ * value to "no change" while the slider claims otherwise.
+ */
+const multiplier = (value, fallback, min = BRACKET_SCALE_MIN, max = BRACKET_SCALE_MAX) => {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed * 100) / 100));
 };
 
 /** A seat on a node: who, and how many maps they took. */
@@ -179,6 +217,24 @@ export const DEFAULT_BRACKET_GRAPHIC = {
   accent: '',
   trim: '',
   eventLogo: '',
+  /*
+   * How big the drawing is, and who decides.
+   *
+   * A four-team bracket and a thirty-two-team bracket are the same seven
+   * numbers and wildly different amounts of ink, so a sheet drawn at one fixed
+   * pitch is either unreadable at the big end or four boxes adrift in a
+   * 1920x1080 frame at the small one. `autoSize` fits the draw to the room it
+   * has; `drawScale` is the operator's own adjustment on top of that, because
+   * "big enough" is a judgement about a camera and a venue screen that this
+   * cannot make from here.
+   *
+   * Both default to the behaviour a show already has - `drawScale` 1 is the
+   * size every bracket has been drawn at until now - so the only thing that
+   * changes on upgrade is that a SMALL draw stops being small, which is the
+   * request.
+   */
+  autoSize: true,
+  drawScale: 1,
   anim: { visible: false, cue: 0 },
 };
 
@@ -219,6 +275,11 @@ export function sanitiseBracketGraphic(input, fallback = DEFAULT_BRACKET_GRAPHIC
     accent: hex(source.accent ?? base.accent),
     trim: hex(source.trim ?? base.trim),
     eventLogo: text(source.eventLogo ?? base.eventLogo, 500),
+    // A feature switch, so a record written before this existed reads as ON -
+    // the same asymmetry settings-schema.js states: a feature that silently
+    // disables itself on upgrade is a nasty surprise.
+    autoSize: typeof source.autoSize === 'boolean' ? source.autoSize : (base.autoSize ?? true),
+    drawScale: multiplier(source.drawScale ?? base.drawScale, 1),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
       cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),
@@ -309,6 +370,55 @@ export function bracketIsStale(state, fresh) {
       ]),
     );
   return shape(state) !== shape(fresh);
+}
+
+/**
+ * How much bigger the sheet can be drawn and still fit the room it has.
+ *
+ * ARITHMETIC, never measurement - the caller hands over four numbers it already
+ * knows, and this returns a factor. That is the rule the whole bracket follows
+ * and the reason is the one written at the top of bracket.js: this page is
+ * routinely rendered by OBS while nothing is on screen, and anything that
+ * measured itself would read zero.
+ *
+ * It lives HERE rather than in the output page so the suite can assert the
+ * factor as arithmetic with no browser, and so a second implementation cannot
+ * appear the day something else wants to know how big the draw will be - the
+ * same argument that keeps `bracketLayout` as one function.
+ *
+ * Two decisions worth stating:
+ *
+ * FLOOR to the 0.05 grid, never round. Rounding can land OUTSIDE the fit it
+ * came from - four columns of six rows fits at 1.4831, which rounds to 1.50 and
+ * paints 801px into 792px of space, running off the bottom of the frame by a
+ * rounding error with nothing failing. Flooring can only ever land inside it.
+ *
+ * It never returns less than 1. A draw too big for the frame is left exactly as
+ * it is drawn today rather than being silently shrunk: the ask was that small
+ * brackets get bigger, and quietly resizing a large one is a change to what is
+ * already going to air that nobody asked for. `drawScale` reaches down to 0.6,
+ * so an operator with an oversized sheet has a handle - which is more than
+ * there was before.
+ */
+export function bracketAutoFit({ drawW, drawH, availW, availH }) {
+  if (!(drawW > 0) || !(drawH > 0) || !(availW > 0) || !(availH > 0)) return 1;
+  const fit = Math.min(availW / drawW, availH / drawH);
+  return Math.max(1, Math.min(BRACKET_AUTO_MAX, Math.floor(fit * 20) / 20));
+}
+
+/**
+ * The factor the drawing is actually painted at.
+ *
+ * The operator's number MULTIPLIES the fit rather than replacing it, so the
+ * slider means the same thing in both modes - "a bit bigger than it would be" -
+ * and switching the fit off hands them the number itself. The product is
+ * bounded because two maxima multiply: a 2.2 fit and a 2.5 adjustment is 5.5,
+ * which is a transform nobody asked for on a graphic that is on air.
+ */
+export function bracketDrawScale(state, box) {
+  const manual = multiplier(state?.drawScale, 1);
+  const auto = state?.autoSize === false ? 1 : bracketAutoFit(box ?? {});
+  return Math.min(BRACKET_SCALE_CEIL, Math.max(BRACKET_SCALE_FLOOR, Math.round(auto * manual * 100) / 100));
 }
 
 /** The team that won the last match of the drawing, for the winner panel. */

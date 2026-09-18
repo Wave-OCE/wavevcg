@@ -24,7 +24,14 @@ import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
-import { bracketChampion, bracketFromStage, bracketIsStale } from './bracket-graphic-schema.js';
+import {
+  BRACKET_SCALE_MAX,
+  BRACKET_SCALE_MIN,
+  BRACKET_SCALE_STEP,
+  bracketChampion,
+  bracketFromStage,
+  bracketIsStale,
+} from './bracket-graphic-schema.js';
 import { bracketLayout, fixtureScore, fixtureWinner } from './schedule-schema.js';
 
 const $ = (id) => document.getElementById(id);
@@ -253,6 +260,37 @@ if (els.tab) {
       toggle('Animate the flow along the bracket', () => state.flow !== false, (on) => save({ flow: on })),
       help('Only the edges somebody actually came along move. An edge into an undecided match is drawn and stays still.'),
       toggle('Show map scores', () => state.showScores !== false, (on) => save({ showScores: on })),
+
+      /*
+       * Size, and it is two controls rather than one because they answer two
+       * different questions.
+       *
+       * The switch is "should the sheet use the room it has" - a four-team draw
+       * is 524 pixels of ink in the 1408 the frame gives it, and left alone it
+       * reads as a graphic built for a different show. The slider is "and how
+       * much bigger than that do I want it", which is a judgement about a
+       * camera, a venue screen and how far back the audience is sitting, and
+       * nothing here can make it from a column count.
+       */
+      subhead('Size'),
+      toggle('Fit the sheet to the frame', () => state.autoSize !== false, (on) => save({ autoSize: on })),
+      help(
+        'A small draw is drawn larger so it reads from across a room, up to about double. A draw that already ' +
+          'fills the frame is left alone. Turning the winner panel on re-fits it, because the panel takes the room.',
+      ),
+      fields.rangeField('Adjustment', 'drawScale', {
+        min: BRACKET_SCALE_MIN,
+        max: BRACKET_SCALE_MAX,
+        step: BRACKET_SCALE_STEP,
+        // A percentage, because 100% reads as "the size it was" far more
+        // directly than 1.00 does - and this slider has a default worth getting
+        // back to rather than a taste to be dialled in.
+        readout: (value) => `${Math.round(value * 100)}%`,
+      }),
+      help(
+        'Your own adjustment, on top of the fit above. Switch the fit off and this is the size on its own, ' +
+          'at 100% exactly the size every bracket was drawn at before.',
+      ),
 
       subhead('The winner panel'),
       toggle('Show it', () => Boolean(state.winner?.show), (on) => save({ winner: { ...state.winner, show: on } })),

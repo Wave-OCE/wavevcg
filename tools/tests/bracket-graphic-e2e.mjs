@@ -18,7 +18,29 @@ import { fileURLToPath } from 'node:url';
 
 import { openAsAdmin } from './harness.mjs';
 import { bracketLayout } from '../../public/schedule-schema.js';
-import { DEFAULT_BRACKET_GRAPHIC, bracketChampion } from '../../public/bracket-graphic-schema.js';
+import {
+  BRACKET_AUTO_MAX,
+  BRACKET_SCALE_MAX,
+  BRACKET_SCALE_MIN,
+  DEFAULT_BRACKET_GRAPHIC,
+  bracketAutoFit,
+  bracketChampion,
+  bracketDrawScale,
+} from '../../public/bracket-graphic-schema.js';
+
+/*
+ * The one suite here that opens the graphic.
+ *
+ * Every other assertion in this file is about the SNAPSHOT and needs no page -
+ * which was fine until the sheet gained a size. A factor is arithmetic and is
+ * asserted as arithmetic below, but "the factor reaches the element" is not:
+ * delete the line that writes the transform and every state assertion in this
+ * file stays green while the graphic paints at exactly the size it always did.
+ * That is the vacuous-assertion shape, so the last block renders the real page
+ * at 1920x1080 and measures what is painted.
+ */
+const playwright = await import(new URL('../../node_modules/playwright/index.js', import.meta.url).href);
+const chromium = playwright.chromium ?? playwright.default.chromium;
 
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
 const PORT = 8182;
@@ -54,6 +76,7 @@ const server = spawn(process.execPath, ['server.js'], {
 let log = '';
 server.stdout.on('data', (c) => (log += c));
 server.stderr.on('data', (c) => (log += c));
+let browser = null;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 for (let i = 0; i < 80; i += 1) {
@@ -325,6 +348,261 @@ try {
     eq('27h ...and adds nothing else unless asked', DEFAULT_BRACKET_GRAPHIC.winner.heading, '');
   }
 
+  // ------------------------------------------------------------- the size ---
+  /*
+   * How big the sheet is drawn, which is arithmetic and therefore asserted as
+   * arithmetic - no browser, no measurement, the same reason `bracketLayout`
+   * itself is unit-tested in schedule-model rather than in a page.
+   *
+   * The numbers below are the real ones: a draw is `columns * 300 - 76` wide
+   * and `rows * 92 - 18` tall, the frame gives it 1776x792 with no winner panel
+   * and 1408x792 with one.
+   */
+  {
+    const size = (columns, rows) => ({ drawW: columns * 300 - 76, drawH: rows * 92 - 18 });
+    const room = (panel) => ({ availW: 1920 - 72 - (panel ? 320 + 72 + 48 : 72), availH: 1080 - 168 - 120 });
+    const fitFor = (columns, rows, panel = false) => bracketAutoFit({ ...size(columns, rows), ...room(panel) });
+
+    eq('26a a four-team draw is grown, and capped rather than fitted', fitFor(2, 2), BRACKET_AUTO_MAX);
+    eq('26b an eight-team draw is fitted rather than capped', fitFor(3, 4), 2.15);
+    eq('26c ...and the winner panel takes room, so the same draw is fitted smaller', fitFor(3, 4, true), 1.7);
+    eq('26d a sixteen-team draw barely grows', fitFor(4, 8), 1.1);
+
+    /*
+     * A draw that does not fit is left exactly as it is drawn today.
+     *
+     * Deliberate, and the deliberate half is `Math.max(1, ...)`: a 32-team
+     * sheet wants 0.54 to fit the frame, and silently shrinking a bracket that
+     * is already going to air is a change nobody asked for. `drawScale` reaches
+     * down to 0.6 so an operator has a handle. Delete the max() and this goes
+     * red rather than quietly changing what a large show looks like.
+     */
+    eq('26e a draw too big for the frame is not shrunk', fitFor(5, 16), 1);
+    eq('26f ...nor is a double elimination', fitFor(6, 13), 1);
+
+    /*
+     * THE ONE THAT IS NOT A ROUND NUMBER, and the reason it is here.
+     *
+     * Four columns of six rows fits at 1.4831. ROUNDING that to the 0.05 grid
+     * gives 1.50, which paints 534 * 1.5 = 801px into the 792px the frame has -
+     * off the bottom edge, by a rounding error, with nothing failing and
+     * nothing measuring it. Flooring gives 1.45 and can only ever land inside
+     * the fit. Swap the Math.floor for Math.round and both of these go red.
+     */
+    eq('26g the factor is FLOORED to the grid, never rounded', fitFor(4, 6), 1.45);
+    const awkward = size(4, 6);
+    ok(
+      '26h ...so what is painted always fits the room it was measured against',
+      fitFor(4, 6) * awkward.drawH <= room(false).availH,
+      `${fitFor(4, 6) * awkward.drawH} into ${room(false).availH}`,
+    );
+
+    // Degenerate shapes answer 1 rather than Infinity or NaN - an empty board
+    // is an ordinary state, it is what every graphic holds before a Load.
+    eq('26i nothing loaded is not a division by zero', bracketAutoFit({ ...size(0, 0), ...room(false) }), 1);
+
+    // --- and what the operator's own number does to it ---
+    const eight = { ...size(3, 4), ...room(false) };
+    eq('26j the operator multiplies the fit rather than replacing it', bracketDrawScale({ autoSize: true, drawScale: 1.2 }, eight), 2.58);
+    eq('26k ...and switching the fit off hands them the number itself', bracketDrawScale({ autoSize: false, drawScale: 0.6 }, eight), 0.6);
+    eq('26l a state that says nothing is the size every bracket was drawn at', bracketDrawScale({ autoSize: false }, eight), 1);
+    /*
+     * Two maxima multiply out to 5.5, which is a transform nobody asked for on
+     * a graphic that is on air. Bounded rather than trusted.
+     */
+    eq('26m the product is bounded', bracketDrawScale({ autoSize: true, drawScale: BRACKET_SCALE_MAX }, { ...size(2, 2), ...room(false) }), 3);
+
+    // --- the fields reach the store, and default to what a show already has ---
+    eq('26n the fit is on by default', DEFAULT_BRACKET_GRAPHIC.autoSize, true);
+    eq('26o ...and the operator adjustment starts at no adjustment', DEFAULT_BRACKET_GRAPHIC.drawScale, 1);
+
+    let z = await post('/api/bracket', { state: { ...(await get('/api/bracket', '&bus=preview')).state, autoSize: false, drawScale: 1.35 } }, '&bus=preview');
+    eq('26p the switch is stored', z.body.state.autoSize, false);
+    eq('26q ...and so is the size', z.body.state.drawScale, 1.35);
+
+    z = await post('/api/bracket', { state: { ...z.body.state, drawScale: 99 } }, '&bus=preview');
+    eq('26r a size past the slider is clamped, not stored', z.body.state.drawScale, BRACKET_SCALE_MAX);
+    z = await post('/api/bracket', { state: { ...z.body.state, drawScale: 'enormous' } }, '&bus=preview');
+    eq('26s ...and junk falls back rather than painting NaN', z.body.state.drawScale, 1);
+    z = await post('/api/bracket', { state: { ...z.body.state, drawScale: 0.01 } }, '&bus=preview');
+    eq('26t ...and the floor holds at the other end', z.body.state.drawScale, BRACKET_SCALE_MIN);
+
+    /*
+     * And it survives a Load, like the colours - the size is set once for a
+     * show and a Load means "the draw moved", not "start again".
+     */
+    await post('/api/bracket', { state: { ...z.body.state, autoSize: false, drawScale: 1.5 } }, '&bus=preview');
+    const after = await post('/api/bracket', { action: 'load', id: 'playoffs' }, '&bus=preview');
+    eq('26u the size survives a Load', after.body.state.drawScale, 1.5);
+    eq('26v ...and so does the switch', after.body.state.autoSize, false);
+
+    // Put it back, so the browser block below measures the shipped default.
+    await post('/api/bracket', { state: { ...after.body.state, autoSize: true, drawScale: 1 } }, '&bus=preview');
+  }
+
+  // ---------------------------------------------------- the painted sheet ---
+  /*
+   * The graphic itself, at the size OBS renders it.
+   *
+   * `fitStage` scales #stage by min(innerWidth/1920, innerHeight/1080), so a
+   * 1920x1080 viewport makes that factor exactly 1 and every number measured
+   * below is in stage pixels - no second conversion to get wrong.
+   */
+  {
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', (event) => errors.push(String(event)));
+
+    const pageUrl = (bus) => `${BASE}/bracket.html?key=${encodeURIComponent(key)}${bus ? `&bus=${bus}` : ''}`;
+
+    /** What is actually on the frame, once the stream has delivered a state. */
+    const measure = async () => {
+      await page.waitForFunction(() => document.querySelectorAll('.node').length > 0, null, { timeout: 15000 });
+      await wait(250);
+      return page.evaluate(() => {
+        const box = (node) => {
+          const r = node.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        };
+        const drawEl = document.getElementById('draw');
+        const nodes = [...document.querySelectorAll('.node')].map(box);
+        const rects = nodes.map((n) => ({ ...n, right: n.x + n.w, bottom: n.y + n.h }));
+        return {
+          stage: getComputedStyle(document.getElementById('stage')).transform,
+          transform: getComputedStyle(drawEl).transform,
+          /*
+           * The DECLARATION, dug out of the stylesheet, not the computed value.
+           *
+           * This assertion was written against getComputedStyle first and was
+           * VACUOUS: #draw has no width or height of its own, so its box is 0x0
+           * and the default `50% 50%` computes to `0px 0px` - byte-identical to
+           * the value being asserted. Deleting the rule left it green. What is
+           * worth pinning is that the safeguard is WRITTEN DOWN, because its
+           * whole job is to survive somebody giving #draw a size later, and
+           * only the rule itself can answer that.
+           */
+          origin: [...document.styleSheets]
+            .flatMap((sheet) => {
+              // The webfont sheet is cross-origin and THROWS on .cssRules -
+              // not a value that `?? []` catches, which is how this took the
+              // whole measurement down the first time.
+              try {
+                return [...sheet.cssRules];
+              } catch {
+                return [];
+              }
+            })
+            .filter((rule) => rule.selectorText === '#draw')
+            .map((rule) => rule.style.transformOrigin)
+            .join(''),
+          node: nodes[0],
+          count: nodes.length,
+          // The two that decide whether it is ON the frame at all.
+          left: Math.min(...rects.map((n) => n.x)),
+          top: Math.min(...rects.map((n) => n.y)),
+          right: Math.max(...rects.map((n) => n.right)),
+          bottom: Math.max(...rects.map((n) => n.bottom)),
+          panel: (() => {
+            const w = document.querySelector('.winner');
+            const r = w.getBoundingClientRect();
+            return { x: Math.round(r.x), shown: w.classList.contains('is-shown') };
+          })(),
+        };
+      });
+    };
+
+    /*
+     * This block says what state it starts in rather than inheriting it.
+     *
+     * Everything revealed, because an unrevealed node is still in the DOM at
+     * translateX(-14px) and would measure 14px to the left of where it lives.
+     * Visible, so the measurements are of a graphic that is actually up. And
+     * the winner panel explicitly OFF - it was left on by the block above, and
+     * a panel takes 440px of the frame, so the first measurement here silently
+     * became the fitted-against-a-panel case and the assertion under it read as
+     * the code being wrong. The same trap as the remembered settings group in
+     * ui-e2e: a suite that walks through states has to say which one it is in.
+     */
+    await post('/api/bracket', { action: 'reveal', to: 99 }, '&bus=preview');
+    const lit = await get('/api/bracket', '&bus=preview');
+    await post(
+      '/api/bracket',
+      {
+        state: {
+          ...lit.state,
+          winner: { ...lit.state.winner, show: false },
+          autoSize: true,
+          drawScale: 1,
+          anim: { ...lit.state.anim, visible: true },
+        },
+      },
+      '&bus=preview',
+    );
+    await page.goto(pageUrl('preview'));
+    const grown = await measure();
+
+    eq('31 the stage is 1:1 at 1920x1080, so these numbers are stage pixels', grown.stage, 'matrix(1, 0, 0, 1, 0, 0)');
+    // 'left top' rather than 'top left': the CSSOM normalises the pair to
+    // x-then-y when it reads the rule back.
+    eq('32 the draw is DECLARED to scale from its top left corner', grown.origin, 'left top');
+    /*
+     * Three columns and four rows with no winner panel fits at 2.15, and a node
+     * is 224 wide. 224 * 2.15 = 481.6 -> 482 painted. Asserted as the NUMBER
+     * rather than as "bigger than 224", because "bigger" passes at 1.01 and the
+     * whole point is that a small sheet reads from across a room.
+     */
+    eq('33 a small bracket is painted BIGGER than it was drawn', grown.node.w, 482);
+    eq('34 ...by the factor the arithmetic asked for', grown.transform, 'matrix(2.15, 0, 0, 2.15, 0, 0)');
+
+    /*
+     * And it is still ON the frame. This is the assertion that a magnified
+     * sheet most plausibly fails, because placeDraw's Math.max(0, ...) pins an
+     * oversized draw to the corner and lets it run off the edge silently.
+     */
+    ok('35 ...and every node is inside the frame', grown.left >= 0 && grown.top >= 0 && grown.right <= 1920 && grown.bottom <= 1080, JSON.stringify(grown));
+
+    /*
+     * The winner panel takes room, so the sheet re-fits when it appears rather
+     * than growing underneath it. Centring against the panel is the existing
+     * behaviour; what is new is that the FACTOR has to fall as well, and a fit
+     * computed against the whole frame would leave the two overlapping.
+     */
+    const before = await get('/api/bracket', '&bus=preview');
+    await post('/api/bracket', { state: { ...before.state, winner: { ...before.state.winner, show: true } } }, '&bus=preview');
+    await wait(400);
+    const withPanel = await measure();
+    eq('36 the winner panel re-fits the sheet smaller', withPanel.transform, 'matrix(1.7, 0, 0, 1.7, 0, 0)');
+    ok('37 ...and the sheet does not run under the panel', withPanel.panel.shown && withPanel.right <= withPanel.panel.x, `draw ends ${withPanel.right}, panel starts ${withPanel.panel.x}`);
+
+    // --- the operator's own number reaches the frame -------------------------
+    const mid = await get('/api/bracket', '&bus=preview');
+    await post('/api/bracket', { state: { ...mid.state, autoSize: false, drawScale: 1 } }, '&bus=preview');
+    await wait(400);
+    const plain = await measure();
+    eq('38 the fit switched off is exactly the size it always was', plain.node.w, 224);
+    eq('39 ...and writes no transform at all rather than scale(1)', plain.transform, 'none');
+
+    await post('/api/bracket', { state: { ...mid.state, autoSize: false, drawScale: 1.5 } }, '&bus=preview');
+    await wait(400);
+    const manual = await measure();
+    eq('40 the operator size reaches the frame', manual.node.w, 336);
+
+    /*
+     * The furniture does NOT scale with the sheet, and that is the reason the
+     * transform is on #draw rather than on .board: the header and the winner
+     * panel are the show's, not the draw's.
+     */
+    const furniture = await page.evaluate(() => ({
+      stageName: getComputedStyle(document.querySelector('.head-stage')).fontSize,
+      panelW: Math.round(document.querySelector('.winner').getBoundingClientRect().width),
+    }));
+    eq('41 the stage name does not grow with the sheet', furniture.stageName, '40px');
+    eq('42 ...nor does the winner panel', furniture.panelW, 320);
+
+    ok('43 the page threw nothing', errors.length === 0, errors.join(' | '));
+  }
+
   // ------------------------------------------------------------ the gate ---
   const keyRead = await fetch(`${BASE}/api/bracket?key=${encodeURIComponent(key)}`);
   eq('27 a key may read it, so OBS works', keyRead.status, 200);
@@ -342,6 +620,7 @@ try {
   console.log('THREW', error.stack);
   console.log(log.slice(-1500));
 } finally {
+  await browser?.close();
   server.kill('SIGTERM');
   await wait(600);
   server.kill('SIGKILL');

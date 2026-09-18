@@ -25,7 +25,7 @@
  *   Layout must not move when data changes.
  */
 
-import { bracketChampion } from './bracket-graphic-schema.js';
+import { bracketChampion, bracketDrawScale } from './bracket-graphic-schema.js';
 import { api, PAGE_BUS } from './session.js';
 
 const STAGE_W = 1920;
@@ -182,16 +182,39 @@ function paintLinks(state) {
 }
 
 /*
- * Centre the drawing in the space it actually has.
+ * Size the drawing, then centre it in the space it actually has.
  *
  * ARITHMETIC, not measurement - the draw's size is `columns` and `rows` times
  * the constants above, and the space is the frame minus the winner panel when
  * that is showing. Asking the DOM would mean measuring a page OBS renders while
  * nothing is on screen, which is the trap this whole family of pages avoids.
  *
- * Without it a three-round bracket sits in the top-left corner of a 1920x1080
- * frame with half the width empty beside it, which reads as a graphic that
- * failed to finish loading rather than as a design.
+ * Without the centring a three-round bracket sits in the top-left corner of a
+ * 1920x1080 frame with half the width empty beside it, which reads as a graphic
+ * that failed to finish loading rather than as a design. Without the SIZING it
+ * sits centred and tiny, which reads as a graphic drawn for a different show -
+ * a four-team draw is four boxes and 524 of the 1408 pixels it has been given.
+ *
+ * ## Why the sheet is transformed rather than laid out bigger
+ *
+ * One number touches everything. The constants keep their values, `atX`/`atY`,
+ * the elbow path and the SVG viewBox are untouched, and the nodes, the slot
+ * type, the crests, the score chips, the elbows and the flow highlight all
+ * scale together - which is the property that matters, because a sheet whose
+ * boxes grew and whose type did not is not more readable, it is emptier.
+ *
+ * `#draw` is the element for it and the alternatives are each wrong for a
+ * specific reason. `#stage` already carries a transform that `fitStage`
+ * rewrites on every resize, so a factor written there is clobbered the first
+ * time the OBS source or a preview iframe changes size. `.board` is `inset: 0`
+ * and holds the header, the winner panel and the event logo - the show's
+ * furniture, which must not grow with the draw. `.node` and `.winner` both
+ * animate `transform` already, and one CSS property cannot carry two
+ * independent animations.
+ *
+ * The winner panel being a SIBLING is load-bearing rather than incidental: the
+ * transform cannot reach it, so `--panel-w` still describes the panel's real
+ * width and the space reserved for it below is still right.
  */
 function placeDraw(state) {
   const drawW = Math.max(0, (state.columns || 0) * COL_W - (COL_W - NODE_W));
@@ -213,8 +236,19 @@ function placeDraw(state) {
   const availW = STAGE_W - LEFT - PANEL;
   const availH = STAGE_H - TOP - BOTTOM;
 
-  draw.style.left = `${Math.round(LEFT + Math.max(0, (availW - drawW) / 2))}px`;
-  draw.style.top = `${Math.round(TOP + Math.max(0, (availH - drawH) / 2))}px`;
+  /*
+   * The factor comes from the SCHEMA, so the page and anything else that wants
+   * to know how big the sheet will be read one implementation - the same
+   * argument that keeps the drawing itself coming from `bracketLayout`.
+   */
+  const k = bracketDrawScale(state, { drawW, drawH, availW, availH });
+  draw.style.transform = k === 1 ? '' : `scale(${k})`;
+
+  // Centred on what is PAINTED, not on what was laid out. Centring the
+  // unscaled size and then magnifying about the top left corner would push the
+  // sheet down and to the right by however much it grew.
+  draw.style.left = `${Math.round(LEFT + Math.max(0, (availW - drawW * k) / 2))}px`;
+  draw.style.top = `${Math.round(TOP + Math.max(0, (availH - drawH * k) / 2))}px`;
 }
 
 function paintWinner(state) {

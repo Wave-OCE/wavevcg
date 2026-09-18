@@ -86,12 +86,26 @@ body {
  * nothing here reflows when a result lands. `#draw` is the origin; every node
  * and every link is placed against it.
  */
-/* Positioned from bracket.js, which centres it in the space the winner panel
-   leaves. The numbers there are arithmetic over `columns` and `rows`. */
+/* Positioned AND sized from bracket.js, which fits the sheet to the space the
+   winner panel leaves and centres it there. The numbers there are arithmetic
+   over `columns` and `rows`. */
 #draw {
   position: absolute;
   left: 72px;
   top: 168px;
+  /*
+   * Written down although it is already what happens.
+   *
+   * `#draw` has no width or height of its own - every child is absolutely
+   * positioned - so its layout box is 0x0 and the default `50% 50%` resolves to
+   * exactly this same point. That is an accident of the box being empty, and an
+   * accident is not a reason: give the element a size later, for any reason at
+   * all, and the sheet would start growing from its middle while the centring
+   * arithmetic in bracket.js kept measuring from the corner. Same shape as
+   * `.prog-state.is-live` reading correctly for months because the accent
+   * happened to be the on-air red.
+   */
+  transform-origin: top left;
 }
 
 .links {
