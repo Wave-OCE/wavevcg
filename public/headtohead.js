@@ -13,6 +13,8 @@
 
 import { backdropFor } from './headtohead-schema.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -100,6 +102,16 @@ function paintHalf(which, half, state) {
 function render(state) {
   if (!state) return;
 
+  /*
+   * The trim: the VS divider and the two rules either side of it.
+   *
+   * On the stage rather than the document, so nothing outside this graphic is
+   * restyled. `--plate` is deliberately left alone - it is the fill behind a
+   * team's name, and painting a surface with the trim colour would make the two
+   * halves read as one block instead of two.
+   */
+  stage.style.setProperty('--vs', pick(state.accent, brand(), 'accent'));
+
   paintHalf('left', state.left ?? {}, state);
   paintHalf('right', state.right ?? {}, state);
 
@@ -120,7 +132,15 @@ function render(state) {
  */
 let lastCue = null;
 
+/*
+ * The last matchup drawn, kept so a colour change can redraw it. The stream
+ * only pushes when the MATCHUP moves, and a head-to-head sitting on air makes
+ * no such push.
+ */
+let latestState = null;
+
 function apply(state) {
+  latestState = state;
   const cue = state?.anim?.cue ?? 0;
   if (lastCue !== null && cue !== lastCue && state?.anim?.visible) {
     root.classList.remove('is-on');
@@ -138,6 +158,11 @@ window.addEventListener('resize', fitStage);
 fitStage();
 
 const stream = new EventSource(api('/api/headtohead/events', PAGE_BUS));
+
+// The event's colours, on the connection this page already has.
+const brand = watchBrand(stream, () => {
+  if (latestState) apply(latestState);
+});
 
 stream.addEventListener('headToHead', (event) => {
   try {

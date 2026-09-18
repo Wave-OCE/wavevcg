@@ -27,6 +27,8 @@
 
 import { bracketChampion, bracketDrawScale } from './bracket-graphic-schema.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -290,10 +292,25 @@ function render(state) {
    * state rather than a black graphic. That is why the schema keeps blank as
    * blank instead of defaulting it to a hex.
    */
-  board.style.setProperty('--accent', state.accent || '');
-  board.style.setProperty('--slot-won', state.accent || '');
-  board.style.setProperty('--flow', state.accent || '');
-  board.style.setProperty('--trim', state.trim || '');
+  /*
+   * THE NAMES DISAGREE WITH THE MEANINGS HERE, and it is worth reading twice.
+   *
+   * `state.accent` is this graphic's HIGHLIGHT - the slot of whoever went
+   * through, the flow along the edges, the eyebrow - and `state.trim` is its
+   * ACCENT, the frame's corner marks. The comment in the schema has always said
+   * so; the field names predate the word "highlight" existing here.
+   *
+   * So the EVENT's accent maps onto `trim` and the EVENT's highlight maps onto
+   * `accent`. Swap them and the tournament's trim colour paints the winning
+   * team's slot while the frame wears the highlight - which looks deliberate,
+   * is wrong on every bracket on the server, and nothing fails.
+   */
+  const paint = brand();
+  const highlight = pick(state.accent, paint, 'highlight');
+  board.style.setProperty('--accent', highlight);
+  board.style.setProperty('--slot-won', highlight);
+  board.style.setProperty('--flow', highlight);
+  board.style.setProperty('--trim', pick(state.trim, paint, 'accent'));
 
   stageName.textContent = (state.stageName || '').toUpperCase();
   eyebrow.textContent = (state.heading || '').toUpperCase();
@@ -323,7 +340,17 @@ function render(state) {
  */
 let lastCue = null;
 
+/*
+ * The last drawing handed to this page, kept so a colour change can redraw it.
+ *
+ * The stream only pushes when the BRACKET moves, and a finished sheet sitting
+ * on air makes no such push - so without this an event accent typed mid-show
+ * would reach every other graphic and not this one.
+ */
+let latest = null;
+
 function apply(state) {
+  latest = state;
   const cue = state?.anim?.cue ?? 0;
   if (lastCue !== null && cue !== lastCue && state?.anim?.visible) {
     board.classList.remove('is-on');
@@ -341,6 +368,19 @@ window.addEventListener('resize', fitStage);
 fitStage();
 
 const stream = new EventSource(api('/api/bracket/events', PAGE_BUS));
+
+/*
+ * The event's colours, on the connection this page already has.
+ *
+ * The repaint is the second argument and it is not optional in spirit: a
+ * tournament's accent can change while a bracket is on air and the frame has to
+ * follow, which is the whole of "inherit". `latest` is what the last state
+ * frame said, so this redraws the board that is up rather than waiting for the
+ * schedule to move.
+ */
+const brand = watchBrand(stream, () => {
+  if (latest) apply(latest);
+});
 
 stream.addEventListener('bracket', (event) => {
   try {

@@ -8,9 +8,10 @@
  * library - see headToHeadFromFixture for why that is the right way round.
  */
 
-import { el, field, grid, help, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
 
@@ -145,6 +146,9 @@ if (els.tab) {
       help('The divider is the word between them - a grand final is not the same word as a group stage.'),
       tintLine,
       help('Off by default: a team with no colour of its own would wear the fallback red, which here reads as a SIDE rather than as a brand.'),
+      subhead('Colour'),
+      h2hFields.brandField('Accent', 'accent', { inherited: () => brand.accent }),
+      help('The divider and the two rules either side of it. Blank follows the tournament.'),
       subhead('House backdrop'),
       help('Used behind any team that has no backdrop of its own. Set a team\'s own on the Teams page.'),
       mediaControl(
@@ -164,6 +168,19 @@ if (els.tab) {
   // The style panel holds this tab's only text inputs, so it is built once and
   // never repainted - the caret rule. The teams panel has none and repaints.
   let styleBuilt = false;
+
+  // Same shape as the lineup tab: one bound control on a panel that is built
+  // once, so the swatch can follow the tournament without a repaint.
+  const h2hFields = makeFields(
+    () => state ?? {},
+    () => save({ accent: state?.accent ?? '' }),
+  );
+
+  let brand = { ...DEFAULT_BRAND };
+  onState('brand', (next) => {
+    brand = brandOf(next);
+    h2hFields.syncFields();
+  });
 
   function paint() {
     if (!state) return;

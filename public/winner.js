@@ -18,6 +18,8 @@
 
 import { teamColour } from './teams.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 import {
   FACET_COLS,
   FACET_ROWS,
@@ -368,17 +370,23 @@ const read = (source, path) => path.split('.').reduce((value, part) => (value ==
 
 // ------------------------------------------------------------- rendering ---
 
+/*
+ * `accent` is NOT in this map any more - it is resolved below, because blank
+ * means "the event's" rather than "black". Everything else here is a plain
+ * value with no inheritance behind it.
+ */
 const STYLE_VARS = {
   bg: '--bg',
   text: '--text',
   dimText: '--dim-text',
-  accent: '--accent',
   panel: '--panel',
 };
 
 function applyStyle(style, view) {
   const root = document.documentElement.style;
   for (const [field, variable] of Object.entries(STYLE_VARS)) root.setProperty(variable, style[field]);
+  // The graphic's own accent, or the event's when it has none.
+  root.setProperty('--accent', pick(style.accent, brand(), 'accent'));
   root.setProperty('--bg-opacity', String(style.bgOpacity));
   root.setProperty('--scrim', String(style.scrim));
   root.setProperty('--font', `"${style.font}"`);
@@ -413,7 +421,10 @@ function applyStyle(style, view) {
   // "wear the side you are on" - and an end-of-series graphic has no sides, so
   // blank has to land on the fallback rather than on no accent at all.
   const teamAccent = style.useTeamColour ? teamColour(view.winner.colour, '') : '';
-  winnerScene.style.setProperty('--accent', teamAccent || style.accent);
+  // The winning team's own colour still wins on this scene, and under it the
+  // graphic's accent, and under THAT the event's. Three layers, most specific
+  // first, which is the same order every other colour in this program resolves.
+  winnerScene.style.setProperty('--accent', teamAccent || pick(style.accent, brand(), 'accent'));
 }
 
 /**
@@ -1116,6 +1127,12 @@ let latestState = null;
 // Subscribe first so the first frame is not held up by the catalogue fetch;
 // names and numbers paint immediately and the map splash fills in after.
 const stream = new EventSource(api('/api/winner/events', PAGE_BUS));
+
+// The event's colours, on the connection this page already has. The repaint
+// matters: a splash can be up for a minute and has to follow a restyle.
+const brand = watchBrand(stream, () => {
+  if (latestState) render(latestState);
+});
 
 stream.addEventListener('winner', (event) => {
   try {

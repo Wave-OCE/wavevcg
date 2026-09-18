@@ -40,6 +40,7 @@
  */
 
 import { ROSTER_LIMIT } from './teams.js';
+import { brandHex } from './brand.js';
 
 export const LINEUP_FORMATS = [
   {
@@ -105,6 +106,15 @@ export const DEFAULT_LINEUP = {
   heading: '',
   players: [],
   eventLogo: '',
+  /*
+   * The trim, and the first colour this graphic has ever been able to set.
+   *
+   * Blank means the EVENT's accent - see public/brand.js. Until now
+   * `lineup.css` carried a `--accent` literal that nothing could reach, so
+   * dressing a show meant editing a stylesheet; there was not even a
+   * `setProperty` call on this page to extend.
+   */
+  accent: '',
   anim: { visible: false, cue: 0 },
 };
 
@@ -127,6 +137,8 @@ export function sanitiseLineup(input, fallback = DEFAULT_LINEUP) {
     logo: text(source.logo ?? base.logo, 500),
     colour: text(source.colour ?? base.colour, 24),
     defaultPhoto: text(source.defaultPhoto ?? base.defaultPhoto, 500),
+    // Blank passes through as blank, which is what makes inheriting sayable.
+    accent: brandHex(source.accent ?? base.accent, ''),
     /*
      * A line above the team name - "STARTING LINEUP", "THE ROSTER", whatever
      * the show calls it. Its own field rather than baked into the design,

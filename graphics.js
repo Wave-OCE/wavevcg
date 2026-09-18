@@ -81,6 +81,7 @@ import {
   DEFAULT_SEQ,
   DEFAULT_WINNER,
   DEFAULT_WINNER_STYLE,
+  WINNER_LEGACY_ACCENT,
   SEQ_FIELDS,
   WINNER_EASING_KEYS,
   WINNER_MAP_ROWS,
@@ -549,8 +550,31 @@ export function sanitiseWinner(input, base = DEFAULT_WINNER) {
   const fallback = base ?? DEFAULT_WINNER;
   const rows = Array.isArray(source.maps) ? source.maps : [];
 
+  /*
+   * ADOPT ONLY THE UNTOUCHED, once, on the way in from an older build.
+   *
+   * The accent used to default to a literal and now defaults to blank, meaning
+   * "the event's". A state written before that carries the old literal whether
+   * the operator chose it or never looked at it, and the two are
+   * indistinguishable after the fact - so the rule is: a graphic still sitting
+   * on its old built-in default starts inheriting, and anything else is left
+   * exactly as it is. That was the explicit decision, and the alternative
+   * (blank them all) throws away deliberate choices silently.
+   *
+   * GATED ON THE VERSION, which is what makes it happen once. Without the gate
+   * this would blank the accent every time the state was read, so an operator
+   * who deliberately picked #ff4655 could never keep it - they would set it,
+   * see it, and find it inherited again on the next load, with nothing to
+   * explain why. The version is bumped below, so the first save closes the door.
+   */
+  const legacy = Number(source.version ?? 0) < 2;
+  const style =
+    legacy && source.style?.accent === WINNER_LEGACY_ACCENT
+      ? { ...source.style, accent: '' }
+      : source.style;
+
   const clean = {
-    version: 1,
+    version: 2,
     eventLogo: imageUrl(source.eventLogo, fallback.eventLogo),
     mapName: text(source.mapName, fallback.mapName, 40),
     mapImage: imageUrl(source.mapImage, fallback.mapImage),
@@ -564,7 +588,7 @@ export function sanitiseWinner(input, base = DEFAULT_WINNER) {
     ),
     winner: ['auto', 'left', 'right'].includes(String(source.winner)) ? String(source.winner) : fallback.winner,
     seq: sanitiseSeq(source.seq, fallback.seq),
-    style: sanitiseWinnerStyle(source.style, fallback.style),
+    style: sanitiseWinnerStyle(style, fallback.style),
     audio: sanitiseAudio(source.audio, fallback.audio),
   };
 

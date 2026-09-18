@@ -526,7 +526,14 @@ export const WINNER_STYLE_FIELDS = [
 
   { key: 'text', type: 'hex', group: 'Colour', label: 'Primary text', default: '#ffffff' },
   { key: 'dimText', type: 'hex', group: 'Colour', label: 'Secondary text', default: '#93a4b5' },
-  { key: 'accent', type: 'hex', group: 'Colour', label: 'Accent', default: '#ff4655' },
+  /*
+   * BLANK, because blank means "the event's accent" - see public/brand.js.
+   *
+   * It used to default to #ff4655, which is also what DEFAULT_BRAND's accent
+   * is, so an install that never touched this looks exactly as it did and now
+   * follows the tournament instead of a literal in this file.
+   */
+  { key: 'accent', type: 'hex', group: 'Colour', label: 'Accent', default: '' },
   { key: 'panel', type: 'hex', group: 'Colour', label: 'Score row fill', default: '#161d26' },
 
   {
@@ -540,6 +547,16 @@ export const WINNER_STYLE_FIELDS = [
   { key: 'showMapSplash', type: 'bool', group: 'Options', label: 'Show the map splash', default: true },
   { key: 'showRegion', type: 'bool', group: 'Options', label: 'Show team regions', default: true },
 ];
+
+/**
+ * The accent this graphic carried before the event owned one.
+ *
+ * Kept as a named constant because a state saved by an older build holds this
+ * literal, and telling "nobody ever changed it" apart from "somebody chose it"
+ * is only possible ONCE - see the migration in sanitiseWinner. A bare hex in
+ * that comparison would be a magic number nobody could date.
+ */
+export const WINNER_LEGACY_ACCENT = '#ff4655';
 
 export const WINNER_STYLE_KEYS = WINNER_STYLE_FIELDS.map((field) => field.key);
 export const WINNER_STYLE_GROUPS = [...new Set(WINNER_STYLE_FIELDS.map((field) => field.group))];

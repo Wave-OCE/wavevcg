@@ -7,9 +7,10 @@
  * survive a Load that only means "now show the other team".
  */
 
-import { el, field, grid, help, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
 import { LINEUP_FORMATS, LINEUP_SLOTS, lineupIsStale } from './lineup-schema.js';
@@ -150,6 +151,9 @@ if (els.tab) {
       help(LINEUP_FORMATS.find((entry) => entry.key === state.format)?.help ?? ''),
       grid(null, [field('Heading', heading)]),
       help('The small line above the team name - "Starting lineup", "The roster", whatever the show calls it.'),
+      subhead('Colour'),
+      lineupFields.brandField('Accent', 'accent', { inherited: () => brand.accent }),
+      help('The trim: the eyebrow, the tricode under the team name and the plate rule. Blank follows the tournament.'),
       subhead('Event logo'),
       mediaControl(
         'Event logo',
@@ -165,6 +169,27 @@ if (els.tab) {
    * lives in the team panel, which has no input in it and repaints freely.
    */
   let styleBuilt = false;
+
+  /*
+   * This tab had no makeFields at all - every control on it was hand-built,
+   * which was fine while none of them needed binding. The accent does: its
+   * swatch has to follow the tournament while the panel stays put.
+   *
+   * `set` writes into the live state object and then this saves the one key,
+   * which is the same shape every other control on this tab already uses.
+   */
+  const lineupFields = makeFields(
+    () => state ?? {},
+    () => save({ accent: state?.accent ?? '' }),
+  );
+
+  let brand = { ...DEFAULT_BRAND };
+  onState('brand', (next) => {
+    brand = brandOf(next);
+    // Sync, never rebuild: the style panel is built once - the caret rule - and
+    // a bound swatch moves without replacing the box beside it.
+    lineupFields.syncFields();
+  });
 
   function paint() {
     if (!state) return;

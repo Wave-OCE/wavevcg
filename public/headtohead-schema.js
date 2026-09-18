@@ -41,6 +41,8 @@ const side = (input) => {
   };
 };
 
+import { brandHex } from './brand.js';
+
 export const DEFAULT_HEADTOHEAD = {
   version: 1,
   left: side({}),
@@ -55,6 +57,13 @@ export const DEFAULT_HEADTOHEAD = {
    * rather than two, so the graphic reads as one design with two halves of it
    * filled in by whoever is playing.
    */
+  /*
+   * The trim: the VS divider and the two rules either side of it. Blank means
+   * the EVENT's accent. `--plate` is deliberately NOT driven from here - it is
+   * a fill behind a team's name rather than a rule, and colouring a surface
+   * with the trim would make the two halves of the graphic read as one block.
+   */
+  accent: '',
   styleBackdrop: '',
   // Whether the org colour tints its half. Off by default: a team with no
   // colour of its own would otherwise wear the fallback red, which on a
@@ -74,6 +83,8 @@ export function sanitiseHeadToHead(input, fallback = DEFAULT_HEADTOHEAD) {
     divider: text(source.divider ?? base.divider, 16),
     heading: text(source.heading ?? base.heading, 40),
     eventLogo: text(source.eventLogo ?? base.eventLogo, 500),
+    // Blank passes through as blank, which is what makes inheriting sayable.
+    accent: brandHex(source.accent ?? base.accent, ''),
     styleBackdrop: text(source.styleBackdrop ?? base.styleBackdrop, 500),
     tint: typeof source.tint === 'boolean' ? source.tint : (base.tint ?? false),
     anim: {

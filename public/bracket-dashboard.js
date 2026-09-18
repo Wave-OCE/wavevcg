@@ -22,6 +22,7 @@
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
 import {
@@ -35,6 +36,20 @@ import {
 import { bracketLayout, fixtureScore, fixtureWinner } from './schedule-schema.js';
 
 const $ = (id) => document.getElementById(id);
+/*
+ * The event's colours, so a blank field can SHOW what it inherits.
+ *
+ * SYNC, never rebuild. The style panel is painted once and never again - the
+ * caret rule - and a brandField's swatch is bound, so `syncFields` moves it
+ * without replacing the box somebody may be typing into. A repaint here would
+ * undo the very property this panel is built once to protect.
+ */
+let brand = { ...DEFAULT_BRAND };
+onState('brand', (next) => {
+  brand = brandOf(next);
+  fields.syncFields();
+});
+
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
 
 const els = {
@@ -189,23 +204,24 @@ if (els.tab) {
     els.colours.replaceChildren(
       title('Colours'),
       help(
-        'Leave either one untouched and the graphic uses its built-in colour, so a show that restyles nothing is ' +
-          'unaffected.',
+        'Both follow the tournament unless you set one here. Reset to default on a control puts it back to the ' +
+          'event\'s colour - set once on the Tournament page and shared by every graphic.',
       ),
-      grid(2, [fields.colourField('Highlight', 'accent'), fields.colourField('Trim', 'trim')]),
+      /*
+       * The KEYS here disagree with the words, and the words are the ones an
+       * operator reads. `accent` in this graphic's state is the HIGHLIGHT and
+       * `trim` is the accent - see the schema. So the event's HIGHLIGHT is what
+       * the left control inherits and the event's ACCENT is what the right one
+       * does, which is why the two `which` arguments look swapped and are not.
+       */
+      grid(2, [
+        fields.brandField('Highlight', 'accent', { inherited: () => brand.highlight }),
+        fields.brandField('Trim', 'trim', { inherited: () => brand.accent }),
+      ]),
       help(
         'Highlight marks the team that went through, and runs along the bracket as the flow. Trim is the frame - ' +
-          'the corner marks on the winner panel.',
+          'the corner marks on the winner panel. Leave either blank and it follows the tournament.',
       ),
-      ...(state.accent || state.trim
-        ? [
-            (() => {
-              const reset = el('button', 'btn btn-ghost', { type: 'button' }, 'Back to the built-in colours');
-              reset.addEventListener('click', () => save({ accent: '', trim: '' }));
-              return reset;
-            })(),
-          ]
-        : []),
     );
   }
 

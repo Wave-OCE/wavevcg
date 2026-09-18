@@ -16,6 +16,7 @@
 
 import { FONT_CHOICES } from './preset-schema.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { mediaControl } from './media-field.js';
 import {
   TEAM_FIELDS,
@@ -179,7 +180,22 @@ async function save() {
 }
 
 const fields = makeFields(() => state, queueSave);
-const { textField, urlField, numberField, choiceField, selectField, colourField, checkField, rangeField } = fields;
+const { textField, urlField, numberField, choiceField, selectField, colourField, brandField, checkField, rangeField } = fields;
+
+/*
+ * The event's colours, so a blank field can SHOW what it inherits.
+ *
+ * SYNC, never rebuild. The style panel is painted once and never again - the
+ * caret rule - and a brandField's swatch is bound, so `syncFields` moves it
+ * without replacing the box somebody may be typing into. A repaint here would
+ * undo the very property this panel is built once to protect.
+ */
+let brand = { ...DEFAULT_BRAND };
+onState('brand', (next) => {
+  brand = brandOf(next);
+  fields.syncFields();
+});
+
 
 // ------------------------------------------------------------- transport ---
 
@@ -761,6 +777,14 @@ function styleField(entry) {
     case 'px':
       return numberField(entry.label, path, { min: entry.min, max: entry.max });
     default:
+      /*
+       * The accent inherits; every other colour on this graphic is its own.
+       *
+       * Keyed on the field rather than on a flag in the schema, because there
+       * is exactly one of them here and a `inherits: true` in WINNER_STYLE_FIELDS
+       * would be a property the sanitiser would then have to ignore.
+       */
+      if (entry.key === 'accent') return brandField(entry.label, path, { inherited: () => brand.accent });
       return colourField(entry.label, path);
   }
 }

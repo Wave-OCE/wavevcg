@@ -20,6 +20,8 @@
 
 import { LINEUP_FORMAT_KEYS, seatPhoto } from './lineup-schema.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -126,6 +128,10 @@ function render(state) {
   const format = LINEUP_FORMAT_KEYS.includes(state.format) ? state.format : 'photos';
   const withPhotos = format !== 'names';
 
+  // The graphic's own trim, or the event's. On the stage rather than the
+  // document, so nothing outside this graphic's own box is ever restyled.
+  stage.style.setProperty('--accent', pick(state.accent, brand(), 'accent'));
+
   teamName.textContent = (state.teamName || '').toUpperCase();
   /*
    * The tricode under the name, which is how the org is captioned everywhere
@@ -195,7 +201,17 @@ function render(state) {
  */
 let lastCue = null;
 
+/*
+ * The last lineup drawn, kept so a colour change can redraw it.
+ *
+ * The stream only pushes when the LINEUP moves, and a squad sitting on air
+ * makes no such push - so without this an event accent typed mid-show would
+ * reach every other graphic and not this one.
+ */
+let latestState = null;
+
 function apply(state) {
+  latestState = state;
   const cue = state?.anim?.cue ?? 0;
   if (lastCue !== null && cue !== lastCue && state?.anim?.visible) {
     lineup.classList.remove('is-on');
@@ -213,6 +229,11 @@ window.addEventListener('resize', fitStage);
 fitStage();
 
 const stream = new EventSource(api('/api/lineup/events', PAGE_BUS));
+
+// The event's colours, on the connection this page already has.
+const brand = watchBrand(stream, () => {
+  if (latestState) render(latestState);
+});
 
 stream.addEventListener('lineup', (event) => {
   try {
