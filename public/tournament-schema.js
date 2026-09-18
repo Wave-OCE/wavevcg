@@ -28,6 +28,8 @@
  * The name is free to change, and does. The id never does.
  */
 
+import { DEFAULT_BRAND, brandHex } from './brand.js';
+
 /** The longest a name may be. Long enough for "Touch Grass Invitational 2026". */
 const NAME_MAX = 64;
 const URL_MAX = 500;
@@ -112,11 +114,52 @@ export const TOURNAMENT_FIELDS = [
     max: URL_MAX,
     help: 'Drop a file, paste one, or give a URL. Used as the default tournament logo on the graphics.',
   },
+  /*
+   * The event's two colours. See public/brand.js for what they mean and why
+   * there are two of them rather than one.
+   *
+   * Blank is a real answer and means "use the house default", which is why
+   * these carry no `default` of their own - the chain is graphic override ->
+   * this -> DEFAULT_BRAND, and writing a default in here would make the middle
+   * link indistinguishable from the last one.
+   *
+   * The help text says the quiet part out loud: this is the one setting in the
+   * program that reaches air with no take. It is the right behaviour - an
+   * operator changing the event's colour means "restyle the show" - but an
+   * operator who types it during a live match should not be surprised.
+   */
+  {
+    key: 'accent',
+    type: 'hex',
+    label: 'Event accent',
+    group: 'Look',
+    help:
+      'The trim: thin rules, eyebrows and edges across every graphic. Each graphic can override it and ' +
+      'Reset to default puts it back to this. CHANGES AIR IMMEDIATELY - there is no take on a colour.',
+  },
+  {
+    key: 'highlight',
+    type: 'hex',
+    label: 'Event highlight',
+    group: 'Look',
+    help:
+      'What WON, what is live, what went through - the winner\'s slot, the advancing team, a picked map. ' +
+      'Separate from the accent on purpose, so the team that just advanced does not wear the same colour as ' +
+      'the border around them. Graphics that draw no such distinction ignore it.',
+  },
 ];
 
 export const TOURNAMENT_KEYS = TOURNAMENT_FIELDS.map((field) => field.key);
 
-const SANITISERS = { text, date, image: imageUrl };
+/*
+ * Blank passes through as blank, which is what makes "inherit" expressible.
+ * `brandHex` is shared with every graphic that reads one of these, so the
+ * tournament and the thing inheriting from it cannot disagree about what counts
+ * as a colour.
+ */
+const hex = (value, fallback = '') => brandHex(value, fallback);
+
+const SANITISERS = { text, date, image: imageUrl, hex };
 
 /**
  * Clean the operator-editable half of a tournament record.

@@ -30,6 +30,7 @@ import {
   inDurationMs,
 } from './public/animation.js';
 import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, imageValue, mergeRoster, sanitiseRoster, teamSlug } from './public/teams.js';
+import { brandOf } from './public/brand.js';
 import { mapCodeFromUrl, mapDisplayName } from './public/maps.js';
 import {
   LOBBY_SEATS,
@@ -1944,6 +1945,61 @@ export function makeTeamStore(filePath) {
     flush() {
       return writeChain;
     },
+  };
+}
+
+// ---------------------------------------------------------------- brand ---
+
+/**
+ * The event's two colours, shaped like a store so they can ride the streams.
+ *
+ * NOT FILE-BACKED, and that is the whole design: an accent lives on the
+ * TOURNAMENT record beside its name and its dates, because it is a property of
+ * the competition rather than of a desk. A second copy on disk would be a
+ * second source of truth for one fact, and the failure would be a colour that
+ * changed on one court and not the other.
+ *
+ * So this is a projection with a subscribe(), which is exactly the shape
+ * `streamStores` reads. That buys the whole feature: every graphic's SSE
+ * connection already runs through that function, so adding one entry gives
+ * every output page a live `brand` frame with no new endpoint, no second
+ * EventSource, and no change to the `{ revision, state }` shape anything else
+ * is parsing.
+ *
+ * `set` is SILENT when nothing moved, and that matters more than it looks:
+ * every request that resolves a tournament pushes the record through here, so
+ * without the comparison a browser source would get a frame per HTTP request
+ * for the whole broadcast.
+ */
+export function makeBrandStore(initial = null) {
+  let state = brandOf(initial);
+  let revision = 0;
+  const subscribers = new Set();
+
+  return {
+    get state() {
+      return state;
+    },
+    get revision() {
+      return revision;
+    },
+    subscribe(fn) {
+      subscribers.add(fn);
+      return () => subscribers.delete(fn);
+    },
+    /** Take the colours off a tournament record. Returns what they resolved to. */
+    set(tournament) {
+      const next = brandOf(tournament);
+      if (next.accent === state.accent && next.highlight === state.highlight) return state;
+      state = next;
+      revision += 1;
+      for (const fn of subscribers) fn({ revision, state });
+      return state;
+    },
+    // A store's contract, so nothing downstream has to special-case it. There
+    // is nothing to read and nothing to write; the record is the truth.
+    load: async () => true,
+    flush: async () => {},
   };
 }
 

@@ -320,6 +320,73 @@ export function makeFields(state, onChange) {
     return field(label, row);
   }
 
+  /**
+   * A colour that INHERITS when it is left blank.
+   *
+   * The one control for every accent and highlight in this program - the seven
+   * graphics' style panels and the tournament's own Settings form all build
+   * this, so "what does blank mean here" has one answer and one appearance
+   * wherever an operator meets it. Consistency is the point: a Reset button
+   * that looks different on the winner splash and the bracket is two controls
+   * to learn for one idea.
+   *
+   * THE SWATCH ALWAYS SHOWS WHAT WOULD PAINT. While a field is inheriting it
+   * shows the inherited colour rather than sitting black or empty, which is the
+   * same call `optionalColourField` makes about a switched-off team colour: an
+   * operator has to be able to see what they are about to change away from.
+   * What distinguishes the two states is the word beside it and whether Reset
+   * is available, never the swatch being wrong.
+   *
+   * TOUCHING THE PICKER OVERRIDES. There is deliberately no "inherit?"
+   * checkbox: a tick-box beside a swatch that still shows a colour is two
+   * controls saying one thing, and the pair immediately raises "what happens if
+   * I untick it and then drag the picker". Reset is the only way back, which
+   * makes the round trip one obvious button rather than a mode.
+   *
+   * @param {string} label
+   * @param {string} path            where the OVERRIDE is stored; '' = inherit
+   * @param {object} options
+   * @param {() => string} options.inherited  the colour this falls back to
+   * @param {string} [options.source]  what to call the thing it inherits from
+   */
+  function brandField(label, path, { inherited, source = 'the event' } = {}) {
+    const input = el('input', null, { type: 'color', 'aria-label': label });
+    const state = el('span', 'brand-state');
+    const reset = el(
+      'button',
+      'mini-btn',
+      { type: 'button', title: `Clear this and follow ${source} again.` },
+      'Reset to default',
+    );
+
+    const fallback = () => String(inherited?.() ?? '') || '#000000';
+
+    const rebind = () => {
+      const own = String(get(path) ?? '').trim();
+      input.value = own || fallback();
+      reset.disabled = !own;
+      state.textContent = own ? 'overridden here' : `from ${source}`;
+      state.classList.toggle('is-inherited', !own);
+    };
+
+    // `input` rather than `change`: a colour picker fires input while the
+    // operator drags, and waiting for change means the preview does not follow
+    // the cursor - which is how somebody ends up picking a colour twice.
+    input.addEventListener('input', () => set(path, input.value));
+    reset.addEventListener('click', () => {
+      set(path, '');
+      // Immediately, not on the next repaint: `set` queues a save and the panel
+      // this lives in may not rebuild at all, so the swatch would go on showing
+      // the override it no longer holds.
+      rebind();
+    });
+
+    const row = el('div', 'colour-row brand-row');
+    row.append(input, state, reset);
+    bind(row, rebind);
+    return field(label, row);
+  }
+
   function checkField(label, path) {
     const input = el('input', null, { type: 'checkbox' });
     bind(input, () => {
@@ -424,6 +491,7 @@ export function makeFields(state, onChange) {
     choiceField,
     selectField,
     colourField,
+    brandField,
     checkField,
     rangeField,
     optionalColourField,

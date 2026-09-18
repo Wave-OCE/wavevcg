@@ -3035,7 +3035,17 @@ function streamStores(entries, req, res) {
   res.on('error', stop);
 }
 
-const streamState = (store, name, req, res) => streamStores([[name, store]], req, res);
+/**
+ * One store on its own connection, for an output page - plus the event's
+ * colours when the caller has them.
+ *
+ * `brand` is optional rather than required because this is called from places
+ * that have no bundle, and a page that never receives a brand frame simply
+ * falls back to its own stylesheet - which is what every graphic did before
+ * this existed.
+ */
+const streamState = (store, name, req, res, brand = null) =>
+  streamStores(brand ? [[name, store], ['brand', brand]] : [[name, store]], req, res);
 
 /**
  * Uploads are the one thing served from outside ./public, so they get their own
@@ -3361,7 +3371,21 @@ async function contextFor(req, url) {
     return { user, owner, production: null, bundle: null, level: null, viaKey: false };
   }
 
-  return { user, owner, production, bundle: await sessions.get(owner.id, production.id), level, viaKey: false };
+  const bundle = await sessions.get(owner.id, production.id);
+
+  /*
+   * The event's colours, refreshed from the record every time one is resolved.
+   *
+   * Here rather than only in the settings handler, and both are wanted. This is
+   * the backstop that survives a restart, a record edited by another process,
+   * and the first request after a desk is opened; the handler's own push is
+   * what makes a save reach air immediately rather than on somebody's next
+   * click. `set` is silent when nothing moved, so the common case - which is
+   * every request - costs a two-field comparison and sends nothing.
+   */
+  bundle.brand.set(owner);
+
+  return { user, owner, production, bundle, level, viaKey: false };
 }
 
 /**
@@ -4313,6 +4337,31 @@ async function handleTournaments(pathname, req, res, ctx) {
           throw new ProviderError(409, 'This tournament is archived.', 'Reopen it before changing its settings.');
         }
         const saved = tournaments.update(tournament.id, body?.fields);
+        /*
+         * Straight onto the stream of the tournament that was UPDATED - which
+         * is not necessarily the one this request resolved to.
+         *
+         * `/api/tournaments` carries the target in its body and usually no
+         * `?session=`, so `ctx.bundle` is whichever tournament the caller
+         * happens to be looking at. Pushing there sent the new colour to the
+         * wrong desk's browser sources and left the right ones on the old one,
+         * with nothing failing anywhere. Caught by an assertion that opened a
+         * stream on one tournament and edited it while a second existed;
+         * against a single-tournament server it passes either way, which is
+         * exactly the shape of bug a suite has to be built to see.
+         *
+         * `sharedFor` is memoised, so the common case - somebody editing the
+         * tournament they are working on - is a map lookup. A tournament
+         * nobody has open opens its shared stores, which reads a few JSON
+         * files and writes nothing.
+         *
+         * This is the one value in the program that reaches air with no take,
+         * and that is the settled decision rather than an oversight: an
+         * operator changing the event's accent means "restyle the show", and a
+         * change that needed a press per graphic would be a setting that
+         * appears not to work. The Settings panel says so in as many words.
+         */
+        (await sessions.sharedFor(saved.id)).brand.set(saved);
         return { tournament: publicTournament(saved) };
       }
 
@@ -5619,7 +5668,7 @@ async function route(req, res) {
 
 /** The SSE routes. Returns true if this request was one. */
 async function handleStream(pathname, req, res, ctx, params) {
-  const { globals, lookups, matchFeed, lobby } = ctx.bundle;
+  const { globals, lookups, matchFeed, lobby, brand } = ctx.bundle;
 
   /*
    * An output page's own stream answers for the bus its URL named, defaulting
@@ -5635,13 +5684,20 @@ async function handleStream(pathname, req, res, ctx, params) {
   const headToHead = ctx.bundle.headToHead.of(streamBus);
   const bracket = ctx.bundle.bracket.of(streamBus);
 
-  if (pathname === '/api/graphic/events') return streamState(graphics, 'graphic', req, res), true;
-  if (pathname === '/api/winner/events') return streamState(winner, 'winner', req, res), true;
-  if (pathname === '/api/select/events') return streamState(select, 'select', req, res), true;
-  if (pathname === '/api/veto-board/events') return streamState(vetoBoard, 'vetoBoard', req, res), true;
-  if (pathname === '/api/lineup/events') return streamState(lineup, 'lineup', req, res), true;
-  if (pathname === '/api/headtohead/events') return streamState(headToHead, 'headToHead', req, res), true;
-  if (pathname === '/api/bracket/events') return streamState(bracket, 'bracket', req, res), true;
+  /*
+   * Every output page's stream carries the event's colours beside its own
+   * state - see makeBrandStore. One extra event type on a connection that is
+   * already open, rather than a second EventSource per browser source: the
+   * six-connection cap is what made the dashboard multiplexer necessary, and
+   * this feature must not spend another one on every graphic.
+   */
+  if (pathname === '/api/graphic/events') return streamState(graphics, 'graphic', req, res, brand), true;
+  if (pathname === '/api/winner/events') return streamState(winner, 'winner', req, res, brand), true;
+  if (pathname === '/api/select/events') return streamState(select, 'select', req, res, brand), true;
+  if (pathname === '/api/veto-board/events') return streamState(vetoBoard, 'vetoBoard', req, res, brand), true;
+  if (pathname === '/api/lineup/events') return streamState(lineup, 'lineup', req, res, brand), true;
+  if (pathname === '/api/headtohead/events') return streamState(headToHead, 'headToHead', req, res, brand), true;
+  if (pathname === '/api/bracket/events') return streamState(bracket, 'bracket', req, res, brand), true;
 
   /*
    * Every graphic on one connection, for the dashboard.
@@ -5691,6 +5747,13 @@ async function handleStream(pathname, req, res, ctx, params) {
         ['headToHeadPreview', ctx.bundle.headToHead.preview],
         ['bracket', ctx.bundle.bracket.program],
         ['bracketPreview', ctx.bundle.bracket.preview],
+        /*
+         * The event's colours. ONE channel, not one per bus: a colour is not
+         * staged - there is no take on it - so a `brandPreview` would be a
+         * second name for the same value and an invitation to expect a
+         * behaviour this deliberately does not have.
+         */
+        ['brand', ctx.bundle.brand],
         ['global', globals],
         ['lookup', lookups],
         ['matchFeed', matchFeed],

@@ -4118,6 +4118,31 @@ body.is-adrift .rail-item[data-tab='global'] {
   gap: 8px;
 }
 
+/* --------------------------------------------- an inheriting colour ---
+
+   The control every accent and highlight in the program is built from. The
+   swatch always shows what WOULD paint, so what separates "inherited" from
+   "overridden" is this label and whether Reset is available - never the colour
+   being wrong. */
+.brand-row {
+  flex-wrap: wrap;
+}
+
+.brand-state {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--text, #e8ecf1);
+  white-space: nowrap;
+}
+
+/* Quieter while it is following the event, louder once somebody has taken it
+   over - the state worth noticing is the one that has been changed. */
+.brand-state.is-inherited {
+  color: var(--text-faint, #7d8894);
+}
+
 /* ------------------------------------------- discarding unsaved changes ---
 
    A sheet over the open dialog, NOT a second <dialog>. The reasoning is in

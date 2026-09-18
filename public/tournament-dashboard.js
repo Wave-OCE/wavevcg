@@ -32,6 +32,7 @@ import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
+import { DEFAULT_BRAND } from './brand.js';
 import { SESSION_ID, account, refreshAccount, switchDesk, switchTo } from './session.js';
 
 const $ = (id) => document.getElementById(id);
@@ -164,6 +165,18 @@ if (els.pick) {
         );
       }
       if (entry.type === 'date') return fields.dateField(entry.label, entry.key);
+      /*
+       * The SAME control the graphics use for their own accents, pointed one
+       * link further up the chain: a graphic inherits from the tournament, and
+       * the tournament inherits from the house default. One control means an
+       * operator learns "blank follows, Reset goes back" once.
+       */
+      if (entry.type === 'hex') {
+        return fields.brandField(entry.label, entry.key, {
+          inherited: () => DEFAULT_BRAND[entry.key] ?? '',
+          source: 'the house default',
+        });
+      }
       return fields.textField(entry.label, entry.key, {
         placeholder: entry.placeholder ?? '',
         maxlength: entry.max ?? 120,
@@ -175,12 +188,33 @@ if (els.pick) {
      * in one row reads as a range, which is what it is; a name or a logo in half
      * a column just wastes the other half.
      */
-    const dates = TOURNAMENT_FIELDS.map((entry, i) => [entry, controls[i]]).filter(([entry]) => entry.type === 'date');
-    const rest = TOURNAMENT_FIELDS.map((entry, i) => [entry, controls[i]]).filter(([entry]) => entry.type !== 'date');
+    const paired = TOURNAMENT_FIELDS.map((entry, i) => [entry, controls[i]]);
+    const dates = paired.filter(([entry]) => entry.type === 'date');
+    const colours = paired.filter(([entry]) => entry.type === 'hex');
+    const rest = paired.filter(([entry]) => entry.type !== 'date' && entry.type !== 'hex');
 
+    /*
+     * The two colours under their own heading, at the BOTTOM.
+     *
+     * They are set once at the start of a season and the name and the dates are
+     * what somebody opens this page to fix, so the thing edited most often stays
+     * at the top. Under a subhead rather than loose among the text boxes,
+     * because "Look" is a different question from "what is this called".
+     */
     els.fields.replaceChildren(
       ...rest.flatMap(([entry, control]) => [control, entry.help ? help(entry.help) : null]).filter(Boolean),
       grid(2, dates.map(([, control]) => control)),
+      ...(colours.length
+        ? [
+            subhead('Look'),
+            help(
+              'Two colours every graphic inherits. A graphic can override either one; Reset to default on it ' +
+                'goes back to these. Unlike everything else in this program a colour reaches air with no take, ' +
+                'so changing one mid-match changes what is on screen straight away.',
+            ),
+            ...colours.flatMap(([entry, control]) => [control, entry.help ? help(entry.help) : null]).filter(Boolean),
+          ]
+        : []),
     );
 
     // Read-only means read-only, said rather than merely enforced. The server

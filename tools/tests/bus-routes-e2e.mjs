@@ -57,6 +57,10 @@ server.stderr.on('data', (c) => (log += c));
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Prints both sides on a failure, which a bare boolean cannot - the colours
+// this file now asserts on are six hex characters apart when they are wrong.
+const eq = (name, got, want) => ok(name, got === want, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+
 /** Collect named SSE events for a moment. */
 async function collect(url, names, ms, headers = {}) {
   const controller = new AbortController();
@@ -417,6 +421,123 @@ try {
       (await get('/api/graphic?bus=program')).state.left.players[0].name,
     );
     ok('the board fixture was real', board !== null);
+  }
+
+  // ============================================ the event's colours, on the wire ===
+  /*
+   * A tournament owns an ACCENT and a HIGHLIGHT, and every graphic inherits them
+   * when its own field is blank. See public/brand.js.
+   *
+   * Here rather than in tournament-e2e because what is being asserted is what
+   * reaches a BROWSER SOURCE - a record that stores a colour nothing paints is
+   * not the feature. The stream is the subject of this file and the helper for
+   * reading one is at the top of it.
+   *
+   * It is the one value in the program that reaches air with no take. That is
+   * the settled decision rather than an oversight: an operator changing the
+   * event's accent means "restyle the show", and a change needing a press per
+   * graphic would be a setting that appears not to work.
+   */
+  {
+    const brandOn = async (route, ms = 700) => (await collect(`${BASE}${route}`, ['brand'], ms)).map((f) => f.data.state);
+
+    /*
+     * A KEYED OBS URL, which is the only kind a browser source has. If the
+     * colours did not ride this connection they would need a second one, and
+     * the six-connection cap is exactly what made the dashboard multiplexer
+     * necessary in the first place.
+     */
+    const onConnect = await brandOn(`/api/lineup/events?key=${encodeURIComponent(key)}`);
+    eq('the event colours arrive on an output stream', JSON.stringify(onConnect), JSON.stringify([{ accent: '#ff4655', highlight: '#c8aa6e' }]));
+
+    // Every graphic, because "some of them inherit" is the shape of a feature
+    // an operator cannot trust. One missing entry here is one graphic that
+    // silently keeps its own colour for ever.
+    for (const [name, route] of [
+      ['the scoreboard', '/api/graphic/events'],
+      ['the winner splash', '/api/winner/events'],
+      ['agent select', '/api/select/events'],
+      ['the head to head', '/api/headtohead/events'],
+      ['the bracket', '/api/bracket/events'],
+      ['the veto board', '/api/veto-board/events'],
+    ]) {
+      const seen = await brandOn(`${route}?key=${encodeURIComponent(key)}`, 500);
+      ok(`${name} is given them too`, seen.length === 1 && seen[0].accent === '#ff4655', JSON.stringify(seen));
+    }
+
+    /*
+     * LIVE. A save pushes a frame to a connection that is already open, which
+     * is the whole of "inherit" - a colour that only took effect on the next
+     * page load would be a setting an operator would swear was broken.
+     *
+     * The write and the read race deliberately: the stream is opened first and
+     * the save happens while it is listening, which is what an operator editing
+     * Settings during a show actually does to a browser source.
+     */
+    const live = (async () => collect((`${BASE}/api/winner/events?key=${encodeURIComponent(key)}`), ['brand'], 1400))();
+    await wait(300);
+    await fetch(`${BASE}/api/tournaments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ action: 'update', id: tournamentId, fields: { accent: '#00B8D4' } }),
+    });
+    const frames = (await live).map((f) => f.data.state);
+    eq('changing the accent reaches an open browser source', frames.length, 2);
+    eq('...with the new colour', frames[1]?.accent, '#00b8d4');
+    eq('...and the highlight untouched', frames[1]?.highlight, '#c8aa6e');
+
+    /*
+     * SILENT WHEN NOTHING MOVED, and this is the assertion that keeps the
+     * feature affordable. Every request that resolves a tournament pushes the
+     * record through the brand store, so without the comparison inside `set` a
+     * browser source would take a frame per HTTP request for the whole
+     * broadcast - on seven connections.
+     */
+    const quiet = (async () => collect((`${BASE}/api/winner/events?key=${encodeURIComponent(key)}`), ['brand'], 1500))();
+    await wait(250);
+    await fetch(`${BASE}/api/tournaments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ action: 'update', id: tournamentId, fields: { name: 'Renamed, same colours' } }),
+    });
+    for (let i = 0; i < 6; i += 1) await get('/api/winner');
+    eq('a save that changed no colour sends nothing', (await quiet).length, 1);
+
+    // Blank is a real answer and means "the house default" - it is what makes
+    // the tournament itself able to inherit, and what Reset to default writes.
+    const cleared = await (
+      await fetch(`${BASE}/api/tournaments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ action: 'update', id: tournamentId, fields: { accent: '' } }),
+      })
+    ).json();
+    eq('blank is stored as blank, not as a colour', cleared.tournament.accent, '');
+    const back = await brandOn(`/api/lineup/events?key=${encodeURIComponent(key)}`, 500);
+    eq('...and resolves to the house default on the wire', back[0]?.accent, '#ff4655');
+
+    /*
+     * Junk keeps what was there. A colour that vanishes when you look away is
+     * worse than one that is visibly wrong - the rule every hex field here
+     * uses.
+     *
+     * A real colour is stored FIRST, because the first version of this asserted
+     * against a highlight that had never been set: blank is also what junk
+     * leaves behind, so it passed without proving anything about the fallback.
+     */
+    await fetch(`${BASE}/api/tournaments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ action: 'update', id: tournamentId, fields: { highlight: '#ffcc00' } }),
+    });
+    const junked = await (
+      await fetch(`${BASE}/api/tournaments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ action: 'update', id: tournamentId, fields: { highlight: 'cornflower' } }),
+      })
+    ).json();
+    eq('junk does not overwrite a good colour', junked.tournament.highlight, '#ffcc00');
   }
 
   // --------------------------------------------------------------- the log ---

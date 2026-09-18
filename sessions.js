@@ -31,6 +31,7 @@ import { makeScheduleStore } from './schedule.js';
 import { makeVetoStore } from './veto.js';
 import {
   makeAliasStore,
+  makeBrandStore,
   makeGlobalStore,
   makePresetStore,
   makeTeamStore,
@@ -166,6 +167,24 @@ export function makeSessionRegistry({ root, onCreate, onDispose, log = () => {} 
       const stores = {};
       for (const [key, make, file] of SHARED_STORES) stores[key] = make(path.join(dir, file));
       await Promise.all(SHARED_STORES.map(([key]) => stores[key].load()));
+
+      /*
+       * The event's colours, and the one shared thing with no file behind it.
+       *
+       * Outside SHARED_STORES because every entry in that list is
+       * `[key, make, file]` and this one has nothing to read: an accent lives
+       * on the TOURNAMENT record beside the name and the dates, and a second
+       * copy on disk would be a second source of truth for one fact. server.js
+       * pushes the record through it whenever one is resolved.
+       *
+       * Shared rather than per-desk, deliberately. A colour is a property of
+       * the competition, so changing it has to reach Court 2's browser sources
+       * as well - and a per-desk copy would only be refreshed by a REQUEST for
+       * that desk, which a court sitting idle on an open SSE stream never
+       * makes.
+       */
+      stores.brand = makeBrandStore();
+
       shared.set(id, stores);
       sharing.delete(id);
       return stores;
