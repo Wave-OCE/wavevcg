@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { openAsAdmin } from './harness.mjs';
 import { bracketLayout } from '../../public/schedule-schema.js';
-import { bracketChampion } from '../../public/bracket-graphic-schema.js';
+import { DEFAULT_BRACKET_GRAPHIC, bracketChampion } from '../../public/bracket-graphic-schema.js';
 
 const PROJECT = fileURLToPath(new URL('../../', import.meta.url));
 const PORT = 8182;
@@ -287,6 +287,43 @@ try {
   await post('/api/bracket', { state: { ...shown.state, anim: { ...shown.state.anim, visible: true } } }, '&bus=preview');
   await post('/api/take', { graphic: 'bracket' });
   ok('26 ...but showing it does', (await get('/api/bracket')).state.anim.cue !== cueBefore, 'cue did not move');
+
+  // --------------------------------------------------------- the colours ---
+  /*
+   * Two colours the operator owns, and BLANK is a real answer.
+   *
+   * Blank means "whatever the stylesheet says", so the built-in look lives in
+   * one place - the CSS - rather than being duplicated into the schema as a
+   * default that then has to be kept in step with it. A plain text field would
+   * have stored the empty string and the page would have painted black.
+   */
+  {
+    let c = await post('/api/bracket', { state: { ...(await get('/api/bracket', '&bus=preview')).state, accent: '#C8AA6E', trim: '#c9424f' } }, '&bus=preview');
+    eq('27a the highlight colour is stored, lowercased', c.body.state.accent, '#c8aa6e');
+    eq('27b ...and the trim beside it', c.body.state.trim, '#c9424f');
+
+    c = await post('/api/bracket', { state: { ...c.body.state, accent: 'rebeccapurple' } }, '&bus=preview');
+    eq('27c a colour that is not a hex is refused rather than stored', c.body.state.accent, '');
+
+    c = await post('/api/bracket', { state: { ...c.body.state, accent: '#abc' } }, '&bus=preview');
+    eq('27d a three-digit hex is a hex', c.body.state.accent, '#abc');
+
+    c = await post('/api/bracket', { state: { ...c.body.state, accent: '', trim: '' } }, '&bus=preview');
+    ok('27e blank survives, because unset is a state', c.body.state.accent === '' && c.body.state.trim === '');
+
+    /*
+     * And they survive a Load, like the rest of the operator's work - the
+     * colours are set once before a season and a Load means "the draw moved".
+     */
+    await post('/api/bracket', { state: { ...c.body.state, accent: '#112233' } }, '&bus=preview');
+    const reloaded = await post('/api/bracket', { action: 'load', id: 'playoffs' }, '&bus=preview');
+    eq('27f the colours survive a Load', reloaded.body.state.accent, '#112233');
+
+    /* The winner panel's default wording is the reference board's: the same
+     * line above and below the crest, which is what `footer` is for. */
+    eq('27g the panel says the placing top and bottom by default', DEFAULT_BRACKET_GRAPHIC.winner.footer, '1ST PLACE');
+    eq('27h ...and adds nothing else unless asked', DEFAULT_BRACKET_GRAPHIC.winner.heading, '');
+  }
 
   // ------------------------------------------------------------ the gate ---
   const keyRead = await fetch(`${BASE}/api/bracket?key=${encodeURIComponent(key)}`);

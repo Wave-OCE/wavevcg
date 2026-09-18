@@ -201,7 +201,14 @@ function placeDraw(state) {
   const LEFT = 72;
   const TOP = 168;
   const BOTTOM = 120;
-  const PANEL = state.winner?.show ? 330 + 72 + 48 : 72;
+  /*
+   * The panel's width comes from the STYLESHEET, via the custom property it
+   * declares. One number in one place: hard-coding it here is how the draw
+   * comes to be centred against a panel that is no longer that wide, and the
+   * only symptom is a bracket sitting slightly off to one side.
+   */
+  const panelW = Number.parseFloat(getComputedStyle(winner).getPropertyValue('--panel-w')) || 320;
+  const PANEL = state.winner?.show ? panelW + 72 + 48 : 72;
 
   const availW = STAGE_W - LEFT - PANEL;
   const availH = STAGE_H - TOP - BOTTOM;
@@ -240,6 +247,19 @@ function paintWinner(state) {
 
 function render(state) {
   if (!state) return;
+
+  /*
+   * The two colours the operator owns, as custom properties on the board.
+   *
+   * Set rather than removed when blank: `setProperty(name, '')` clears the
+   * declaration, so the stylesheet's own value comes back and "unset" is a real
+   * state rather than a black graphic. That is why the schema keeps blank as
+   * blank instead of defaulting it to a hex.
+   */
+  board.style.setProperty('--accent', state.accent || '');
+  board.style.setProperty('--slot-won', state.accent || '');
+  board.style.setProperty('--flow', state.accent || '');
+  board.style.setProperty('--trim', state.trim || '');
 
   stageName.textContent = (state.stageName || '').toUpperCase();
   eyebrow.textContent = (state.heading || '').toUpperCase();

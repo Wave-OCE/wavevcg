@@ -43,6 +43,11 @@
         </div>
 
         <div class="winner" id="winner">
+          <!-- Four corner marks, two per element: .winner's own pseudo-elements
+               do the top-left and bottom-right, this one does the other two.
+               Drawn from borders rather than imported, so the trim colour is a
+               custom property and no asset has to be re-exported to restyle. -->
+          <div class="winner-corners" aria-hidden="true"></div>
           <div class="winner-footer" id="winner-top"></div>
           <!-- The middle is its own flex column so the heading and the label
                stay centred together when there is no crest to show. Without it

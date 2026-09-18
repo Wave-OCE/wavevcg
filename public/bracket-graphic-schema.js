@@ -55,6 +55,19 @@ const whole = (value, min, max, fallback = min) => {
   return Math.min(max, Math.max(min, number));
 };
 
+/*
+ * A hex colour, or blank.
+ *
+ * Blank is a real answer - it means "whatever the stylesheet says" - so an
+ * empty string survives rather than falling back to black, which is what a
+ * plain text field would have stored and what would have painted.
+ */
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const hex = (value) => {
+  const candidate = String(value ?? '').trim();
+  return HEX.test(candidate) ? candidate.toLowerCase() : '';
+};
+
 const number = (value, fallback = 0) => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -113,10 +126,17 @@ const link = (input) => {
  */
 const DEFAULT_WINNER_PANEL = {
   show: false,
-  heading: '1ST PLACE',
+  /*
+   * `footer` is printed ABOVE and BELOW the art, which is why it carries the
+   * placing rather than the word "winner": on the reference board the same line
+   * appears top and bottom and frames the crest between them. `heading` and
+   * `label` are the extra lines a show may want and default to nothing, so the
+   * panel out of the box is exactly the reference - two labels and a picture.
+   */
+  heading: '',
   label: '',
   image: '',
-  footer: 'WINNER',
+  footer: '1ST PLACE',
 };
 
 const winnerPanel = (input, base = DEFAULT_WINNER_PANEL) => {
@@ -143,6 +163,21 @@ export const DEFAULT_BRACKET_GRAPHIC = {
   flow: true,
   showScores: true,
   winner: { ...DEFAULT_WINNER_PANEL },
+  /*
+   * The two colours a show actually restyles, and no more.
+   *
+   * `accent` is the HIGHLIGHT - the slot of whoever went through, the flow
+   * along the edges, the eyebrow. `trim` is the FRAME - the corner marks on the
+   * winner panel. They are separate because they mean different things: one
+   * says "this team won" and the other is the show's furniture, and a single
+   * colour for both makes the winner's slot the same colour as a decoration.
+   *
+   * Blank means "use the stylesheet's", so a show that restyles nothing is
+   * unaffected and the defaults stay in one place - the CSS - rather than being
+   * duplicated here.
+   */
+  accent: '',
+  trim: '',
   eventLogo: '',
   anim: { visible: false, cue: 0 },
 };
@@ -181,6 +216,8 @@ export function sanitiseBracketGraphic(input, fallback = DEFAULT_BRACKET_GRAPHIC
     flow: typeof source.flow === 'boolean' ? source.flow : (base.flow ?? true),
     showScores: typeof source.showScores === 'boolean' ? source.showScores : (base.showScores ?? true),
     winner: winnerPanel(source.winner, base.winner ?? DEFAULT_WINNER_PANEL),
+    accent: hex(source.accent ?? base.accent),
+    trim: hex(source.trim ?? base.trim),
     eventLogo: text(source.eventLogo ?? base.eventLogo, 500),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),

@@ -19,7 +19,7 @@
  *   that types nothing still gets the right team.
  */
 
-import { el, field, grid, help, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { api, outputUrl, targetKey } from './session.js';
@@ -47,6 +47,7 @@ const els = {
   open: $('b-open'),
   preview: $('b-preview'),
   stage: $('bed-stage'),
+  colours: $('bed-colours'),
   style: $('bed-style'),
 };
 
@@ -77,6 +78,20 @@ if (els.tab) {
   }
 
   const save = (patch) => post({ state: { ...state, ...patch } });
+
+  /*
+   * The shared field builders, pointed at the live state.
+   *
+   * `makeFields` writes through `writePath` into whatever the getter returns
+   * and then calls back - so a colour picker mutates `state` in place and the
+   * callback posts it. Using the shared builder rather than hand-rolling an
+   * `<input type=color>` is the standing rule about schema-driven controls, and
+   * it is what gets the bound-and-resynced behaviour for free.
+   */
+  const fields = makeFields(
+    () => state,
+    () => save({}),
+  );
 
   /**
    * What the stage would draw as RIGHT NOW, for the staleness note.
@@ -146,6 +161,42 @@ if (els.tab) {
               `${state.nodes.length} matches across ${state.columns} round${state.columns === 1 ? '' : 's'}` +
                 (champion ? ` - ${champion.shortName || champion.name} have won it.` : '.'),
             ),
+          ]
+        : []),
+    );
+  }
+
+  /**
+   * The two colours, and nothing else.
+   *
+   * ACCENT is the highlight - the slot of whoever went through, the flow along
+   * the edges, the eyebrow. TRIM is the frame, which today is the winner
+   * panel's corner marks. Two fields rather than one because they mean
+   * different things: one says "this team won" and the other is the show's
+   * furniture, and a single colour for both makes the winner's slot the same
+   * colour as a decoration.
+   *
+   * Built once, like the style card, because both hold inputs.
+   */
+  function coloursPanel() {
+    els.colours.replaceChildren(
+      title('Colours'),
+      help(
+        'Leave either one untouched and the graphic uses its built-in colour, so a show that restyles nothing is ' +
+          'unaffected.',
+      ),
+      grid(2, [fields.colourField('Highlight', 'accent'), fields.colourField('Trim', 'trim')]),
+      help(
+        'Highlight marks the team that went through, and runs along the bracket as the flow. Trim is the frame - ' +
+          'the corner marks on the winner panel.',
+      ),
+      ...(state.accent || state.trim
+        ? [
+            (() => {
+              const reset = el('button', 'btn btn-ghost', { type: 'button' }, 'Back to the built-in colours');
+              reset.addEventListener('click', () => save({ accent: '', trim: '' }));
+              return reset;
+            })(),
           ]
         : []),
     );
@@ -247,6 +298,7 @@ if (els.tab) {
     stagePanel();
     if (!styleBuilt) {
       stylePanel();
+      coloursPanel();
       styleBuilt = true;
     }
   }

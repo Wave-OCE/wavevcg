@@ -224,23 +224,39 @@ body {
 /* ------------------------------------------------------------ the winner --- */
 
 /*
- * The panel the sheet leads to. Pinned to the right of the frame rather than
- * placed after the drawing, because the drawing's width varies with the format
- * and the panel must not move between a quarter-final and a grand final.
+ * The panel the sheet leads to.
+ *
+ * A FIXED size, centred vertically, rather than stretched between a top and a
+ * bottom inset. Stretching made it 888px tall on a 1080 frame - a column of
+ * mostly nothing with a label at each end - where what it is is a card: two
+ * lines framing a crest. The height is its own now and the drawing beside it is
+ * centred against what is left.
+ *
+ * Pinned to the right rather than placed after the drawing, because the
+ * drawing's width varies with the format and the panel must not move between a
+ * quarter-final and a grand final.
+ *
+ * `--panel-w` is read by bracket.js when it centres the draw. One number, in
+ * one place: the two cannot disagree about how much room the panel takes.
  */
 .winner {
+  --panel-w: 320px;
+  --panel-h: 412px;
+
   position: absolute;
   right: 72px;
-  top: 96px;
-  bottom: 96px;
-  width: 330px;
+  top: calc(50% - var(--panel-h) / 2);
+  width: var(--panel-w);
+  height: var(--panel-h);
   background: #05070b;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 26px 22px;
+  padding: 18px 16px;
   opacity: 0;
-  transform: scale(0.97);
+  /* translate stays out of the entrance: the panel is centred by `top`, so the
+     transform is free for the animation and the two never fight. */
+  transform: scale(0.96);
   transition:
     opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1),
     transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -251,14 +267,28 @@ body {
   transform: scale(1);
 }
 
-/* The corner marks. Drawn rather than imported - four borders and no asset. */
+/*
+ * The corner marks: all FOUR, drawn from borders rather than imported.
+ *
+ * Two elements at two corners each - .winner's own pseudo-elements and the
+ * .winner-corners child's. No asset, which is what lets `--trim` restyle them
+ * from the dashboard instead of somebody re-exporting a PNG.
+ */
 .winner::before,
-.winner::after {
+.winner::after,
+.winner-corners::before,
+.winner-corners::after {
   content: '';
   position: absolute;
-  width: 46px;
-  height: 46px;
-  border: 5px solid #c9424f;
+  width: 38px;
+  height: 38px;
+  border: 5px solid var(--trim, #c9424f);
+}
+
+.winner-corners {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .winner::before {
@@ -275,19 +305,34 @@ body {
   border-top: 0;
 }
 
+.winner-corners::before {
+  right: -5px;
+  top: -5px;
+  border-left: 0;
+  border-bottom: 0;
+}
+
+.winner-corners::after {
+  left: -5px;
+  bottom: -5px;
+  border-right: 0;
+  border-top: 0;
+}
+
 .winner-footer,
 .winner-heading {
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--ink-dim);
+  color: var(--ink);
+  flex: none;
 }
 
 .winner-heading {
-  font-size: 22px;
-  letter-spacing: 0.14em;
-  color: var(--ink);
+  font-size: 17px;
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
 }
 
 .winner-middle {
@@ -301,7 +346,7 @@ body {
 }
 
 .winner-art {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   width: 100%;
   display: flex;
@@ -317,7 +362,7 @@ body {
 }
 
 .winner-label {
-  font-size: 30px;
+  font-size: 24px;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
