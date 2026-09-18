@@ -1021,16 +1021,112 @@ try {
     (await page.textContent('#sch-body')).slice(0, 80),
   );
 
-  page.once('dialog', (d) => d.accept('Playoffs'));
+  /*
+   * ADDING A STAGE OPENS ITS EDITOR, rather than asking for a name in a prompt.
+   *
+   * That prompt was the only place a stage could ever be named - there was no
+   * rename anywhere in the program, so a typo made at speed on a show day was
+   * permanent short of hand-editing schedule.json. 27d2 is the assertion that
+   * it can now be fixed.
+   */
   await page.click('#sch-body button:has-text("Add stage")');
+  await wait(900);
+  ok('27c2. adding a stage opens its editor', await page.isVisible('.rl-modal'), 'no modal');
+  ok(
+    '27c3. ...on document.body, outside the painted page',
+    await page.evaluate(() => document.querySelector('.rl-modal').parentElement === document.body),
+  );
+
+  await page.fill('.rl-modal input[type=text]', 'Playoffs');
+  await page.click('.rl-modal-foot .btn-primary');
   await wait(900);
   ok('27d. a stage can be added', (await page.textContent('.sch-stage')).startsWith('Playoffs'), await page.textContent('.sch-stage'));
   ok('27e. ...and its fixture count is on the pill', (await page.textContent('.sch-stage')).includes('(0)'));
+
+  /*
+   * AND RENAMED, which nothing in this program could do before. The same form,
+   * reopened - one dialog per thing, which is the shape the match editor and
+   * the team editor already use.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  ok('27d2. the editor reopens on the stage that is showing', (await page.inputValue('.rl-modal input[type=text]')) === 'Playoffs', await page.inputValue('.rl-modal input[type=text]'));
+  await page.fill('.rl-modal input[type=text]', 'Playoff bracket');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(900);
+  ok('27d3. ...and renaming one works', (await page.textContent('.sch-stage')).startsWith('Playoff bracket'), await page.textContent('.sch-stage'));
+
+  /*
+   * The page itself keeps NO control for any of this - the strip, the summary,
+   * the bracket and the table are all read-only. That is what lets the whole
+   * page repaint on any change, and it is the property a well-meaning "just put
+   * the format select back on the page" would quietly undo.
+   */
+  const scheduleInputs = await page.$$('#sch-body input, #sch-body select, #sch-body textarea');
+  ok('27d4. the schedule page itself carries no form control', scheduleInputs.length === 0, String(scheduleInputs.length));
+
+  /*
+   * Cancelling writes NOTHING, and asks first because a stage editor holds a
+   * draft - the same guard every other dialog in this program has.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(600);
+  await page.fill('.rl-modal input[type=text]', 'Never saved');
+  await page.click('.rl-modal-foot .btn-ghost >> nth=-1');
+  await wait(400);
+  ok('27d5. leaving with something typed asks first', (await page.$$('.rl-modal-ask')).length === 1);
+  await page.click('.rl-modal-ask .rl-modal-ask-danger');
+  await wait(800);
+  ok('27d6. ...and discarding writes nothing', (await page.textContent('.sch-stage')).startsWith('Playoff bracket'), await page.textContent('.sch-stage'));
 
   await page.click('#sch-body button:has-text("Add fixture")');
   await wait(800);
   ok('27f. a fixture can be added', (await page.$$('.sch-fixture')).length === 1, String((await page.$$('.sch-fixture')).length));
   ok('27g. ...and starts as scheduled', (await page.textContent('.sch-fixture .sch-status')) === 'Scheduled');
+
+  /*
+   * DELETING A STAGE THAT HOLDS MATCHES.
+   *
+   * It used to be refused outright - "move or remove them first" - which meant
+   * a group stage laid out by mistake was sixteen deletions before the stage
+   * itself would go. It is possible now, behind the bar this program already
+   * sets for anything irreversible: the exact name typed back.
+   *
+   * The button is DISABLED until it matches, so the confirmation is visible
+   * before the click rather than being a dialog after it - the same shape
+   * removing a production uses. Asserted without actually deleting, because
+   * everything below still needs this stage; the delete itself is pinned
+   * server-side in schedule-e2e.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  const guard = await page.evaluate(() => {
+    const drop = document.querySelector('.rl-modal-danger');
+    const box = document.querySelector('.rl-modal input[aria-label="Type the stage name to confirm"]');
+    return { label: drop?.textContent ?? '', disabled: drop?.disabled, hasBox: Boolean(box) };
+  });
+  ok('27g2. a stage holding matches offers to take them with it', /1 match/.test(guard.label), JSON.stringify(guard));
+  ok('27g3. ...and asks for the name back', guard.hasBox === true, JSON.stringify(guard));
+  ok('27g4. ...with Delete disabled until it matches', guard.disabled === true, JSON.stringify(guard));
+
+  await page.fill('.rl-modal input[aria-label="Type the stage name to confirm"]', 'Playoff bracke');
+  await wait(200);
+  ok(
+    '27g5. a name that is nearly right does not arm it',
+    await page.evaluate(() => document.querySelector('.rl-modal-danger').disabled === true),
+  );
+  await page.fill('.rl-modal input[aria-label="Type the stage name to confirm"]', 'Playoff bracket');
+  await wait(200);
+  ok(
+    '27g6. ...and the exact name does',
+    await page.evaluate(() => document.querySelector('.rl-modal-danger').disabled === false),
+  );
+
+  // Out the safe way. Escape rather than Cancel, because the typed name is a
+  // CONFIRMATION rather than work and must not raise the discard prompt.
+  await page.keyboard.press('Escape');
+  await wait(500);
+  ok('27g7. leaving after typing only the confirmation does not ask', (await page.$$('.rl-modal')).length === 0);
 
   /*
    * No stray text nodes. replaceChildren STRINGIFIES what it is handed, so a
@@ -1059,11 +1155,17 @@ try {
    *
    * The stage added above is a round robin by default, so it draws a table.
    * Switching it to a bracket is what puts a drawing on the page, and doing it
-   * through the select is the operator's own path rather than a fixture posted
+   * through the FORM is the operator's own path rather than a fixture posted
    * behind the page's back.
+   *
+   * The format select lives in the stage editor now, not on the page - see
+   * 27d4, which is the assertion that keeps it there.
    */
-  await page.selectOption('#sch-body select[aria-label="Stage kind"]', 'bracket');
-  await wait(900);
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(600);
+  await page.selectOption('.rl-modal select[aria-label="Format"]', 'bracket');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1000);
   ok('27i. a bracket stage draws a bracket', await page.isVisible('.sch-bracket'));
   ok('27j. ...with a node for the fixture', (await page.$$('.sch-node')).length === 1, String((await page.$$('.sch-node')).length));
   ok('27k. ...and no standings table', (await page.$$('#sch-body .sch-table')).length === 0);

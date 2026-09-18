@@ -136,8 +136,53 @@ try {
   ok('8. generating into a stage that does not exist is refused', r.status === 400, String(r.status));
 
   r = await boss(here('/api/schedule'), json({ action: 'stage.remove', id: 'group-a' }));
-  ok('9. a stage holding fixtures cannot be removed', r.status === 400, r.text.slice(0, 160));
-  ok('10. ...and it says how many', /7 fixtures/.test(r.json?.error?.message ?? ''), r.json?.error?.message);
+  /*
+   * REMOVING A STAGE THAT HOLDS MATCHES.
+   *
+   * It used to be refused outright - "move or remove them first" - which is
+   * right about the danger and wrong about the remedy: a group stage laid out
+   * by mistake was sixteen deletions before the stage itself would go, and an
+   * operator doing that at speed is likelier to delete the wrong thing than one
+   * confirmation ever was.
+   *
+   * So it is possible now, behind the bar this codebase already sets for
+   * anything irreversible: the exact name typed back. A confirm dialog is
+   * answered "yes" by reflex and a name is not.
+   */
+  ok('9. a stage holding matches is not removed on the bare ask', r.status === 400, r.text.slice(0, 160));
+  ok('10. ...and it says how many would go', /7 match/.test(r.json?.error?.message ?? ''), r.json?.error?.message);
+  ok('10a. ...and says nothing has happened yet', /nothing has been removed/i.test(r.json?.error?.hint ?? ''), JSON.stringify(r.json?.error));
+
+  r = await boss(here('/api/schedule'), json({ action: 'stage.remove', id: 'group-a', confirm: 'group a' }));
+  ok('10b. a name that is nearly right is still refused', r.status === 400, r.text.slice(0, 120));
+
+  /*
+   * The destructive half runs on a stage of its OWN, built here and thrown
+   * away, so the assertions below still have Group A's seven matches to work
+   * on. A suite that deletes the fixture everything after it reads is a suite
+   * that reports the wrong failure.
+   */
+  await boss(here('/api/schedule'), json({ action: 'stage.save', stage: { name: 'Doomed', kind: 'bracket', bestOf: 3 } }));
+  await boss(here('/api/schedule'), json({ action: 'fixture.save', fixture: { stageId: 'doomed', round: 1, slot: 0, bestOf: 3 } }));
+  const doomedBefore = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'doomed');
+  ok('10c. the throwaway stage has a match in it', doomedBefore.length === 1, String(doomedBefore.length));
+
+  r = await boss(here('/api/schedule'), json({ action: 'stage.remove', id: 'doomed', confirm: 'Doomed' }));
+  ok('10d. the exact name removes it', r.status === 200, r.text.slice(0, 160));
+  const afterDoom = (await boss(here('/api/schedule'))).json.schedule;
+  ok('10e. ...and the stage is gone', !afterDoom.stages.some((entry) => entry.id === 'doomed'), JSON.stringify(afterDoom.stages.map((x) => x.id)));
+  ok('10f. ...and its matches went with it', !afterDoom.fixtures.some((f) => f.stageId === 'doomed'), JSON.stringify(afterDoom.fixtures.map((f) => f.stageId)));
+  ok('10g. ...and every other stage is untouched', afterDoom.fixtures.filter((f) => f.stageId === 'group-a').length === 7, String(afterDoom.fixtures.filter((f) => f.stageId === 'group-a').length));
+
+  /*
+   * An EMPTY stage needs no name typed at all. There is nothing to lose, and
+   * asking anyway would train the answer out of people for the case that
+   * matters - which is the one directly above.
+   */
+  await boss(here('/api/schedule'), json({ action: 'stage.save', stage: { name: 'Empty', kind: 'bracket', bestOf: 3 } }));
+  r = await boss(here('/api/schedule'), json({ action: 'stage.remove', id: 'empty' }));
+  ok('10h. an empty stage goes with no confirmation', r.status === 200, r.text.slice(0, 160));
+  ok('10i. ...and is really gone', !(await boss(here('/api/schedule'))).json.schedule.stages.some((e) => e.id === 'empty'));
 
   // ---------------------------------------------------------- the results ---
 

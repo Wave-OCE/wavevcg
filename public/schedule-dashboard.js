@@ -40,7 +40,7 @@
 
 import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
-import { askClose, modalOpen, openModal, watchChanges } from './modal.js';
+import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
@@ -137,63 +137,224 @@ if (host) {
       row.append(pill);
     }
 
+    /*
+     * Add makes the stage and opens its editor, rather than asking for a name
+     * in a prompt first.
+     *
+     * That prompt was the only place a stage could ever be named: there was no
+     * rename anywhere in the program, so a typo made at speed on a show day was
+     * permanent short of hand-editing schedule.json. Making the record and then
+     * opening the real form is one fewer dialog AND the thing that fixes it,
+     * because the same form renames.
+     */
     const add = el('button', 'btn btn-small', { type: 'button' }, 'Add stage');
     add.addEventListener('click', () => {
-      const name = window.prompt('What is this stage called?\n\ne.g. Group A, Playoffs, Grand Final');
-      if (!name?.trim()) return;
-      act({ action: 'stage.save', stage: { name: name.trim(), kind: 'bracket', bestOf: 3 } }, () => {
-        openStage = doc.stages.find((entry) => entry.name === name.trim())?.id ?? openStage;
+      act({ action: 'stage.save', stage: { name: 'New stage', kind: 'bracket', bestOf: 3 } }, () => {
+        const made = doc.stages.find((entry) => entry.name === 'New stage');
+        if (!made) return;
+        openStage = made.id;
+        paint();
+        openStageEditor(made);
       });
     });
     row.append(add);
 
+    const edit = el('button', 'btn btn-small btn-ghost', { type: 'button' }, 'Edit stage');
+    edit.disabled = !doc.stages.length;
+    edit.addEventListener('click', () => {
+      const stage = stageOf(openStage);
+      if (stage) openStageEditor(stage);
+    });
+    row.append(edit);
+
     return row;
   }
 
-  function stageSettings(stage) {
+  /**
+   * What the open stage IS, read-only, under the strip.
+   *
+   * It used to be the settings themselves - a format select, a series select
+   * and two buttons, each writing on change. They have moved into a modal, and
+   * what is left here is a sentence.
+   *
+   * Two reasons, and the second is the one that matters. A stage has more to
+   * say than fits on a strip - it is about to have groups and templates - and a
+   * row of controls that grows with every feature is what an operator scrolls
+   * past. And a form that writes on every `change` can never promise that
+   * Cancel meant nothing happened, which is the promise the match editor beside
+   * it already makes; two editors on one page with two different ideas of when
+   * a thing is saved is worse than either one.
+   *
+   * No control in here, so it repaints freely - the caret rule, obeyed by not
+   * having the problem, which is how the rest of this page is built.
+   */
+  function stageSummary(stage) {
     const card = el('div', 'sch-stage-settings');
+    const kind = STAGE_KINDS.find((entry) => entry.key === stage.kind);
+    const held = fixturesIn(stage.id).length;
 
-    const kind = el('select', null, { 'aria-label': 'Stage kind' });
+    card.append(
+      el('span', 'sch-label', {}, 'Format'),
+      el('span', null, {}, kind?.label ?? stage.kind),
+      el('span', 'sch-label', {}, 'Series'),
+      el('span', null, {}, `Best of ${stage.bestOf}`),
+      el('span', 'sch-label', {}, 'Matches'),
+      el('span', null, {}, String(held)),
+    );
+    return card;
+  }
+
+  /**
+   * Everything about ONE stage, in a modal.
+   *
+   * The same shape the match editor and the team editor use, and deliberately
+   * so: one dialog per thing, built on document.body, saving ONCE so Cancel
+   * really does mean nothing happened, and asking before it throws away unsaved
+   * work. An operator who has learnt one of these has learnt all three.
+   */
+  function openStageEditor(stage) {
+    if (modalOpen()) return;
+
+    const draft = { ...stage };
+    let dialog = null;
+    const body = el('div', 'rl-modal-body');
+    const held = fixturesIn(stage.id).length;
+
+    const name = el('input', null, { type: 'text', maxlength: 80, 'aria-label': 'Stage name' });
+    name.value = draft.name ?? '';
+    name.addEventListener('input', () => {
+      draft.name = name.value;
+    });
+
+    const kind = el('select', null, { 'aria-label': 'Format' });
     for (const entry of STAGE_KINDS) {
-      kind.append(el('option', null, { value: entry.key, selected: entry.key === stage.kind ? 'selected' : null }, entry.label));
+      kind.append(el('option', null, { value: entry.key, selected: entry.key === draft.kind ? 'selected' : null }, entry.label));
     }
-    kind.addEventListener('change', () => act({ action: 'stage.save', stage: { ...stage, kind: kind.value } }));
+    const kindHelp = help('');
+    const syncKind = () => {
+      kindHelp.textContent = STAGE_KINDS.find((entry) => entry.key === kind.value)?.help ?? '';
+    };
+    kind.addEventListener('change', () => {
+      draft.kind = kind.value;
+      syncKind();
+    });
+    syncKind();
 
     const best = el('select', null, { 'aria-label': 'Default series length' });
     for (const value of BEST_OF_CHOICES) {
-      best.append(el('option', null, { value: String(value), selected: value === stage.bestOf ? 'selected' : null }, `Best of ${value}`));
+      best.append(el('option', null, { value: String(value), selected: value === draft.bestOf ? 'selected' : null }, `Best of ${value}`));
     }
-    best.addEventListener('change', () =>
-      act({ action: 'stage.save', stage: { ...stage, bestOf: Number(best.value) } }),
-    );
+    best.addEventListener('change', () => {
+      draft.bestOf = Number(best.value);
+    });
 
-    const gen = el('button', 'btn btn-small', { type: 'button' }, 'Generate fixtures');
-    gen.addEventListener('click', () => generate(stage));
-
-    const drop = el('button', 'btn btn-small btn-ghost', { type: 'button' }, 'Remove stage');
-    drop.addEventListener('click', () => {
-      const holding = fixturesIn(stage.id).length;
-      if (holding) {
-        // The server refuses this too. Saying so here means the operator finds
-        // out before a round trip, and finds out what to do about it.
-        toast(`"${stage.name}" still holds ${holding} fixture${holding === 1 ? '' : 's'}. Remove them first.`);
+    const save = el('button', 'btn btn-primary', { type: 'button' }, 'Save stage');
+    save.addEventListener('click', () => {
+      if (!String(draft.name ?? '').trim()) {
+        toast('A stage needs a name.');
         return;
       }
-      if (!window.confirm(`Remove "${stage.name}"?`)) return;
-      act({ action: 'stage.remove', id: stage.id }, () => {
-        openStage = doc.stages[0]?.id ?? '';
+      act({ action: 'stage.save', stage: draft }, () => {
+        toast(`Saved "${draft.name}"`);
+        dialog?.close();
       });
     });
 
-    card.append(
-      el('span', 'sch-label', {}, 'Kind'),
-      kind,
-      el('span', 'sch-label', {}, 'Series'),
-      best,
-      gen,
-      drop,
+    const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+    cancel.addEventListener('click', () => askClose(dialog));
+
+    /*
+     * Generate SAVES first, and the button says so.
+     *
+     * Laying a stage out reads the stage as the SERVER has it, so generating
+     * against a name or a format typed but not saved would use the old ones -
+     * and the matches that came back would quietly be for the stage as it was.
+     * One press that does both is the only version with no surprise in it.
+     */
+    const gen = el('button', 'btn btn-small', { type: 'button' }, 'Save and generate matches');
+    gen.addEventListener('click', () => {
+      if (!String(draft.name ?? '').trim()) {
+        toast('A stage needs a name.');
+        return;
+      }
+      act({ action: 'stage.save', stage: draft }, () => {
+        dialog?.close();
+        generate(stageOf(draft.id) ?? draft);
+      });
+    });
+
+    /*
+     * Removing it, and the bar rises with what it would take.
+     *
+     * An EMPTY stage is one press: there is nothing to lose, and asking anyway
+     * would train the answer out of somebody for the case below. A stage
+     * holding matches wants its name typed back - the bar a production and a
+     * tournament both set, because this deletes results nobody can get back.
+     *
+     * The button stays disabled until the typed name matches, so the
+     * confirmation is visible BEFORE the click rather than being a dialog
+     * after it. Same shape as removing a production.
+     */
+    const drop = el(
+      'button',
+      'btn btn-ghost rl-modal-danger',
+      { type: 'button' },
+      held ? `Delete stage and ${held} match${held === 1 ? '' : 'es'}` : 'Delete stage',
     );
-    return card;
+    let typed = null;
+
+    if (held) {
+      typed = el('input', null, { type: 'text', placeholder: stage.name, 'aria-label': 'Type the stage name to confirm' });
+      drop.disabled = true;
+      typed.addEventListener('input', () => {
+        drop.disabled = typed.value.trim() !== String(stage.name ?? '').trim();
+      });
+    }
+
+    drop.addEventListener('click', () => {
+      act({ action: 'stage.remove', id: stage.id, confirm: typed ? typed.value.trim() : undefined }, () => {
+        openStage = doc.stages[0]?.id ?? '';
+        toast(held ? `Deleted "${stage.name}" and ${held} match${held === 1 ? '' : 'es'}` : `Deleted "${stage.name}"`);
+        dialog?.close();
+      });
+    });
+
+    body.append(
+      modalTitle(stage.name || 'Stage', `${held} match${held === 1 ? '' : 'es'}`),
+      field('Name', name),
+      help('What this phase of the competition is called. It names the strip, the bracket graphic and the table.'),
+      grid(2, [field('Format', kind), field('Default series', best)]),
+      kindHelp,
+      help('The series length a NEW match in this stage starts at. Not a rule - a grand final in a Bo3 bracket is allowed to be a Bo5.'),
+      el('div', 'subhead', {}, 'Matches'),
+      help('Lays the stage out from the team library in one press. It ADDS to whatever is already here rather than replacing it.'),
+      stageRow([gen]),
+      el('div', 'subhead', {}, 'Delete'),
+      help(
+        held
+          ? 'This removes the stage AND every match in it, results included. That cannot be undone, so type the name to confirm.'
+          : 'Nothing is in this stage yet, so there is nothing to lose.',
+      ),
+      ...(typed ? [field('Type the name to confirm', typed)] : []),
+    );
+
+    // Snapshotted after the form is built, so nothing the form does to the
+    // draft on the way up reads as the operator's work - see modal.js.
+    const dirty = watchChanges(() => JSON.stringify(draft));
+
+    dialog = openModal({
+      body,
+      dirty,
+      foot: modalFoot({ danger: drop, cancel, confirm: save }),
+      onClose: () => paint(),
+    });
+  }
+
+  /** A row of buttons inside a modal, wrapping rather than overflowing it. */
+  function stageRow(children) {
+    const node = el('div', 'rl-modal-row');
+    node.append(...children.filter(Boolean));
+    return node;
   }
 
   /**
@@ -802,7 +963,7 @@ if (host) {
     host.replaceChildren(
       ...[
         stageStrip(),
-        stage ? stageSettings(stage) : null,
+        stage ? stageSummary(stage) : null,
         /*
          * The bracket goes ABOVE the list and the table goes below it, and the
          * asymmetry is the job rather than an oversight. A table is something

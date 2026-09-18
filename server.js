@@ -2134,7 +2134,14 @@ async function handlePlayerVerify(body) {
  * The level gate and the CSRF shape are both already applied once, above
  * `handlePost`, so there is nothing to check here. A viewer cannot reach it.
  */
-async function handleScheduleAction({ schedule }, body) {
+/**
+ * @param {object} bundle
+ * @param {object} body
+ * @param {{who?: string, tournament?: string}} [by] who asked, for the audit
+ *   line. Threaded in the way handleVetoAction takes its `who`: only one action
+ *   here is worth logging, and it is worth it because it destroys results.
+ */
+async function handleScheduleAction({ schedule }, body, by = {}) {
   const action = String(body?.action ?? '');
   const out = (document) => ({ schedule: document });
 
@@ -2157,20 +2164,85 @@ async function handleScheduleAction({ schedule }, body) {
      * labelled "remove stage". Naming the count makes the operator see the
      * consequence, and moving the fixtures out first is one more click.
      */
-    case 'stage.remove':
-      return out(
+    /*
+     * Removing a stage, and the matches in it.
+     *
+     * It used to REFUSE while a stage held anything - "move or remove them
+     * first" - which is right about the danger and wrong about the remedy: a
+     * group stage laid out by mistake is sixteen matches to delete one at a
+     * time before the stage itself will go, and an operator doing that at speed
+     * is more likely to delete the wrong thing than one confirmation ever was.
+     *
+     * So it is possible, behind the bar this codebase already sets for
+     * something irreversible: the exact name typed back. A confirm dialog is
+     * answered "yes" by reflex and a name is not - the same argument the
+     * tournament delete and the production removal both make, and this takes a
+     * competition's results with it.
+     *
+     * An EMPTY stage needs none of that. There is nothing to lose, and asking
+     * would train the answer out of people for the case that matters.
+     */
+    case 'stage.remove': {
+      const id = String(body?.id ?? '');
+      let removed = 0;
+      let name = '';
+
+      const result = out(
         schedule.apply((draft) => {
-          const id = String(body?.id ?? '');
+          const stage = draft.stages.find((entry) => entry.id === id);
+          if (!stage) throw badRequest('No such stage.');
+          name = String(stage.name ?? '');
+
           const holding = draft.fixtures.filter((entry) => entry.stageId === id);
           if (holding.length) {
-            throw badRequest(
-              `That stage still holds ${holding.length} fixture${holding.length === 1 ? '' : 's'}.`,
-              'Move or remove them first.',
-            );
+            const typed = String(body?.confirm ?? '').trim();
+            if (!typed || typed !== name.trim()) {
+              throw badRequest(
+                `"${name}" holds ${holding.length} match${holding.length === 1 ? '' : 'es'}, and removing it removes them too.`,
+                `Type ${name ? `"${name}"` : 'its name'} exactly to confirm. Nothing has been removed.`,
+              );
+            }
+
+            const gone = new Set(holding.map((entry) => entry.id));
+            draft.fixtures = draft.fixtures.filter((entry) => !gone.has(entry.id));
+            removed = gone.size;
+
+            /*
+             * Every edge that pointed INTO this stage goes with it, or the
+             * document will not validate - an edge must name a fixture that
+             * exists, and `apply` checks that before it assigns. Without this
+             * the whole write is refused with a message about a dangling edge,
+             * which is true and tells the operator nothing about what they did.
+             *
+             * Clearing the edge rather than the slot: whoever was already
+             * copied into it stays, which is the same thing propagation does
+             * and means a semi-final does not lose the team that reached it
+             * because the quarter-finals were deleted.
+             */
+            for (const fixture of draft.fixtures) {
+              for (const side of ['left', 'right']) {
+                if (gone.has(fixture[side]?.source?.fixtureId)) delete fixture[side].source;
+              }
+            }
           }
+
           draft.stages = draft.stages.filter((entry) => entry.id !== id);
         }),
       );
+
+      /*
+       * At WARN, and only when it took matches with it. That line is the only
+       * trace left of results somebody filed - the same reason deleting a
+       * tournament is logged at warn with its name.
+       */
+      if (removed) {
+        log.warn('schedule', `stage "${name}" removed with ${removed} match${removed === 1 ? '' : 'es'}`, {
+          tournament: by.tournament,
+          who: by.who,
+        });
+      }
+      return result;
+    }
 
     case 'fixture.save':
       return out(
@@ -6437,7 +6509,12 @@ async function handlePost(pathname, req, res, ctx, params) {
      * that list already excludes.
      */
     case '/api/schedule':
-      return handleWrite(res, async () => handleScheduleAction(bundle, await readJsonBody(req)));
+      return handleWrite(res, async () =>
+        handleScheduleAction(bundle, await readJsonBody(req), {
+          who: ctx.user?.username,
+          tournament: ctx.owner?.id,
+        }),
+      );
 
     /*
      * The operator's half of a veto. NOT in KEYED_ROUTES, either verb, and the
