@@ -40,7 +40,7 @@
 
 import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
-import { modalOpen, openModal } from './modal.js';
+import { askClose, modalOpen, openModal, watchChanges } from './modal.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
@@ -377,6 +377,15 @@ if (host) {
       maps: Array.from({ length: fixture.bestOf }, (_, i) => ({ ...emptyMapRow(), ...(fixture.maps[i] ?? {}) })),
     };
 
+    /*
+     * Snapshotted once the draft is complete and before anything is drawn.
+     *
+     * It has to be after the map rows are padded out to `bestOf` above: those
+     * rows are the form filling itself in, and taking the snapshot first would
+     * make every Bo3 with two maps played read as edited the moment it opened.
+     */
+    const dirty = watchChanges(() => JSON.stringify(draft));
+
     openFixture = fixture.id;
     const form = el('div', 'sch-modal-body');
 
@@ -439,7 +448,9 @@ if (host) {
     });
 
     const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-    cancel.addEventListener('click', () => dialog?.close());
+    // askClose rather than close - a match editor holds both teams, the series
+    // length and every map row, and none of it is written until Save.
+    cancel.addEventListener('click', () => askClose(dialog));
 
     const foot = el('div', 'sch-modal-foot');
     foot.append(drop, el('span', 'sch-modal-spacer'), tally, cancel, save);
@@ -454,6 +465,7 @@ if (host) {
     dialog = openModal({
       className: 'sch-modal',
       body: form,
+      dirty,
       foot,
       onClose: () => {
         openFixture = '';

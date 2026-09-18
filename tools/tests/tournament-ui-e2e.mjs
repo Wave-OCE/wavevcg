@@ -352,12 +352,104 @@ try {
    * ONE WRITE, so Cancel really does mean nothing happened - which a form
    * saving on every change could never promise, and which is the whole reason
    * an editor is worth moving into a dialog.
+   *
+   * The cost of that promise is that Cancel, Escape and the backdrop all throw
+   * the work away, and two of those three are reflexes. So leaving with
+   * something typed ASKS first - see modal.js - and what follows is both
+   * halves: the prompt appears, and taking the destructive answer still writes
+   * nothing at all.
    */
   await page.click('#wed-teams .team-card .mini-btn');
   await wait(600);
   ok('20m2. a saved team reopens in the modal', await page.isVisible('.rl-modal'));
+
+  /*
+   * NOT A NAG, and this is the assertion that keeps it one.
+   *
+   * Escape with nothing typed has to close immediately. A prompt in front of an
+   * operator who changed nothing is the one that teaches people to dismiss the
+   * prompt without reading it - on the dialog where it is telling the truth
+   * about thirty players.
+   */
+  await page.keyboard.press('Escape');
+  await wait(400);
+  ok(
+    '20m2a. leaving an untouched form does not ask',
+    (await page.$$('.rl-modal')).length === 0,
+    'a prompt with nothing to discard is a prompt nobody reads',
+  );
+
+  await page.click('#wed-teams .team-card .mini-btn');
+  await wait(600);
   await page.fill('.rl-modal input[type=text]', 'Never Saved');
+  await page.keyboard.press('Escape');
+  await wait(400);
+  ok('20m2b. Escape with something typed asks first', (await page.$$('.rl-modal-ask')).length === 1);
+  ok('20m2c. ...and the dialog is still there underneath', (await page.$$('.rl-modal')).length === 1);
+
+  /*
+   * THE PROMPT IS NOT A SECOND DIALOG. A second showModal() takes the focus
+   * trap with it and strands the first, which is the one rule modal.js has
+   * always had - and this is exactly the case where the first has to survive,
+   * because it is holding the work being asked about.
+   */
+  const askShape = await page.evaluate(() => {
+    const dialog = document.querySelector('dialog.rl-modal');
+    const ask = dialog?.querySelector('.rl-modal-ask');
+    if (!ask) return null;
+    const box = ask.getBoundingClientRect();
+    return {
+      dialogs: document.querySelectorAll('dialog').length,
+      inside: dialog.contains(ask),
+      focused: document.activeElement?.textContent ?? '',
+      /*
+       * `inset: 0` against a modal <dialog>, which the UA sheet positions and
+       * which is therefore the containing block for it. Measured rather than
+       * assumed: a browser that ever stopped doing that would paint this prompt
+       * off the corner of the screen with nothing else failing.
+       */
+      covers: Math.abs(box.width - dialog.clientWidth) < 1.5 && Math.abs(box.height - dialog.clientHeight) < 1.5,
+    };
+  });
+  ok('20m2d. the prompt is inside the open dialog, not a second one', askShape?.dialogs === 1 && askShape?.inside === true, JSON.stringify(askShape));
+  ok('20m2e. ...and covers it', askShape?.covers === true, JSON.stringify(askShape));
+  ok('20m2f. ...with the SAFE answer focused', askShape?.focused === 'Keep editing', JSON.stringify(askShape));
+
+  /*
+   * And the destructive answer stays on the FAR side of it at phone width.
+   *
+   * `.rl-modal-danger` reorders itself under 520px for the footer's sake, so
+   * borrowing that class for its colour put Discard where Keep editing sits on
+   * every wider screen - exactly the mis-tap the footer rule exists to prevent,
+   * introduced by reusing the rule that prevents it. Give the discard button
+   * `rl-modal-danger` back and this goes red at 420px.
+   */
+  await page.setViewportSize({ width: 420, height: 900 });
+  await wait(250);
+  const askOrder = await page.evaluate(() => {
+    const row = document.querySelector('.rl-modal-ask-row');
+    if (!row) return null;
+    return [...row.children]
+      .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+      .map((node) => node.textContent);
+  });
+  ok('20m2f2. ...and the destructive answer stays left of it on a phone', askOrder?.[0] === 'Discard changes', JSON.stringify(askOrder));
+  await page.setViewportSize({ width: 1500, height: 950 });
+  await wait(250);
+
+  await page.click('.rl-modal-ask .btn-primary');
+  await wait(300);
+  ok('20m2g. Keep editing puts the form back', (await page.$$('.rl-modal-ask')).length === 0);
+  ok(
+    '20m2h. ...with what was typed still in it',
+    (await page.inputValue('.rl-modal input[type=text]')) === 'Never Saved',
+    await page.inputValue('.rl-modal input[type=text]'),
+  );
+
   await page.click('.rl-modal-foot .btn-ghost >> nth=-1');
+  await wait(400);
+  ok('20m2i. Cancel asks too, not only Escape', (await page.$$('.rl-modal-ask')).length === 1);
+  await page.click('.rl-modal-ask .rl-modal-ask-danger');
   await wait(700);
   const teamsAfterCancel = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
   ok('20m3. cancelling writes nothing', !JSON.stringify(teamsAfterCancel.teams).includes('Never Saved'), JSON.stringify(teamsAfterCancel.teams?.[0]?.name));
@@ -502,6 +594,143 @@ try {
     (folded.players ?? []).some((row) => row.alias === 'ZEK'),
     JSON.stringify(folded.players),
   );
+
+  // ========================================== a spreadsheet of teams =========
+  /*
+   * The case this exists for: a competition's entry form arrives as a sheet
+   * with thirty-two orgs and a hundred and sixty players in it, and the
+   * alternative is opening the team editor a hundred and sixty times. That is
+   * where misspelled Riot IDs come from, and a misspelled Riot ID is a player
+   * the lobby matcher never finds.
+   *
+   * The PARSING is covered in team-roster.mjs, with no server and no browser,
+   * which is what lets it assert on exactly what a sheet turns into. What is
+   * here is the half only a browser can answer: that the button exists, that
+   * what it reads reaches the same import review the JSON library file uses,
+   * and that pressing the button puts the teams AND their players on the
+   * server.
+   *
+   * It runs LAST of the team assertions on purpose - it adds two teams that
+   * sort ahead of Sentinels, and the player search and the rename above both
+   * read the first row of something.
+   */
+  await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-teams"]');
+  await wait(700);
+
+  ok('20w. the panel offers a spreadsheet import', (await page.$('#wed-teams button:has-text("Import a spreadsheet")')) !== null);
+
+  await page.click('#wed-teams button:has-text("Import a spreadsheet")');
+  await wait(500);
+  ok('20w2. ...as a modal', await page.isVisible('.rl-modal'));
+
+  /*
+   * AND THE PANEL STILL HAS NO TEXT INPUT. 20a2 above says it has none and this
+   * says why the import had to be a dialog: the paste box IS a text input, the
+   * panel is rebuilt from scratch whenever any team is saved, and a textarea
+   * living in there would be emptied mid-paste by an event with nothing to do
+   * with it. On document.body it cannot be reached.
+   */
+  const panelInputs = await page.$$('#wed-teams input[type="text"], #wed-teams textarea');
+  ok('20w3. ...leaving the panel itself still free of text inputs', panelInputs.length === 0, String(panelInputs.length));
+
+  await page.fill(
+    '.rl-modal textarea',
+    [
+      'Team Name,Tricode,Region,Colour,Player Name,Riot ID,Seed',
+      'Rivertown,RIV,Americas,#2244cc,Alpha,Alpha#NA1,1',
+      'Rivertown,,,,Bravo,Bravo#NA1,1',
+      'Hillside,HILL,EMEA,not-a-colour,Charlie,CharlieNoTag,2',
+    ].join('\n'),
+  );
+  await page.click('.rl-modal .csv-actions .btn-small');
+  await wait(900);
+
+  ok('20w4. reading it closes the dialog', (await page.$$('.rl-modal')).length === 0);
+  const importPanel = (await page.textContent('#wed-teams')).replace(/\s+/g, ' ');
+  ok('20w5. ...and hands off to the ordinary import review', /Import teams/.test(importPanel), importPanel.slice(0, 80));
+  ok('20w6. ...counting the players as well as the teams', /2 teams and 3 players/.test(importPanel), importPanel.slice(0, 200));
+
+  /*
+   * What the sheet got wrong, ON THE PAGE with a line number against each one -
+   * not in a toast. A toast is gone in four seconds, and a sheet with sixty
+   * malformed Riot IDs in it is something an operator goes back to the
+   * spreadsheet to fix.
+   */
+  const problems = await page.$$eval('#wed-teams .csv-problem', (nodes) => nodes.map((n) => n.textContent));
+  ok('20w7. the sheet\'s problems are listed on the page', problems.length === 3, JSON.stringify(problems));
+  ok('20w8. ...each naming its line', problems.every((text) => /^line \d+/.test(text)), JSON.stringify(problems));
+  ok('20w9. ...including a colour that is not hex', problems.some((text) => /not-a-colour/.test(text)), JSON.stringify(problems));
+  ok('20w10. ...a Riot ID that will never verify', problems.some((text) => /CharlieNoTag/.test(text)), JSON.stringify(problems));
+  ok('20w11. ...and a column it does not understand', problems.some((text) => /Seed/.test(text)), JSON.stringify(problems));
+
+  await page.click('#wed-teams .team-form-actions .btn-primary');
+  await wait(1400);
+  const imported = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  const river = imported.teams.find((team) => team.name === 'Rivertown');
+  const hill = imported.teams.find((team) => team.name === 'Hillside');
+  ok('20w12. the teams reached the server', Boolean(river && hill), JSON.stringify(imported.teams.map((t) => t.name)));
+  ok('20w13. ...with their tricode and region', river?.shortName === 'RIV' && river?.region === 'Americas', JSON.stringify(river));
+  ok('20w14. ...their colour', river?.colour === '#2244cc', String(river?.colour));
+  ok('20w15. ...and their ROSTERS', river?.players?.length === 2, JSON.stringify(river?.players?.map((p) => p.displayName)));
+  ok('20w16. a value the sheet got wrong did not land', hill?.colour === '', String(hill?.colour));
+  ok('20w17. ...while a malformed Riot ID was kept as typed', hill?.players?.[0]?.riotId === 'CharlieNoTag', JSON.stringify(hill?.players?.[0]));
+
+  /*
+   * A player who came in on a sheet is a player, so the roster fold has to have
+   * reached the alias library too - the same write a typed roster makes. This
+   * is the assertion that a spreadsheet does not produce a second-class player.
+   */
+  const foldedIn = await (await fetch(`${BASE}/api/aliases`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok(
+    '20w18. an imported player is named in the alias library as well',
+    (foldedIn.players ?? []).some((row) => row.alias === 'Alpha'),
+    JSON.stringify((foldedIn.players ?? []).map((r) => r.alias)),
+  );
+
+  /*
+   * The roster paste inside the team editor, and the structural fact the whole
+   * thing rides on: it lives OUTSIDE `.roster-rows`, which `paint()` replaces
+   * every time a row is added or a verification lands. A textarea inside that
+   * container would be emptied by pressing Add player - the caret rule, inside
+   * a dialog that already met it by separation. Move it in and 20x2 goes red.
+   */
+  await page.click('#wed-teams .team-card:has-text("Rivertown") .mini-btn');
+  await wait(700);
+  ok('20x. the team editor offers a roster paste', (await page.$('.rl-modal .csv-fold')) !== null);
+  ok(
+    '20x2. ...outside the rows that repaint',
+    await page.evaluate(
+      () => !document.querySelector('.rl-modal .roster-rows')?.contains(document.querySelector('.rl-modal .csv-fold')),
+    ),
+  );
+
+  await page.click('.rl-modal .csv-fold > summary');
+  await wait(300);
+  await page.fill('.rl-modal .csv-fold textarea', 'Player name\tRiot ID\nCharlie\tCharlie#NA1\nAlpha\tAlpha#MOVED');
+  await page.click('.rl-modal .csv-fold .csv-actions .btn-small');
+  await wait(600);
+
+  const rosterNow = await page.$$eval('.rl-modal .roster-row input:first-of-type', (nodes) => nodes.map((n) => n.value));
+  const idsNow = await page.$$eval('.rl-modal .roster-row input:nth-of-type(2)', (nodes) => nodes.map((n) => n.value));
+  ok('20x3. a pasted roster ADDS who it names', rosterNow.includes('Charlie'), JSON.stringify(rosterNow));
+  ok('20x4. ...updates who it matches', idsNow[rosterNow.indexOf('Alpha')] === 'Alpha#MOVED', JSON.stringify(idsNow));
+  ok('20x5. ...and removes nobody it did not mention', rosterNow.includes('Bravo'), JSON.stringify(rosterNow));
+
+  // And it is a DRAFT like everything else in this dialog - nothing reaches the
+  // server until Save, which is what the whole modal exists to promise.
+  const beforeSave = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  ok(
+    '20x6. a pasted roster is not written until the team is saved',
+    !JSON.stringify(beforeSave.teams).includes('Alpha#MOVED'),
+    JSON.stringify(beforeSave.teams.find((t) => t.name === 'Rivertown')?.players),
+  );
+
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1200);
+  const afterSave = await (await fetch(`${BASE}/api/teams`, { headers: { Cookie: jar.join('; ') } })).json();
+  const squadNow = afterSave.teams.find((team) => team.name === 'Rivertown')?.players ?? [];
+  ok('20x7. saving writes it', squadNow.some((p) => p.riotId === 'Alpha#MOVED'), JSON.stringify(squadNow));
+  ok('20x8. ...all three of them', squadNow.length === 3, JSON.stringify(squadNow.map((p) => p.displayName)));
 
   // ------------------------------------------------------- the map veto ---
   /*
@@ -896,22 +1125,37 @@ try {
   /*
    * And Cancel writes NOTHING, which is the promise a modal makes that an
    * inline editor writing on every change never could.
+   *
+   * It asks first now, for the reason in modal.js: this dialog holds both
+   * teams, the series length and every map row, none of it written until Save,
+   * and Cancel is a reflex. The match editor is the one that gets the guard for
+   * the same reason the team editor does - the whole of it is a draft.
    */
   await page.click('.sch-node');
   await wait(600);
   await page.fill('.sch-modal .sch-map:nth-child(2) input[type="text"]', 'Never saved');
   await page.click('.sch-modal-foot .btn-ghost >> nth=1');
+  await wait(500);
+  ok('27u0. cancelling a match with a map typed asks first', (await page.$$('.rl-modal-ask')).length === 1);
+  await page.click('.rl-modal-ask .rl-modal-ask-danger');
   await wait(800);
   const afterCancel = await (await fetch(`${BASE}/api/schedule?session=${cupId}`, { headers: { Cookie: jar.join('; ') } })).json();
   ok('27u. cancelling writes nothing', !JSON.stringify(afterCancel.schedule).includes('Never saved'));
   ok('27v. ...and closes the editor', (await page.$$('.sch-modal')).length === 0);
 
-  // Escape is the platform's, which is the reason to use a real dialog.
+  /*
+   * Escape is the platform's, which is the reason to use a real dialog - and
+   * with nothing typed it still closes in one press. That is the guard not
+   * being a nag, asserted on a second dialog: the map rows this editor pads out
+   * to `bestOf` on the way up are the FORM filling itself in, and a snapshot
+   * taken before that happened would make every Bo3 open already dirty.
+   */
   await page.click('.sch-node');
   await wait(500);
   await page.keyboard.press('Escape');
   await wait(500);
   ok('27w. escape closes the editor', (await page.$$('.sch-modal')).length === 0);
+  ok('27w2. ...without asking, because nothing was typed', (await page.$$('.rl-modal-ask')).length === 0);
 
   // Back to Settings, or the assertions below type into a hidden card. A
   // remembered sub-tab is not restored by returning to the section.

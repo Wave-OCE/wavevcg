@@ -41,7 +41,7 @@
  */
 
 import { el, field, help, title } from './fields.js';
-import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
+import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { api } from './session.js';
 import { indexPlayers, matchesPlayer, playerOrigin } from './players-index.js';
@@ -277,7 +277,9 @@ function openPlayer(row, repaint) {
   });
 
   const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-  cancel.addEventListener('click', () => dialog?.close());
+  // askClose rather than close: this is a person leaving, and there may be a
+  // name and a photo in here that only Save writes. See modal.js.
+  cancel.addEventListener('click', () => askClose(dialog));
 
   /*
    * Forget is offered only for a row with no team, and that is not squeamishness.
@@ -322,7 +324,14 @@ function openPlayer(row, repaint) {
       : [help('A photo lives on a team roster, so add them to a team to give them one.')]),
   );
 
-  dialog = openModal({ body, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
+  /*
+   * Both halves of the draft, because the photo is not a form control - it is
+   * dropped, pasted or browsed to through mediaControl, and a guard that only
+   * watched the name would let a pasted photo go without a word.
+   */
+  const dirty = watchChanges(() => JSON.stringify([name.value, draftPhoto]));
+
+  dialog = openModal({ body, dirty, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
 }
 
 

@@ -23,7 +23,7 @@
 
 import { el, field, help, subhead, title } from './fields.js';
 import { api } from './session.js';
-import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
+import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import {
   SIDE_RULES,
   VETO_FORMATS,
@@ -355,7 +355,7 @@ function openVeto(existing) {
   });
 
   const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-  cancel.addEventListener('click', () => dialog?.close());
+  cancel.addEventListener('click', () => askClose(dialog));
 
   const drop = editing ? el('button', 'btn btn-ghost rl-modal-danger', { type: 'button' }, 'Remove veto') : null;
   drop?.addEventListener('click', () => {
@@ -375,7 +375,16 @@ function openVeto(existing) {
     field('On the decider', decider),
   );
 
-  dialog = openModal({ body, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
+  /*
+   * Every control, because all six of them are the record and none of them is
+   * written until Save. `fromFixture` is in here too: picking the match this
+   * veto is for is the decision the whole dialog exists to record.
+   */
+  const dirty = watchChanges(() =>
+    [name.value, format.value, rule.value, decider.value, fromFixture.value, teamA.value, teamB.value].join('\u0000'),
+  );
+
+  dialog = openModal({ body, dirty, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
 }
 
 function paint() {

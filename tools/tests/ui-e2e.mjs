@@ -618,7 +618,23 @@ try {
   );
   ok("revoking it takes", true);
   await shut();
-  ok("and the editor closes on Close", (await page.$$(".rl-modal")).length === 0);
+  /*
+   * NO DISCARD PROMPT HERE, and the asymmetry with the team editor is
+   * deliberate rather than an oversight.
+   *
+   * Every button on this dialog POSTs and then repaints from what the server
+   * answered - there is no draft, so there is nothing to discard. A prompt
+   * asking whether to throw away changes that were written three clicks ago
+   * would be false, and worse than false: this is the prompt that has to be
+   * believed on the dialogs that DO hold work, and one that cries wolf is how
+   * people learn to dismiss it without reading. Give openAccount a `dirty` and
+   * this goes red on both halves.
+   */
+  ok(
+    "and Close closes it with no discard prompt, because it holds no draft",
+    (await page.$$(".rl-modal")).length === 0 && (await page.$$(".rl-modal-ask")).length === 0,
+    `${(await page.$$(".rl-modal")).length} dialogs, ${(await page.$$(".rl-modal-ask")).length} prompts`,
+  );
 
   const revoked = await opPage.evaluate(() => fetch("/api/tracker/login", {
     method: "POST",

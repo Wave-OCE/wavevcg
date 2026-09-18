@@ -29,7 +29,7 @@ import {
   DEFAULT_ANIM,
   inDurationMs,
 } from './public/animation.js';
-import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, imageValue, sanitiseRoster, teamSlug } from './public/teams.js';
+import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, imageValue, mergeRoster, sanitiseRoster, teamSlug } from './public/teams.js';
 import { mapCodeFromUrl, mapDisplayName } from './public/maps.js';
 import {
   LOBBY_SEATS,
@@ -1912,11 +1912,22 @@ export function makeTeamStore(filePath) {
 
         if (existing) {
           const fieldsMoved = TEAM_FIELDS.some((field) => existing[field.key] !== clean[field.key]);
-          const rosterMoved =
-            roster !== undefined && JSON.stringify(roster) !== JSON.stringify(existing.players ?? []);
-          if (fieldsMoved || rosterMoved) {
+          /*
+           * MERGED, not replaced - "adds and updates, never deletes" is this
+           * function's promise and it used to stop at the team.
+           *
+           * Replacing meant a spreadsheet naming four of a team's five players
+           * dropped the fifth, and took every stored PUUID on that team with
+           * it. Nothing failed and nothing was logged; it would have surfaced
+           * as a roster that no longer matches a lobby. Removing somebody stays
+           * the EDITOR's job, where an operator deleting a row means it - a
+           * file that does not mention somebody is silent about them, which is
+           * a different statement.
+           */
+          const merge = roster === undefined ? null : mergeRoster(existing.players ?? [], roster);
+          if (fieldsMoved || merge?.added || merge?.updated) {
             Object.assign(existing, clean);
-            if (roster !== undefined) existing.players = roster;
+            if (merge) existing.players = merge.players;
             updated += 1;
           }
           continue;

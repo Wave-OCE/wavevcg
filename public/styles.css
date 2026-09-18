@@ -4118,6 +4118,201 @@ body.is-adrift .rail-item[data-tab='global'] {
   gap: 8px;
 }
 
+/* ------------------------------------------- discarding unsaved changes ---
+
+   A sheet over the open dialog, NOT a second <dialog>. The reasoning is in
+   modal.js: a second showModal() takes the focus trap with it and strands the
+   first, and this is exactly the case where the first has to survive - it is
+   holding the work being asked about.
+
+   `position: absolute` with no positioned ancestor of its own inside the
+   dialog, because a modal <dialog> is itself positioned by the UA sheet and is
+   therefore the containing block. That is the load-bearing half of this rule
+   and it is asserted rather than assumed: winner-ui-e2e measures the sheet's
+   box against the dialog's, so a browser that ever stops doing this fails
+   loudly instead of painting the prompt somewhere off the corner. */
+.rl-modal-ask {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  /* Nearly opaque rather than opaque: the form underneath stays visible, which
+     is the difference between "your work is behind this" and "your work is
+     gone". */
+  background: rgba(10, 13, 17, 0.88);
+}
+
+.rl-modal-ask-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+  padding: 18px;
+  border: 1px solid var(--edge, #2a3038);
+  /* Amber, because this is the codebase's "there is a decision waiting"
+     colour - not --on-air, which means an audience can see it, and not the
+     accent, which means selected. */
+  border-left: 3px solid var(--warn, #d9a441);
+  background: var(--bg-panel, #14181d);
+}
+
+.rl-modal-ask-title {
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 13px;
+  margin: 0;
+}
+
+.rl-modal-ask-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint, #7d8894);
+}
+
+/* Discard on the left, Keep editing on the right and under the focus ring -
+   the same left/right split the footer uses, for the same reason.
+
+   At EVERY width, which is why this button does not reuse `.rl-modal-danger`:
+   that class reorders itself under 520px for the footer's sake, and borrowing
+   it here swapped these two round on a phone. The travel between the safe
+   answer and the destructive one is the whole point of the arrangement. */
+.rl-modal-ask-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.rl-modal-ask-row .btn {
+  width: auto;
+}
+
+.rl-modal-ask-danger {
+  color: var(--on-air, #c9424f);
+}
+
+/* ------------------------------------------------- importing a spreadsheet ---
+
+   A paste box and a file picker, on the team library panel and inside the team
+   editor. The textarea is the reason the block is built ONCE and never
+   repainted: it is a text input, and the roster around it rebuilds itself every
+   time a row is added. */
+.csv-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.csv-drop textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.csv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* What was wrong with the sheet, with a line number against each one. Scrolls
+   rather than growing: a file with sixty bad Riot IDs must not push the Import
+   button off the bottom of the panel. */
+.csv-problems {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge, #2a3038);
+  border-left: 3px solid var(--warn, #d9a441);
+  background: var(--bg-sunken, #10141a);
+}
+
+.csv-problem {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-faint, #7d8894);
+}
+
+.csv-problem b {
+  font-family: var(--font-mono, monospace);
+  font-weight: 400;
+  color: var(--warn, #d9a441);
+  margin-right: 6px;
+}
+
+/* The roster editor is two things now: the rows, which repaint, and the paste
+   block, which must not. See rosterEditor() - a textarea inside `.roster-rows`
+   would be emptied by pressing Add player. */
+.roster-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Shut by default, because most teams are typed rather than pasted and an open
+   textarea would push the Save button off a short dialog. A native <details>,
+   so the open/shut state is the platform's rather than a class and a listener -
+   and unlike a `[hidden]` block there is nothing for a stray `display` rule to
+   silently defeat. */
+.csv-fold {
+  border: 1px solid var(--edge, #2a3038);
+  background: var(--bg-sunken, #10141a);
+  padding: 8px 10px;
+}
+
+.csv-fold > summary {
+  cursor: pointer;
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 11px;
+  color: var(--text-faint, #7d8894);
+}
+
+.csv-fold[open] > summary {
+  color: var(--text, #e8ecf1);
+  margin-bottom: 8px;
+}
+
+.csv-fold > .field-help {
+  margin-top: 0;
+}
+
+/* The accepted column names, as a plain reference an operator can read while
+   they have the sheet open beside this. */
+.csv-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 4px 14px;
+  font-size: 11px;
+  color: var(--text-faint, #7d8894);
+}
+
+.csv-columns b {
+  font-weight: 600;
+  color: var(--text, #e8ecf1);
+}
+
+.csv-columns code {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
 /* ------------------------------------------------------- the map veto --- */
 
 .veto-pool {

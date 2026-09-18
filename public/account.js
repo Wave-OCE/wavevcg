@@ -979,6 +979,18 @@ function openAccount(account) {
   foot.replaceChildren(...modalFoot({ danger: remove, cancel: close }).childNodes);
   }
 
+  /*
+   * "Close", not "Cancel" - and no `dirty` guard on the dialog either, which is
+   * the one modal here that must not have one.
+   *
+   * Every button above goes through `act`, which POSTs and then repaints from
+   * what the server answered. There is no draft, so there is nothing to
+   * discard, and a prompt asking whether to throw away changes that were
+   * written three clicks ago would be false. Worse than false: this is the
+   * prompt that has to be believed on the dialogs that DO hold work, and one
+   * that cries wolf on a panel with no form in it is how people learn to
+   * dismiss it without reading.
+   */
   const close = el('button', 'btn btn-ghost', { type: 'button' }, 'Close');
   close.addEventListener('click', () => dialog?.close());
 

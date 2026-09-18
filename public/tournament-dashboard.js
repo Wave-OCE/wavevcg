@@ -29,7 +29,7 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
-import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
+import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
 import { SESSION_ID, account, refreshAccount, switchDesk, switchTo } from './session.js';
@@ -289,7 +289,7 @@ if (els.pick) {
     });
 
     const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-    cancel.addEventListener('click', () => dialog?.close());
+    cancel.addEventListener('click', () => askClose(dialog));
 
     let drop = null;
     if (mayRemove) {
@@ -334,7 +334,17 @@ if (els.pick) {
       field('Name', name),
     );
 
-    dialog = openModal({ body, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
+    /*
+     * The name only, and deliberately not the type-it-back box below it.
+     *
+     * That box is a CONFIRMATION, not work: half a production name typed into
+     * it is nothing anybody wants kept, and asking about it would put a prompt
+     * in front of the operator who thought better of removing a desk - which is
+     * the one moment they should be able to leave fastest.
+     */
+    const dirty = watchChanges(() => name.value);
+
+    dialog = openModal({ body, dirty, foot: modalFoot({ danger: drop, cancel, confirm: save }) });
   }
 
   function addDeskRow() {
@@ -366,7 +376,7 @@ if (els.pick) {
       });
 
       const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-      cancel.addEventListener('click', () => dialog?.close());
+      cancel.addEventListener('click', () => askClose(dialog));
 
       body.append(
         modalTitle('Add a production'),
@@ -377,7 +387,11 @@ if (els.pick) {
         field('Name', name),
       );
 
-      dialog = openModal({ body, foot: modalFoot({ cancel, confirm: make }) });
+      // Taken after the box is seeded with "Court 2", so the suggestion this
+      // form makes is not a change the operator has to be asked about.
+      const dirty = watchChanges(() => name.value);
+
+      dialog = openModal({ body, dirty, foot: modalFoot({ cancel, confirm: make }) });
     });
     return add;
   }

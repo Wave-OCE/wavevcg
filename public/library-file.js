@@ -19,7 +19,7 @@
  * page already holds.
  */
 
-import { TEAM_FIELDS, teamSlug } from './teams.js';
+import { TEAM_FIELDS, mergeRoster, teamSlug } from './teams.js';
 import { aliasKey } from './select-schema.js';
 
 /**
@@ -152,13 +152,34 @@ export function diffTeams(incoming, mine) {
 
     const existing = bySlug.get(teamSlug(row.name));
     if (!existing) {
-      added.push({ row, label: row.name });
+      added.push({ row, label: row.name, players: (row.players ?? []).length });
       continue;
     }
+
+    /*
+     * How many players this row would actually move, asked of the same function
+     * the server's import will use.
+     *
+     * Not a comparison of the two arrays, and that is the whole point: the
+     * import MERGES, so a sheet listing four of a team's five players changes
+     * nothing about the fifth - and a straight compare would report the team as
+     * differing and offer the operator a choice between two identical outcomes.
+     * Re-importing the same sheet has to look like doing nothing, because that
+     * is what re-syncing is, and one function answering both questions is what
+     * stops the panel and the write disagreeing about which it was.
+     *
+     * An absent `players` is silence about the roster, not an empty one - the
+     * rule `save()` and `import()` both apply, and the reason a JSON library
+     * file (which carries no rosters at all) cannot empty a squad.
+     */
+    const roster = row?.players === undefined ? null : mergeRoster(existing.players ?? [], row.players);
 
     const changed = TEAM_FIELDS.filter((field) => (existing[field.key] ?? '') !== (row[field.key] ?? '')).map(
       (field) => field.label.toLowerCase(),
     );
+    if (roster?.added) changed.push(`${roster.added} new player${roster.added === 1 ? '' : 's'}`);
+    if (roster?.updated) changed.push(`${roster.updated} player${roster.updated === 1 ? '' : 's'} changed`);
+
     if (!changed.length) identical.push({ row, label: row.name });
     else differs.push({ row, mine: existing, label: row.name, changed });
   }

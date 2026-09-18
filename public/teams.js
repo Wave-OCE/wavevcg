@@ -335,6 +335,81 @@ export function sanitiseRoster(input) {
 export const emptyPlayer = () => sanitisePlayer({});
 
 /**
+ * Fold a roster into an existing one. Adds and updates; never deletes.
+ *
+ * The same promise the team library import and the alias import both make, one
+ * level further down - and the level where it was previously broken. `import()`
+ * on the team store REPLACED a squad when the incoming record carried one, so a
+ * spreadsheet naming four of a team's five players would silently drop the
+ * fifth, and every stored PUUID on that team with them. That is the shape of
+ * failure this codebase cares most about: nothing fails, nothing is logged, and
+ * it shows up as a roster that will not match a lobby.
+ *
+ * Removing somebody is the EDITOR's job and stays that way. An operator with
+ * the team open and a row deleted means it; a file that does not mention
+ * somebody is silent about them, which is not the same statement.
+ *
+ * Matched on the Riot ID first and the name second, because the Riot ID is the
+ * identity and the name is what somebody is called this week.
+ *
+ * The one destructive-looking thing here is deliberate: a row whose Riot ID
+ * DIFFERS from the stored one clears `puuidCheckedAt`. That is exactly what
+ * typing in the box does, and for the identical reason - leaving the lamp lit
+ * would say "this identity is confirmed" about a handle nobody has looked up.
+ * The puuid itself stays, because it is still a true fact about the player, and
+ * re-verifying is what decides whether it still is.
+ *
+ * @param {object[]} existing  the squad as it stands
+ * @param {object[]} incoming  rows carrying any of displayName / riotId / photo
+ */
+export function mergeRoster(existing, incoming) {
+  const players = (Array.isArray(existing) ? existing : []).map((entry) => ({ ...entry }));
+  const key = (value) => String(value ?? '').trim().toLowerCase();
+
+  let added = 0;
+  let updated = 0;
+  const skipped = [];
+
+  for (const row of Array.isArray(incoming) ? incoming : []) {
+    const found =
+      (row?.riotId && players.find((entry) => key(entry.riotId) && key(entry.riotId) === key(row.riotId))) ||
+      (row?.displayName && players.find((entry) => key(entry.displayName) === key(row.displayName))) ||
+      null;
+
+    if (found) {
+      let moved = false;
+      if (row.riotId && key(found.riotId) !== key(row.riotId)) {
+        found.riotId = row.riotId;
+        found.puuidCheckedAt = 0;
+        moved = true;
+      }
+      if (row.displayName && found.displayName !== row.displayName) {
+        found.displayName = row.displayName;
+        moved = true;
+      }
+      if (row.photo && found.photo !== row.photo) {
+        found.photo = row.photo;
+        moved = true;
+      }
+      if (moved) updated += 1;
+      continue;
+    }
+
+    if (!String(row?.displayName ?? '').trim() && !String(row?.riotId ?? '').trim()) continue;
+
+    if (players.length >= ROSTER_LIMIT) {
+      skipped.push(String(row.displayName || row.riotId));
+      continue;
+    }
+
+    players.push(sanitisePlayer(row));
+    added += 1;
+  }
+
+  return { players, added, updated, skipped };
+}
+
+/**
  * `Team Liquid` -> `team-liquid`, so ids stay readable in the saved file and a
  * hand-edited teams.json is still something a person can follow.
  */

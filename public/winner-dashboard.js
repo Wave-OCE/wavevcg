@@ -26,13 +26,15 @@ import {
   applyTeam,
   emptyPlayer,
   looksLikeRiotId,
+  mergeRoster,
   teamLabel,
 } from './teams.js';
+import { CSV_TEAM_LIMIT, columnHelp, csvTemplate, readRosterCsv, readTeamCsv } from './team-csv.js';
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
 import { makeTakeBar } from './take-bar.js';
-import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
+import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import {
   canVerify,
   onVerifyConfig,
@@ -946,7 +948,10 @@ function editTeam(team) {
   });
 
   const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
-  cancel.addEventListener('click', () => dialog?.close());
+  // askClose rather than close - see modal.js. Save and Delete below stay on
+  // the direct route: one has written the work and the other has removed the
+  // thing it belonged to.
+  cancel.addEventListener('click', () => askClose(dialog));
 
   // Delete is offered only for a team that exists. On a new one there is
   // nothing to delete and the button would be a second Cancel.
@@ -979,9 +984,26 @@ function editTeam(team) {
     roster.node,
   );
 
+  /*
+   * Snapshotted AFTER the form is built, deliberately.
+   *
+   * Nothing above mutates the draft on the way up today, but if something ever
+   * does - a colour normalised, five blank rows offered - a snapshot taken
+   * first would open the dialog already dirty and put a discard prompt in front
+   * of an operator who has typed nothing. A prompt that cries wolf is worse
+   * than no prompt: it is the one that has to be believed on the dialog holding
+   * thirty players.
+   *
+   * The whole draft, roster included, plus anything still sitting in the paste
+   * box unread - a sheet pasted and not yet read is work too, and it is the
+   * thing in here that takes longest to reproduce.
+   */
+  const dirty = watchChanges(() => `${JSON.stringify(draft)}\u0000${roster.pending()}`);
+
   dialog = openModal({
     className: 'is-wide',
     body,
+    dirty,
     foot: modalFoot({ danger: drop, cancel, confirm: save }),
     onClose: () => {
       openRosterPaint = null;
@@ -1414,11 +1436,83 @@ function rosterEditor() {
     return add;
   }
 
+  /**
+   * Five players at once, from the same spreadsheet the library import reads.
+   *
+   * The team columns are IGNORED rather than refused, which is the whole
+   * ergonomic point: an operator can select this team's five rows out of the
+   * competition's sign-up sheet and paste them straight in, without deleting
+   * the columns that name a team they are already looking at. Which team these
+   * belong to is not in question - it is the one whose editor is open.
+   *
+   * It MERGES: a row matching somebody already on the squad updates them, and
+   * nobody is ever removed. Pasting the five starters into a squad that also
+   * carries two subs is not a request to drop the subs, and there would be
+   * nothing on screen to say it had happened. `mergeRoster` is the same
+   * function the server's import uses, so the two cannot come to disagree.
+   *
+   * OUTSIDE `rows`, and that is load-bearing rather than tidy: `paint()`
+   * replaces everything in there, so a textarea living inside it would be
+   * emptied by pressing Add player. This is the caret rule inside a dialog
+   * that already met it by separation.
+   */
+  function rosterCsv() {
+    const fold = el('details', 'csv-fold');
+    const notes = el('div');
+
+    const block = csvBlock({
+      placeholder: 'Player name,Riot ID\nTenZ,TenZ#SEN\nzekken,zekken#NA1',
+      onText: (text) => {
+        let read;
+        try {
+          read = readRosterCsv(text);
+        } catch (error) {
+          toast(error.message);
+          return;
+        }
+
+        const merged = mergeRoster(draft.players, read.players);
+        draft.players = merged.players;
+        paint();
+
+        // Cleared only on a read that landed, so a refusal leaves the rows
+        // where the operator can fix them rather than making them paste again.
+        block.box.value = '';
+        notes.replaceChildren(...[csvProblems(read.problems)].filter(Boolean));
+
+        const parts = [];
+        if (merged.added) parts.push(`${merged.added} added`);
+        if (merged.updated) parts.push(`${merged.updated} updated`);
+        if (merged.skipped.length) parts.push(`${merged.skipped.length} over the ${ROSTER_LIMIT} limit`);
+        toast(parts.length ? `Roster: ${parts.join(', ')} - nothing saved until you save the team` : 'Nothing changed.');
+      },
+    });
+
+    fold.append(
+      el('summary', null, {}, 'Paste a list of players'),
+      help(
+        'One row per player, with a "Player name" and/or "Riot ID" column. Team columns are ignored - paste this ' +
+          'team\'s rows straight out of the competition\'s sheet. It adds and updates and never removes anybody; ' +
+          'nothing is saved until you save the team.',
+      ),
+      block.node,
+      notes,
+    );
+
+    return { node: fold, pending: () => block.box.value };
+  }
+
+  const importer = rosterCsv();
+  const node = el('div', 'roster-editor');
+
   paint();
+  node.append(rows, importer.node);
+
   // The repaint comes back with the node, because the one thing outside this
   // block that has to move it - verification arriving late - cannot rebuild the
-  // dialog it sits in without taking the caret with it.
-  return { node: rows, paint };
+  // dialog it sits in without taking the caret with it. `pending` is what lets
+  // the dialog's discard guard know about a sheet pasted but not yet read.
+  return { node, paint, pending: importer.pending };
 }
 
 /**
@@ -1451,11 +1545,13 @@ function buildTeamEditor() {
       ? wrapChildren('team-list', library.map(teamCard))
       : el('p', 'empty', {}, 'No teams saved yet. Add one and it will appear on both graphics.'),
     wrapChildren('team-form-actions', [add]),
-    subhead('Share this library'),
+    subhead('Import and share'),
     help(
-      'Export writes a JSON file of your teams. Import folds somebody else\'s file into yours: it adds and ' +
-        'updates, and never deletes a team. What arrives becomes yours to edit - picking a team copies its ' +
-        'fields onto a graphic rather than linking them, so an import can never change something already on air.',
+      'Import a spreadsheet takes a CSV of teams and the players on them - a competition\'s sign-up sheet, ' +
+        'pasted or as a file. Export writes a JSON file of your teams and Import folds somebody else\'s back in. ' +
+        'All three ADD and UPDATE and never delete: a sheet that does not mention a team, or a player, leaves ' +
+        'them exactly as they are. What arrives becomes yours to edit - picking a team copies its fields onto a ' +
+        'graphic rather than linking them, so an import can never change something already on air.',
     ),
     teamShareActions(),
   );
@@ -1499,7 +1595,173 @@ function teamShareActions() {
   const importBtn = el('button', 'mini-btn', { type: 'button' }, 'Import from file');
   importBtn.addEventListener('click', () => picker.click());
 
-  return wrapChildren('team-form-actions', [exportBtn, importBtn, picker]);
+  const csvBtn = el(
+    'button',
+    'mini-btn',
+    { type: 'button', title: 'A spreadsheet of teams and their players - one row per player.' },
+    'Import a spreadsheet',
+  );
+  csvBtn.addEventListener('click', openTeamCsv);
+
+  return wrapChildren('team-form-actions', [exportBtn, importBtn, csvBtn, picker]);
+}
+
+// ------------------------------------------------- importing a spreadsheet ---
+
+/**
+ * The two ways a sheet arrives, as one block, because they are one gesture.
+ *
+ * A textarea AND a file picker rather than a picker alone: an entry sheet lives
+ * in Google Sheets or Excel far more often than it lives in a .csv on somebody's
+ * disk, and "select the rows, copy, paste" is the whole of what an operator
+ * would otherwise have to do File -> Download -> Comma separated values for.
+ * `parseDelimited` sniffs tabs, which is what a spreadsheet actually puts on the
+ * clipboard, so the paste path needs nothing converted first.
+ *
+ * `onText` is handed the text and something to call it, and owns its own
+ * refusals - both callers have a different idea of what a bad sheet means.
+ */
+function csvBlock({ placeholder, onText }) {
+  const box = el('textarea', null, {
+    rows: '5',
+    spellcheck: 'false',
+    'aria-label': 'Paste rows from a spreadsheet',
+    placeholder,
+  });
+
+  const picker = el('input', null, {
+    type: 'file',
+    // text/plain is in here because that is what Windows hands over for a .csv
+    // when nothing on the machine has claimed the extension.
+    accept: '.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain',
+  });
+  picker.style.display = 'none';
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    // Cleared before the read, so choosing the same file twice fires again -
+    // the operator who fixed a row in the sheet and came back expects it to.
+    picker.value = '';
+    if (!file) return;
+    onText(await file.text(), file.name);
+  });
+
+  const choose = el('button', 'mini-btn', { type: 'button' }, 'Choose a file');
+  choose.addEventListener('click', () => picker.click());
+
+  const read = el('button', 'btn btn-small', { type: 'button' }, 'Read the rows');
+  read.addEventListener('click', () => {
+    if (!box.value.trim()) {
+      toast('Paste the rows in first, or choose a file.');
+      return;
+    }
+    onText(box.value, 'a pasted sheet');
+  });
+
+  const node = el('div', 'csv-drop');
+  node.append(box, wrapChildren('csv-actions', [read, choose, picker]));
+  return { node, box };
+}
+
+/**
+ * What the headings may be called.
+ *
+ * Built from CSV_COLUMNS rather than written out, so a spelling added to the
+ * parser appears here without anybody remembering - the alternative is a
+ * reference on screen that is quietly wrong, which is worse than none.
+ */
+function csvColumnsRef() {
+  const node = el('div', 'csv-columns');
+  for (const column of columnHelp()) {
+    const row = el('div');
+    row.append(el('b', null, {}, column.label), el('code', null, {}, ` ${column.names.slice(0, 4).join(', ')}`));
+    node.append(row);
+  }
+  return node;
+}
+
+/** Every line the sheet had a problem with, each naming the line. */
+function csvProblems(problems) {
+  if (!problems?.length) return null;
+  const node = el('div', 'csv-problems', { role: 'status' });
+  for (const problem of problems) {
+    const row = el('div', 'csv-problem');
+    row.append(el('b', null, {}, `line ${problem.line}`), document.createTextNode(problem.text));
+    node.append(row);
+  }
+  return node;
+}
+
+/**
+ * A sheet of teams and their players, in a MODAL.
+ *
+ * A modal rather than a block on the panel, and the reason is the caret rule
+ * rather than tidiness: the team panel has no text input in it at all, which is
+ * what lets `buildTeamEditor` rebuild the whole thing whenever a team is saved.
+ * A textarea sitting in there would be thrown away mid-paste by a repaint that
+ * has nothing to do with it - the exact failure the roster editor used to work
+ * around before it moved into a dialog. On document.body, it cannot be reached.
+ *
+ * It hands off to the SAME diff panel the JSON import uses. That is the whole
+ * design: a spreadsheet becomes a list of team records and then stops being a
+ * spreadsheet, so the collision prompt, the "nothing is deleted" promise and
+ * the write are one implementation rather than two.
+ */
+function openTeamCsv() {
+  if (modalOpen()) return;
+
+  let dialog = null;
+  const body = el('div', 'rl-modal-body');
+
+  const block = csvBlock({
+    placeholder: 'Team name,Tricode,Player name,Riot ID\nSentinels,SEN,TenZ,TenZ#SEN\nSentinels,SEN,zekken,zekken#NA1',
+    onText: (text, from) => {
+      try {
+        const { teams, problems, players } = readTeamCsv(text);
+        // Closed first: the diff renders into the panel underneath, and a
+        // dialog still up over it would hide the thing it just produced.
+        dialog?.close();
+        openTeamImport({ from, rows: teams, problems, players });
+      } catch (error) {
+        toast(error.message);
+      }
+    },
+  });
+
+  const template = el('button', 'mini-btn', { type: 'button' }, 'Download a template');
+  template.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([csvTemplate()], { type: 'text/csv' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'riotline-teams-template.csv';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Saved a template with the right headings in it');
+  });
+
+  const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
+  cancel.addEventListener('click', () => askClose(dialog));
+
+  body.append(
+    modalTitle('Import a spreadsheet', 'teams and their players'),
+    help(
+      'One row per player, with the team columns repeated down the rows - which is what a sign-up sheet already ' +
+        'looks like. A row naming a team and no player makes the team with an empty roster. Nothing is written ' +
+        'until you have seen what it would change.',
+    ),
+    block.node,
+    subhead('What the headings may be called'),
+    help(
+      `Only "Team name" is required. Everything else is optional, anything this does not recognise is ignored, ` +
+        `and up to ${CSV_TEAM_LIMIT} teams can come in at once. Commas, semicolons and tabs all work.`,
+    ),
+    csvColumnsRef(),
+  );
+
+  // Pasted rows are unsaved work like anything else, and this is the box most
+  // worth not losing to a stray Escape - it holds the whole sheet.
+  const dirty = watchChanges(() => block.box.value);
+
+  dialog = openModal({ className: 'is-wide', body, dirty, foot: modalFoot({ extras: [template], cancel }) });
 }
 
 /** The diff, rendered into the team panel instead of the editor. */
@@ -1566,12 +1828,24 @@ function openTeamImport(opened) {
     const cancel = el('button', 'btn btn-ghost', { type: 'button' }, 'Cancel');
     cancel.addEventListener('click', buildTeamEditor);
 
+    /*
+     * What the file got wrong, ABOVE the import button rather than in a toast.
+     *
+     * A toast is gone in four seconds and a sheet with sixty malformed Riot IDs
+     * in it is something an operator goes back to the spreadsheet to fix. Every
+     * line names its line number for that reason. Empty for a JSON library
+     * file, which has no lines to name.
+     */
+    const problems = csvProblems(opened.problems);
+
     host.replaceChildren(
       title('Import teams', el('span', 'pill', {}, opened.from ? `from ${opened.from}` : 'from a file')),
       help(
-        `${opened.rows.length} team${opened.rows.length === 1 ? '' : 's'} in the file. ` +
-          `${sum.added} are new to you, ${sum.identical} you already have exactly, and ${diff.differs.length} disagree with yours.`,
+        `${opened.rows.length} team${opened.rows.length === 1 ? '' : 's'}` +
+          (opened.players ? ` and ${opened.players} player${opened.players === 1 ? '' : 's'}` : '') +
+          `. ${sum.added} are new to you, ${sum.identical} you already have exactly, and ${diff.differs.length} disagree with yours.`,
       ),
+      ...(problems ? [subhead(`${opened.problems.length} thing${opened.problems.length === 1 ? '' : 's'} worth a look`), problems] : []),
       ...(rows.length ? [subhead('These disagree with what you have'), wrapChildren('team-list', rows)] : []),
       wrapChildren('team-form-actions', [apply, backup, cancel]),
     );
