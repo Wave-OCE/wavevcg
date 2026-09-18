@@ -114,7 +114,7 @@ try {
   ok('the page is not marked as a guest', !(await page.evaluate(() => document.body.classList.contains('is-guest'))));
 
   // --------------------------------------------------------- the graphic ---
-  await page.click('.rail-item[data-section="match"]');
+  await page.click('.rail-item[data-section="graphics"]');
   await page.click('.tab[data-tab="graphic"]');
   await page.waitForFunction(() => document.getElementById('g-obs-url')?.textContent?.includes('key='), null, { timeout: 8000 });
   const obsUrl = await page.textContent('#g-obs-url');
@@ -135,7 +135,7 @@ try {
     ['winner', ['data', 'sequence', 'music', 'style']],
     ['select', ['roster', 'animation', 'style']],
   ]) {
-    await page.click(`.subtabs[data-for="match"] .tab[data-tab="${tab}"]`);
+    await page.click(`#graphic-strip .tab[data-tab="${tab}"]`);
     await page.waitForTimeout(500);
 
     const shape = await page.evaluate((t) => {
@@ -193,7 +193,7 @@ try {
   // Back to the scoreboard AND to its Data group. The group is remembered per
   // graphic, so returning to the tab does not reset it - the loop above left
   // this one on Style, and everything below types into the rosters.
-  await page.click('.subtabs[data-for="match"] .tab[data-tab="graphic"]');
+  await page.click('#graphic-strip .tab[data-tab="graphic"]');
   await page.waitForTimeout(300);
   await page.click('.card-tabs[data-cards="graphic"] .card-tab[data-group="data"]');
   await page.waitForTimeout(500);
@@ -472,7 +472,7 @@ try {
   await opPage.waitForSelector('#whoami:not([hidden])', { timeout: 6000 });
   ok('operating a shared production marks the page', await opPage.evaluate(() => document.body.classList.contains('is-guest')));
 
-  await opPage.click('.rail-item[data-section="match"]');
+  await opPage.click('.rail-item[data-section="graphics"]');
   await opPage.click('.tab[data-tab="graphic"]');
   await opPage.waitForFunction(
     () => document.querySelector('#ed-left input[type="text"]')?.value === 'CLOUD9',

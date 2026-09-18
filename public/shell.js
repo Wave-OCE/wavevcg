@@ -24,27 +24,29 @@
  * to an operator and is wired somewhere completely different.
  */
 
+import { scalePreviews } from './preview-frame.js';
+
 const $ = (id) => document.getElementById(id);
 
 /** Which rail item lights up for a given tab. */
 /*
- * Which rail group owns each screen.
+ * Which rail section owns each screen.
  *
- * Graphics was one section holding three screens and is now THREE, because
- * seven in one strip is a strip that wraps at narrow widths and that nobody can
- * scan. The split is by what the graphic is ABOUT rather than by when it was
- * built: a match, a team, or the draw.
+ * Every graphic is in ONE section, and the groups live in a strip rather than
+ * in the sidebar. Three rail items put the group in the sidebar and the graphic
+ * in the strip, which made "what am I editing" a question answered in two
+ * places that disagreed - the sidebar said Team while the page said Map veto.
  */
 const SECTION_OF = {
   lookup: 'lookup',
   setup: 'setup',
-  graphic: 'match',
-  winner: 'match',
-  select: 'match',
-  lineup: 'team',
-  headToHead: 'team',
-  vetoBoard: 'team',
-  bracket: 'bracket',
+  graphic: 'graphics',
+  winner: 'graphics',
+  select: 'graphics',
+  lineup: 'graphics',
+  headToHead: 'graphics',
+  vetoBoard: 'graphics',
+  bracket: 'graphics',
   global: 'global',
   tournament: 'tournament',
   account: 'account',
@@ -52,21 +54,27 @@ const SECTION_OF = {
 };
 
 /**
- * Each group's screens, and the one it opens on.
+ * The graphics, grouped - two strips rather than one row of seven.
  *
- * `lastOf` remembers where you were per group, which is what makes a rail item
- * one click rather than two for the screen you were actually using. It was one
- * variable for the single Graphics group; three groups means a map, and keeping
- * the memory per group is the whole reason the split is tolerable.
+ * `lastOf` remembers where you were in each group and `lastGroup` which group
+ * you were in, so the rail item is one click back to the screen you were
+ * actually using rather than to whichever one happens to be first.
  */
 const GROUP_TABS = {
   match: ['graphic', 'winner', 'select'],
   team: ['lineup', 'headToHead', 'vetoBoard'],
-  // One screen today, and a group anyway: the rail item then behaves like the
-  // other two, and a second bracket graphic costs a line rather than a redesign.
+  // One screen today, and a group anyway: a second bracket graphic then costs a
+  // line rather than a redesign.
   bracket: ['bracket'],
 };
+
+/** tab -> group, derived so the two tables cannot drift apart. */
+const GROUP_OF = Object.fromEntries(
+  Object.entries(GROUP_TABS).flatMap(([group, tabs]) => tabs.map((tab) => [tab, group])),
+);
+
 const lastOf = { match: 'graphic', team: 'lineup', bracket: 'bracket' };
+let lastGroup = 'match';
 
 /**
  * The heading, per tab.
@@ -90,8 +98,21 @@ const PAGE = {
   admin: ['Admin', 'Server-wide switches, accounts and the log'],
 };
 
+/*
+ * Every graphic preview, scaled to its frame.
+ *
+ * Here rather than in each dashboard because it is one rule and seven graphics:
+ * the iframe is a fixed 1920x1080 and the frame is whatever the column gives
+ * it, so an unscaled preview shows the top-left corner at 1:1 and reads as a
+ * graphic drawn too big. shell.js already runs on this page and owns the chrome
+ * the panels sit in, which makes it the one place that can do this once.
+ */
+scalePreviews();
+
 const railItems = [...document.querySelectorAll('.rail-item')];
-const strips = [...document.querySelectorAll('.subtabs')];
+const strips = [...document.querySelectorAll('.subtabs[data-for]')];
+const graphicStrip = $('graphic-strip');
+const groupButtons = [...document.querySelectorAll('.subtabs[data-for="graphics"] .subtab[data-group]')];
 const pageTitle = $('page-title');
 const pageSub = $('page-sub');
 
@@ -100,7 +121,13 @@ const pageSub = $('page-sub');
 function paint(tab) {
   const section = SECTION_OF[tab];
   if (!section) return;
-  if (GROUP_TABS[section]?.includes(tab)) lastOf[section] = tab;
+
+  // Where we were, per group and overall, so the rail is one click back.
+  const group = GROUP_OF[tab];
+  if (group) {
+    lastOf[group] = tab;
+    lastGroup = group;
+  }
 
   for (const item of railItems) {
     const owns = item.dataset.section ?? SECTION_OF[item.dataset.tab];
@@ -110,6 +137,22 @@ function paint(tab) {
   }
 
   for (const strip of strips) strip.hidden = strip.dataset.for !== section;
+
+  /*
+   * The second strip: shown only on Graphics, and filtered to the open group.
+   *
+   * Every graphic's .tab lives in it at all times so dashboard.js can wire them
+   * with one querySelectorAll; what changes is which are on screen.
+   */
+  if (graphicStrip) {
+    graphicStrip.hidden = section !== 'graphics';
+    for (const button of graphicStrip.querySelectorAll('.tab[data-group]')) {
+      button.hidden = button.dataset.group !== lastGroup;
+    }
+  }
+  for (const button of groupButtons) {
+    button.setAttribute('aria-selected', String(button.dataset.group === lastGroup));
+  }
 
   const [title, sub] = PAGE[tab] ?? [];
   if (title && pageTitle) pageTitle.textContent = title;
@@ -126,14 +169,23 @@ paint(document.querySelector('.tab[aria-selected="true"]')?.dataset.tab ?? 'look
 
 // ------------------------------------------------------------ rail: group ---
 
+/*
+ * Both the rail item and a group button open a real TAB rather than doing the
+ * work themselves. Everything downstream of a tab press - the lazy preview
+ * load, the body class, the app-tab event - then happens exactly once, in the
+ * one place it is written.
+ */
+const openTab = (tab) => document.querySelector(`.tab[data-tab="${tab}"]`)?.click();
+
 for (const item of railItems) {
-  const group = item.dataset.section;
-  if (!group || !GROUP_TABS[group]) continue;
-  // Click the real tab rather than duplicating what it does. Everything
-  // downstream of a tab press - the lazy preview load, the body class, the
-  // app-tab event - then happens exactly once, in the one place it is written.
-  item.addEventListener('click', () => {
-    document.querySelector(`.tab[data-tab="${lastOf[group]}"]`)?.click();
+  if (item.dataset.section !== 'graphics') continue;
+  item.addEventListener('click', () => openTab(lastOf[lastGroup]));
+}
+
+for (const button of groupButtons) {
+  button.addEventListener('click', () => {
+    lastGroup = button.dataset.group;
+    openTab(lastOf[lastGroup]);
   });
 }
 

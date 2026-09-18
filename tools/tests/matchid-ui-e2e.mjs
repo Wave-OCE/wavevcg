@@ -181,7 +181,7 @@ try {
   await page.waitForFunction(() => !document.getElementById('g-import')?.disabled, null, { timeout: 6000 });
   ok('THE GRAPHICS IMPORT BUTTON IS ARMED', await page.locator('#g-import').isEnabled());
 
-  await page.click('.rail-item[data-section="match"]');
+  await page.click('.rail-item[data-section="graphics"]');
   await page.click('.tab[data-tab="graphic"]');
   await page.click('#g-import');
   await page.waitForTimeout(900);

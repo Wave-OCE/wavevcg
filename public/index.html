@@ -62,28 +62,22 @@
             <span class="rail-label">Tournament</span>
           </button>
           <!--
-            Graphics was one group holding three screens and is now two, with a
-            third arriving for the bracket. Seven in one strip wraps at narrow
-            widths and cannot be scanned; the split is by what a graphic is
-            ABOUT - a match, a team - rather than by when it was built.
+            ONE rail item for seven graphics, and two strips under it.
+
+            The split into three rail items put the GROUPS in the sidebar, which
+            made "which graphic am I on" a question answered in two different
+            places - the sidebar said Team, the strip said Map veto, and the
+            sidebar item you were looking at was not the thing you were editing.
+            Groups are the top strip now and the graphics themselves are a
+            second strip beneath it, so the sidebar names a section and the
+            strips name what is inside it, which is the shape every other
+            section here already has.
           -->
-          <button type="button" class="rail-item rail-group" data-section="match" aria-selected="false" title="Match graphics">
+          <button type="button" class="rail-item rail-group" data-section="graphics" aria-selected="false" title="Graphics">
             <span class="rail-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.4" y="2.6" width="13.2" height="10.8" rx="1.6" /><line x1="1.4" y1="6" x2="14.6" y2="6" /></svg>
             </span>
-            <span class="rail-label">Match</span>
-          </button>
-          <button type="button" class="rail-item rail-group" data-section="team" aria-selected="false" title="Team graphics">
-            <span class="rail-icon" aria-hidden="true">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5.6" cy="5.4" r="2.4" /><circle cx="11" cy="6.2" r="1.9" /><path d="M1.6 13.4c0-2.3 1.8-3.8 4-3.8s4 1.5 4 3.8" /><path d="M10.2 9.8c2 0 4.2 1.2 4.2 3.6" /></svg>
-            </span>
-            <span class="rail-label">Team</span>
-          </button>
-          <button type="button" class="rail-item rail-group" data-section="bracket" aria-selected="false" title="Bracket">
-            <span class="rail-icon" aria-hidden="true">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><line x1="1.6" y1="3.4" x2="5.4" y2="3.4" /><line x1="1.6" y1="7" x2="5.4" y2="7" /><line x1="5.4" y1="3.4" x2="5.4" y2="7" /><line x1="5.4" y1="5.2" x2="9.2" y2="5.2" /><line x1="1.6" y1="9.6" x2="5.4" y2="9.6" /><line x1="1.6" y1="13.2" x2="5.4" y2="13.2" /><line x1="5.4" y1="9.6" x2="5.4" y2="13.2" /><line x1="5.4" y1="11.4" x2="9.2" y2="11.4" /><line x1="9.2" y1="5.2" x2="9.2" y2="11.4" /><line x1="9.2" y1="8.3" x2="14.4" y2="8.3" /></svg>
-            </span>
-            <span class="rail-label">Bracket</span>
+            <span class="rail-label">Graphics</span>
           </button>
           <button type="button" class="rail-item tab" role="tab" data-tab="global" aria-selected="false" title="Global">
             <span class="rail-icon" aria-hidden="true">
@@ -126,20 +120,14 @@
             here is a real tab; the Global strip switches sections INSIDE one
             panel and so is made of .subtab instead - see shell.js.
           -->
-          <nav class="subtabs" data-for="match" role="tablist" aria-label="Match graphics" hidden>
-            <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
-            <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
-            <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
-          </nav>
-
-          <nav class="subtabs" data-for="bracket" role="tablist" aria-label="Bracket graphics" hidden>
-            <button type="button" class="tab" role="tab" data-tab="bracket" aria-selected="false">Bracket</button>
-          </nav>
-
-          <nav class="subtabs" data-for="team" role="tablist" aria-label="Team graphics" hidden>
-            <button type="button" class="tab" role="tab" data-tab="lineup" aria-selected="false">Lineup</button>
-            <button type="button" class="tab" role="tab" data-tab="headToHead" aria-selected="false">Head to head</button>
-            <button type="button" class="tab" role="tab" data-tab="vetoBoard" aria-selected="false">Map veto</button>
+          <!--
+            The GROUPS. Not .tab buttons - a group is not a panel, it decides
+            which graphics the strip below offers. shell.js wires them.
+          -->
+          <nav class="subtabs" data-for="graphics" aria-label="Graphic groups" hidden>
+            <button type="button" class="subtab" data-group="match" aria-selected="true">Match</button>
+            <button type="button" class="subtab" data-group="team" aria-selected="false">Team</button>
+            <button type="button" class="subtab" data-group="bracket" aria-selected="false">Bracket</button>
           </nav>
 
           <nav class="subtabs" data-for="tournament" aria-label="Tournament" hidden>
@@ -216,6 +204,25 @@
       disconnected. An operator seeing blank pickers on four tabs has no way to
       tell "there is nothing here yet" from "this is broken".
     -->
+    <!--
+      The graphics inside the open group.
+
+      A second strip rather than more buttons in the first: seven in one row
+      wraps at narrow widths and cannot be scanned, and "which group" and "which
+      graphic" are two different questions an operator asks in order. Every .tab
+      for every graphic lives here at all times - dashboard.js wires them with
+      one querySelectorAll - and shell.js hides the ones outside the open group.
+    -->
+    <nav class="subtabs subtabs-inner" id="graphic-strip" role="tablist" aria-label="Graphics" hidden>
+      <button type="button" class="tab" role="tab" data-tab="graphic" data-group="match" aria-selected="false">Post match</button>
+      <button type="button" class="tab" role="tab" data-tab="winner" data-group="match" aria-selected="false">Winner splash</button>
+      <button type="button" class="tab" role="tab" data-tab="select" data-group="match" aria-selected="false">Agent select</button>
+      <button type="button" class="tab" role="tab" data-tab="lineup" data-group="team" aria-selected="false">Lineup</button>
+      <button type="button" class="tab" role="tab" data-tab="headToHead" data-group="team" aria-selected="false">Head to head</button>
+      <button type="button" class="tab" role="tab" data-tab="vetoBoard" data-group="team" aria-selected="false">Map veto</button>
+      <button type="button" class="tab" role="tab" data-tab="bracket" data-group="bracket" aria-selected="false">Bracket</button>
+    </nav>
+
     <div id="no-tournament" class="banner banner-warn" role="status" hidden></div>
 
     <div id="key-warning" class="banner banner-warn" hidden></div>
