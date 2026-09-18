@@ -69,18 +69,19 @@ const sideWords = (row) => {
 // ------------------------------------------------------------ lower third ---
 
 /*
- * Cells are keyed by index and reused. `built` remembers how many exist so a
- * board that grows by one does not rebuild the ones already on screen and
- * restart their transitions.
+ * Cells are keyed by index and reused, so a board that grows by one does not
+ * rebuild the ones already on screen and restart their transitions.
+ *
+ * Every cell carries BOTH a map and a placeholder, and only one of them is on
+ * at a time. Building the map element when it is revealed would mean the box
+ * changing size as it fills, which is the layout moving when the data changes.
  */
-let built = 0;
-
 function lowerCell() {
   const cell = el('div', 'cell');
   const head = el('div', 'cell-head');
   head.append(el('span', 'who'), el('span', 'what'));
   const body = el('div', 'cell-body');
-  body.append(el('div', 'cell-map'));
+  body.append(el('div', 'cell-map'), el('div', 'cell-wait'));
   cell.append(head, body, el('div', 'cell-foot'));
   return cell;
 }
@@ -90,26 +91,36 @@ function paintLower(state) {
 
   while (strip.children.length < rows.length) strip.append(lowerCell());
   while (strip.children.length > rows.length) strip.lastElementChild.remove();
-  built = rows.length;
+
+  const flags = state.revealed ?? [];
 
   rows.forEach((row, index) => {
     const cell = strip.children[index];
     const words = headWords(row);
+    const shown = flags[index] === true;
+
+    // The head is never hidden. Whose turn it is and whether they are banning
+    // or picking is not the secret - the MAP is.
     cell.querySelector('.who').textContent = words.who;
     cell.querySelector('.what').textContent = words.what;
     cell.querySelector('.cell-map').textContent = (row.map || '').toUpperCase();
-    cell.querySelector('.cell-foot').textContent = state.showSides ? sideWords(row) : '';
+    cell.querySelector('.cell-foot').textContent = shown && state.showSides ? sideWords(row) : '';
     cell.classList.toggle('is-ban', row.kind === 'ban');
-    // The only thing `reveal` does to the DOM: a class. Everything about the
-    // arrival is the transition in the stylesheet.
-    cell.classList.toggle('is-shown', index < state.reveal);
+
+    /*
+     * The shape is always up; only the data arrives. `is-shown` stays on every
+     * cell so the strip is complete from the first frame - what moves is
+     * `is-revealed`, which swaps the placeholder for the map.
+     */
+    cell.classList.add('is-shown');
+    cell.classList.toggle('is-revealed', shown);
   });
 }
 
 // ------------------------------------------------------------ full screen ---
 
 function paintFull(state) {
-  const { bans, maps } = groupedRows(state.rows, state.reveal);
+  const { bans, maps } = groupedRows(state.rows, state.revealed);
 
   fullLeft.textContent = (state.left.name || '').toUpperCase();
   fullRight.textContent = (state.right.name || '').toUpperCase();
@@ -127,8 +138,11 @@ function paintFull(state) {
   while (fullBans.children.length > bans.length) fullBans.lastElementChild.remove();
   bans.forEach((row, index) => {
     const node = fullBans.children[index];
-    node.textContent = `${(row.byShort || row.by || '').toUpperCase()} BANS ${(row.map || '').toUpperCase()}`;
+    const who = (row.byShort || row.by || '').toUpperCase();
+    // Unrevealed says WHO is banning and not what - the tile is there, waiting.
+    node.textContent = row.shown ? `${who} BANS ${(row.map || '').toUpperCase()}` : `${who} TO BAN`;
     node.classList.add('is-shown');
+    node.classList.toggle('is-revealed', row.shown);
   });
 
   while (fullMaps.children.length < maps.length) {
@@ -139,7 +153,7 @@ function paintFull(state) {
   while (fullMaps.children.length > maps.length) fullMaps.lastElementChild.remove();
   maps.forEach((row, index) => {
     const node = fullMaps.children[index];
-    node.querySelector('.full-map-name').textContent = (row.map || '').toUpperCase();
+    node.querySelector('.full-map-name').textContent = row.shown ? (row.map || '').toUpperCase() : '';
     const meta = node.querySelector('.full-map-meta');
     meta.textContent = '';
     if (row.kind === 'decider') {
@@ -149,10 +163,11 @@ function paintFull(state) {
       picker.textContent = (row.byShort || row.by || '').toUpperCase();
       meta.append(picker, document.createTextNode(' PICKS'));
     }
-    if (state.showSides && sideWords(row)) {
+    if (row.shown && state.showSides && sideWords(row)) {
       meta.append(document.createElement('br'), document.createTextNode(sideWords(row)));
     }
     node.classList.add('is-shown');
+    node.classList.toggle('is-revealed', row.shown);
   });
 }
 

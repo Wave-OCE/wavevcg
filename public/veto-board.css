@@ -149,6 +149,53 @@ body {
   font-size: 34px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  opacity: 0;
+  transform: scale(0.94);
+  transition:
+    opacity 260ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.cell.is-revealed .cell-map {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/*
+ * The placeholder that holds the box open until the map lands.
+ *
+ * Absolutely positioned over the same space rather than laid out beside the
+ * map, so the two cross-fade in place and the cell never changes size. A box
+ * that grew when its map arrived would move every cell to its right - which is
+ * the layout moving when the data changes, and the whole reason the shape goes
+ * up before the data does.
+ */
+.cell-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  opacity: 1;
+  transition: opacity 200ms linear;
+}
+
+.cell.is-revealed .cell-wait {
+  opacity: 0;
+}
+
+.cell-wait::before,
+.cell-wait::after {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.cell-wait::after {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* A banned map is greyed and struck by a ring, not deleted - the audience is
@@ -157,7 +204,13 @@ body {
   color: rgba(255, 255, 255, 0.28);
 }
 
-.cell.is-ban .cell-body::after {
+/* A revealed pick gets a quiet accent edge, so a picked map reads differently
+   from a banned one at a glance and not only by the ring. */
+.cell.is-revealed:not(.is-ban) .cell-body {
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.cell.is-ban.is-revealed .cell-body::after {
   content: '';
   position: absolute;
   width: 74px;
@@ -167,7 +220,7 @@ body {
   opacity: 0.85;
 }
 
-.cell.is-ban .cell-body::before {
+.cell.is-ban.is-revealed .cell-body::before {
   content: '';
   position: absolute;
   width: 84px;

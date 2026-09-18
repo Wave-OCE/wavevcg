@@ -20,7 +20,7 @@ import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
-import { VETO_BOARD_LAYOUTS, boardIsStale } from './veto-board-schema.js';
+import { VETO_BOARD_LAYOUTS, boardIsStale, revealedCount } from './veto-board-schema.js';
 import { vetoComplete } from './veto-schema.js';
 
 const $ = (id) => document.getElementById(id);
@@ -34,7 +34,6 @@ const els = {
   show: $('v-show'),
   hide: $('v-hide'),
   none: $('v-none'),
-  back: $('v-back'),
   next: $('v-next'),
   all: $('v-all'),
   revealNote: $('v-reveal-note'),
@@ -43,6 +42,7 @@ const els = {
   open: $('v-open'),
   preview: $('v-preview'),
   load: $('ved-load'),
+  reveal: $('ved-reveal'),
   style: $('ved-style'),
 };
 
@@ -166,21 +166,75 @@ if (els.tab) {
     );
   }
 
+  /**
+   * One row per step, each with its own switch.
+   *
+   * A list rather than a Next button, because a veto read out over comms
+   * arrives in whatever order people speak - and a board that could only reveal
+   * the next one would force an operator to show three steps to get to the
+   * fourth. Next is still on the cue bar, because walking forwards is what
+   * happens most of the time.
+   *
+   * Every row is shown whether or not the veto has answered it: the GRAPHIC
+   * shows all its boxes too, and a card that hid the unanswered ones would not
+   * be a picture of what is on screen.
+   */
+  function revealPanel() {
+    const rows = state.rows ?? [];
+    const flags = state.revealed ?? [];
+
+    els.reveal.replaceChildren(
+      title('Reveal'),
+      help(
+        'The board shows every box from the moment it is up - who is banning, who is picking - and these put the ' +
+          'MAP in one. Nothing here changes the veto itself; it only decides what an audience can see.',
+      ),
+      ...(rows.length
+        ? rows.map((row, index) => {
+            const line = el('div', `veto-reveal-row${flags[index] ? ' is-on' : ''}`);
+            const who = row.kind === 'decider' ? 'Decider' : `${row.byShort || row.by || '?'} ${row.kind}s`;
+
+            const box = el('input', null, { type: 'checkbox', 'aria-label': `Reveal step ${index + 1}` });
+            box.checked = flags[index] === true;
+            box.disabled = !row.map;
+            box.addEventListener('change', () => {
+              post({ action: 'reveal', at: index, on: box.checked }).catch(() => {});
+            });
+
+            line.append(
+              box,
+              el('span', 'veto-reveal-step', {}, String(index + 1)),
+              el('span', 'veto-reveal-who', {}, who),
+              /*
+               * A step the veto has not answered cannot be revealed - there is
+               * nothing to put in the box. Saying so beats a switch that can be
+               * flicked and does nothing.
+               */
+              el('span', 'veto-reveal-map', {}, row.map || 'not banned yet'),
+            );
+            return line;
+          })
+        : [el('p', 'empty', {}, 'Load a veto onto the board and its steps appear here.')]),
+    );
+  }
+
   function paint() {
     if (!state) return;
 
-    const shown = state.reveal ?? 0;
-    const total = (state.rows ?? []).length;
-    els.revealNote.textContent = total ? `${shown} of ${total} shown` : 'nothing loaded yet';
-    els.next.disabled = shown >= total;
-    els.back.disabled = shown <= 0;
-    els.all.disabled = !total || shown >= total;
+    const rows = state.rows ?? [];
+    const shown = revealedCount(state);
+    els.revealNote.textContent = rows.length ? `${shown} of ${rows.length} revealed` : 'nothing loaded yet';
+    // Next reveals the first step that is still hidden AND has a map to show.
+    const nextAt = rows.findIndex((row, index) => row.map && !(state.revealed ?? [])[index]);
+    els.next.disabled = nextAt === -1;
+    els.all.disabled = !rows.length || shown >= rows.filter((row) => row.map).length;
     els.none.disabled = shown <= 0;
 
     els.air.classList.toggle('is-live', Boolean(state.anim?.visible));
     els.airLabel.textContent = state.anim?.visible ? 'On preview' : 'Hidden';
 
     loadPanel();
+    revealPanel();
     stylePanel();
   }
 
@@ -196,10 +250,14 @@ if (els.tab) {
   );
   els.hide.addEventListener('click', () => save({ anim: { ...state.anim, visible: false } }));
 
-  els.next.addEventListener('click', () => post({ action: 'reveal' }));
-  els.back.addEventListener('click', () => post({ action: 'reveal', to: (state.reveal ?? 0) - 1 }));
-  els.all.addEventListener('click', () => post({ action: 'reveal', to: (state.rows ?? []).length }));
-  els.none.addEventListener('click', () => post({ action: 'reveal', to: 0 }));
+  els.next.addEventListener('click', () => {
+    // The first step still hidden that has something to show. Computed here
+    // rather than on the server so the button and its disabled state agree.
+    const at = (state.rows ?? []).findIndex((row, index) => row.map && !(state.revealed ?? [])[index]);
+    if (at !== -1) post({ action: 'reveal', at, on: true }).catch(() => {});
+  });
+  els.all.addEventListener('click', () => post({ action: 'reveal', all: true }).catch(() => {}));
+  els.none.addEventListener('click', () => post({ action: 'reveal', all: false }).catch(() => {}));
 
   els.reset.addEventListener('click', () => {
     if (!window.confirm('Reset the veto board? The loaded veto, the logo and the layout all go.')) return;

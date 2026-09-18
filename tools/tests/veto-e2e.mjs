@@ -311,6 +311,95 @@ try {
   const stillOpen = await fetch(pub(linkedTokens.a));
   eq('53 ...and does NOT break the links the captains already have', stillOpen.status, 200);
 
+  // --------------------------------------------------------- the board ---
+  /*
+   * The GRAPHIC, as opposed to the veto: a snapshot, and a set of reveal flags.
+   *
+   * The shape goes up whole and the maps arrive one at a time, so what is
+   * asserted here is that the two are independent - every row exists from the
+   * moment the board is loaded, and `revealed` is what decides whether an
+   * audience can read it.
+   */
+  {
+    const board = (extra = '') => `${BASE}/api/veto-board?session=${tournamentId}${extra}`;
+    const boardGet = async (extra = '') => (await (await fetch(board(extra), { headers: { Cookie: cookie } })).json());
+    const boardPost = async (body, extra = '') => {
+      const response = await fetch(board(extra), { method: 'POST', headers: H, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json().catch(() => null) };
+    };
+
+    let b = await boardPost({ action: 'load', id: veto.id }, '&bus=preview');
+    eq('57 a finished veto loads onto the board', b.status, 200);
+    eq('58 ...carrying every step', b.body.state.rows.length, 7);
+    ok('59 ...and revealing none of them', b.body.state.revealed.every((flag) => flag === false), JSON.stringify(b.body.state.revealed));
+
+    /*
+     * The MAP is in the state even while it is hidden - the page is what does
+     * not paint it. Worth stating out loud: anyone holding the session key can
+     * read an unrevealed map. That is the production, not the audience, and the
+     * suspense this feature creates is for the audience.
+     */
+    ok('60 an unrevealed step still carries its map in the state', Boolean(b.body.state.rows[0].map), JSON.stringify(b.body.state.rows[0]));
+
+    b = await boardPost({ action: 'reveal', at: 2, on: true }, '&bus=preview');
+    eq('61 one step can be revealed', b.body.state.revealed.map((f) => (f ? '1' : '0')).join(''), '0010000');
+
+    /*
+     * OUT OF ORDER, which is the whole reason it is a set rather than a count.
+     * A veto read out over comms arrives in whatever order people speak.
+     */
+    b = await boardPost({ action: 'reveal', at: 6, on: true }, '&bus=preview');
+    eq('62 ...and another, out of order', b.body.state.revealed.map((f) => (f ? '1' : '0')).join(''), '0010001');
+
+    b = await boardPost({ action: 'reveal', at: 2, on: false }, '&bus=preview');
+    eq('63 ...and taken back one at a time', b.body.state.revealed.map((f) => (f ? '1' : '0')).join(''), '0000001');
+
+    b = await boardPost({ action: 'reveal', all: true }, '&bus=preview');
+    ok('64 all at once', b.body.state.revealed.every(Boolean));
+    b = await boardPost({ action: 'reveal', all: false }, '&bus=preview');
+    ok('65 ...and none at once', b.body.state.revealed.every((flag) => !flag));
+
+    b = await boardPost({ action: 'reveal', at: 99, on: true }, '&bus=preview');
+    eq('66 a step that does not exist is refused', b.status, 400);
+    b = await boardPost({ action: 'reveal', at: 'three', on: true }, '&bus=preview');
+    eq('67 ...and so is one that is not a number', b.status, 400);
+
+    /*
+     * A reload with MORE steps must not leave the new ones inheriting a flag.
+     * The array is sized from the rows every time it is sanitised, so this is
+     * the property that makes reloading a longer board safe.
+     */
+    await boardPost({ action: 'reveal', all: true }, '&bus=preview');
+    const bo5 = await post('/api/veto', {
+      action: 'create',
+      veto: { name: 'Bo5', format: 'bo5', a: { name: 'A' }, b: { name: 'B' } },
+    });
+    const longer = bo5.body.veto.vetoes.find((entry) => entry.format === 'bo5');
+    b = await boardPost({ action: 'load', id: longer.id }, '&bus=preview');
+    eq('68 a reloaded board sizes its flags to the new rows', b.body.state.revealed.length, b.body.state.rows.length);
+    ok('69 ...and reveals none of them', b.body.state.revealed.every((flag) => !flag), JSON.stringify(b.body.state.revealed));
+
+    /*
+     * AND THE OTHER HALF, which is the one the fix introduced.
+     *
+     * Reloading the SAME veto is the ordinary "they have banned another one,
+     * catch up" press, and it must KEEP what has been revealed - wiping it
+     * would make the operator walk the board out again from the start, live.
+     * Only a different veto starts hidden.
+     */
+    await boardPost({ action: 'reveal', at: 0, on: true }, '&bus=preview');
+    await boardPost({ action: 'reveal', at: 1, on: true }, '&bus=preview');
+    b = await boardPost({ action: 'load', id: longer.id }, '&bus=preview');
+    eq(
+      '70 reloading the SAME veto keeps what is revealed',
+      b.body.state.revealed.map((f) => (f ? '1' : '0')).join('').slice(0, 2),
+      '11',
+    );
+
+    const keyed = await fetch(`${BASE}/api/veto-board?key=${encodeURIComponent(key)}`);
+    eq('71 a key may read the board, so OBS works', keyed.status, 200);
+  }
+
   // ---------------------------------------------------------------- the log ---
   ok('54 a captain\'s ban is logged', /veto/.test(log) && /ban/.test(log), 'no audit line for a veto answer');
   ok('55 no token reached the log', !log.includes(tokens.referee) && !log.includes(linkedTokens.a), 'TOKEN LEAKED');

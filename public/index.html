@@ -1034,13 +1034,11 @@
 
         <span class="toolbar-gap"></span>
 
-        <!-- The reveal. Its own row of controls rather than part of Show,
-             because walking a board out is what an operator does WHILE it is
-             already up. -->
-        <button type="button" id="v-none" class="btn btn-ghost" title="Hide every step">None</button>
-        <button type="button" id="v-back" class="btn btn-ghost" title="Take the last step back off">Back</button>
-        <button type="button" id="v-next" class="btn btn-cue" title="Reveal the next step">Reveal next</button>
-        <button type="button" id="v-all" class="btn btn-ghost" title="Show the whole board">All</button>
+        <!-- Reveal the NEXT unanswered step, which is the common case live;
+             which step, and taking one back, is the card below the preview. -->
+        <button type="button" id="v-none" class="btn btn-ghost" title="Hide every map again">None</button>
+        <button type="button" id="v-next" class="btn btn-cue" title="Reveal the next step that is still hidden">Reveal next</button>
+        <button type="button" id="v-all" class="btn btn-ghost" title="Reveal every map">All</button>
         <span class="cue-note" id="v-reveal-note"></span>
       </div>
 
@@ -1069,6 +1067,9 @@
 
       <div class="editor-grid" data-cards="vetoBoard">
         <section class="panel" id="ved-load"></section>
+        <!-- One row per step, each with its own switch. The board shows every
+             box from the moment it is up; this is what puts the MAP in one. -->
+        <section class="panel" id="ved-reveal"></section>
         <section class="panel" id="ved-style"></section>
       </div>
     </main>

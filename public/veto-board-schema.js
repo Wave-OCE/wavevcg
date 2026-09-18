@@ -22,22 +22,30 @@
  * press away.
  *
  * ---------------------------------------------------------------------------
- * `reveal`, and why it is not a cue
+ * The SHAPE arrives whole; the DATA arrives one step at a time
  * ---------------------------------------------------------------------------
  *
- * The graphic shows the first `reveal` steps and nothing after them, so an
- * operator walks a board out one ban at a time while a caster talks over it.
- * That is a transport idea, and it deliberately does NOT live on `anim.cue`.
+ * Every cell is on screen from the moment the board is up, carrying the one
+ * thing that is not a secret - whose turn it is and whether they are banning or
+ * picking. What `revealed` controls is only the MAP inside it.
  *
- * The cue exists so the page can replay its ENTRANCE - the whole graphic flying
- * on - and it is bumped only when the operator presses Show. Revealing the
- * fourth ban must animate the fourth row and leave the other three where they
- * are; if it bumped the cue the entire board would fly on again every time,
- * which is precisely the failure the counter was invented to prevent. So the
- * page animates a row on its own arrival, and the cue is left alone.
+ * That is a change from a count of visible cells, and the reason is what the
+ * graphic is for. A veto board that grows a cell at a time never shows the
+ * audience how long the process is; one that stands complete and fills in tells
+ * them "six more of these to go" from the first frame, and every reveal lands
+ * in a box they have already been looking at. It also means the layout is
+ * settled before anything is revealed - nothing shifts as the board fills.
  *
- * `transport` in buses.js is `[anim.visible]` for the same reason: a take that
- * only moved the reveal should not replay the entrance.
+ * A SET rather than a count, because an operator does not always walk forwards.
+ * A veto read out over comms arrives in whatever order people speak, and a
+ * board that could only reveal the next one would force them to reveal three
+ * steps to show the fourth.
+ *
+ * Neither is the cue. The cue exists so the page can replay its ENTRANCE and is
+ * bumped only when the operator presses Show; revealing the fourth ban fills in
+ * the fourth box. If it bumped the cue the whole board would fly on again every
+ * time, which is precisely the failure the counter was invented to prevent -
+ * and `transport` in buses.js is `[anim.visible]` for the same reason.
  */
 
 const LAYOUTS = [
@@ -93,9 +101,12 @@ export const DEFAULT_VETO_BOARD = {
   left: { name: '', shortName: '', logo: '', colour: '' },
   right: { name: '', shortName: '', logo: '', colour: '' },
   rows: [],
-  // How many rows are on screen. 0 is an empty board, which is a real state:
-  // the graphic can be shown before the veto starts.
-  reveal: 0,
+  /*
+   * Which steps have had their MAP revealed, one flag per row. Every row is on
+   * screen either way - see the header. All false is a real and common state:
+   * the board goes up complete and empty before the veto starts.
+   */
+  revealed: [],
   showSides: true,
   anim: { visible: false, cue: 0 },
 };
@@ -139,14 +150,18 @@ export function sanitiseVetoBoard(input, fallback = DEFAULT_VETO_BOARD) {
     right: side(source.right ?? base.right),
     rows,
     /*
-     * Clamped to the rows that exist, not to VETO_BOARD_ROWS.
+     * Sized to the rows that exist, always.
      *
-     * A reveal past the end would leave the operator pressing Next with nothing
-     * happening and no way to tell whether the graphic was broken or the veto
-     * was finished. Clamping to `rows.length` makes "revealed everything" a
-     * state the dashboard can see and report.
+     * A flag with no row is a reveal nobody can see and nobody can take back;
+     * a row with no flag would read as undefined and paint as revealed. Both
+     * are fixed by deriving the length here rather than trusting what arrived,
+     * which also means a board reloaded with more steps than before gets its
+     * new ones unrevealed rather than inheriting a neighbour's flag.
      */
-    reveal: whole(source.reveal ?? base.reveal, 0, rows.length, 0),
+    revealed: Array.from({ length: rows.length }, (_, index) => {
+      const given = Array.isArray(source.revealed) ? source.revealed : base.revealed;
+      return Array.isArray(given) && given[index] === true;
+    }),
     showSides: typeof source.showSides === 'boolean' ? source.showSides : (base.showSides ?? true),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
@@ -214,14 +229,25 @@ export function boardIsStale(board, veto) {
  *
  * Bans together, then the maps that will be played - which is what the
  * reference board does, and is a property of this layout and of nothing else.
- * The record keeps the true order; `reveal` still counts in that order, so
- * walking the board out reveals them in the sequence they happened even though
- * they are drawn in two groups.
+ * The record keeps the true order and grouping never reaches back into it.
+ *
+ * EVERY row comes back, each carrying whether its map has been revealed. The
+ * grouping cannot depend on that: an unrevealed step still has to take its
+ * place, or revealing one would move the boxes either side of it - and a board
+ * that reflows as it fills is the thing this design exists to avoid.
+ *
+ * Which does mean the two groups are sized by the FORMAT rather than by what
+ * has been shown, so a Bo3 board says "four bans and three maps" before anybody
+ * has banned anything. That is the intent: the shape is the information.
  */
-export function groupedRows(rows, reveal) {
-  const shown = (rows ?? []).slice(0, Math.max(0, reveal));
+export function groupedRows(rows, revealed) {
+  const flags = Array.isArray(revealed) ? revealed : [];
+  const all = (rows ?? []).map((entry, index) => ({ ...entry, shown: flags[index] === true, at: index }));
   return {
-    bans: shown.filter((entry) => entry.kind === 'ban'),
-    maps: shown.filter((entry) => entry.kind !== 'ban'),
+    bans: all.filter((entry) => entry.kind === 'ban'),
+    maps: all.filter((entry) => entry.kind !== 'ban'),
   };
 }
+
+/** How many steps have been revealed, for the dashboard's own counter. */
+export const revealedCount = (state) => (state?.revealed ?? []).filter(Boolean).length;

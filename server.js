@@ -6000,7 +6000,18 @@ async function handlePost(pathname, req, res, ctx, params) {
            * before the show; the board is what changes per match. A replace
            * would take the logo off every time somebody pressed Load.
            */
-          const state = vetoBoard.patch(board);
+          /*
+           * A DIFFERENT veto starts hidden; the SAME one keeps its reveals.
+           *
+           * Both halves matter. Loading the next match's board must not inherit
+           * the last one's flags, or it goes up with every ban already showing
+           * and the audience reads the whole veto before it happens. But
+           * reloading the SAME veto is the ordinary "they have banned another
+           * one, catch up" press, and wiping the reveals there would make the
+           * operator walk the board out again from the start.
+           */
+          const fresh = vetoBoard.state.vetoId !== board.vetoId;
+          const state = vetoBoard.patch(fresh ? { ...board, revealed: [] } : board);
           log.info('air', `veto board loaded: ${board.title}`, {
             tournament: ctx.owner?.id,
             bus: writeBus,
@@ -6011,15 +6022,29 @@ async function handlePost(pathname, req, res, ctx, params) {
 
         if (action === 'reveal') {
           /*
-           * One step at a time, or all of them. `to` is absolute rather than a
-           * delta so that two presses racing cannot leave the board somewhere
-           * neither of them asked for - the same reason the sequence driver
-           * takes a stage rather than a direction.
+           * One step, or all of them, or none - and every form is ABSOLUTE.
+           *
+           * `on` says what the flag should BE rather than toggling it, so two
+           * presses racing cannot leave the board in a state neither of them
+           * asked for. The same reason the sequence driver takes a stage rather
+           * than a direction.
            */
           const current = vetoBoard.state;
-          const wanted = body?.to === undefined ? current.reveal + 1 : Number.parseInt(body.to, 10);
-          if (!Number.isInteger(wanted)) throw new ProviderError(400, 'Reveal to which step?');
-          const state = vetoBoard.patch({ reveal: wanted });
+          const flags = [...current.revealed];
+
+          if (body?.all !== undefined) {
+            flags.fill(body.all === true);
+          } else {
+            const at = Number.parseInt(body?.at, 10);
+            // Checked before the range test: NaN fails every comparison and
+            // would land as flags[NaN], which is a property nobody reads.
+            if (!Number.isInteger(at) || at < 0 || at >= flags.length) {
+              throw new ProviderError(400, 'No such step on that board.');
+            }
+            flags[at] = body?.on !== false;
+          }
+
+          const state = vetoBoard.patch({ revealed: flags });
           return { bus: writeBus, revision: vetoBoard.revision, state };
         }
 

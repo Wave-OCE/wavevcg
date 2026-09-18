@@ -4220,3 +4220,46 @@ body.is-adrift .rail-item[data-tab='global'] {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
+
+/* One step of a veto board, with its own reveal switch. */
+.veto-reveal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  font-size: 13px;
+}
+
+.veto-reveal-row.is-on {
+  background: rgba(109, 183, 232, 0.1);
+}
+
+.veto-reveal-step {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.veto-reveal-who {
+  flex: 0 0 auto;
+  min-width: 128px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.veto-reveal-map {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
