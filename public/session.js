@@ -88,7 +88,47 @@ export function outputUrl(page, key) {
  * place is a great deal of machinery to get subtly wrong, in exchange for
  * saving an operator half a second between shows.
  */
+/*
+ * Where the operator was, carried across the one reload a switch costs.
+ *
+ * Switching tournament is a navigation - see the note on switchTo below for why
+ * that is right - and a navigation lands on whatever tab index.html marks,
+ * which is the lookup page. So an operator who pressed "New tournament" on the
+ * Tournament page arrived back on a different page entirely, and one who
+ * switched tournaments mid-show lost their place. The data was correct and the
+ * ergonomics were worse than the bug.
+ *
+ * sessionStorage rather than localStorage, and cleared on the way out: this is
+ * "carry me across THIS reload", not a preference. A manual refresh must still
+ * land where index.html says, because that is what somebody reloading a stuck
+ * page expects, and a tab restored from a week ago is a surprise rather than a
+ * convenience.
+ */
+const PLACE_KEY = 'vct.place.next';
+
+const keepPlace = () => {
+  try {
+    const here = document.querySelector('.tab[aria-selected="true"]')?.dataset.tab;
+    if (here) sessionStorage.setItem(PLACE_KEY, here);
+  } catch {
+    // Storage denied still gets a working switch, just a forgetful one - the
+    // same call the rail's collapse makes.
+  }
+};
+
+/** The tab a switch asked to return to, read once and consumed. */
+export function takePlace() {
+  try {
+    const tab = sessionStorage.getItem(PLACE_KEY) ?? '';
+    sessionStorage.removeItem(PLACE_KEY);
+    return tab;
+  } catch {
+    return '';
+  }
+}
+
 export function switchTo(sessionId) {
+  keepPlace();
   const url = new URL(location.href);
   if (sessionId) url.searchParams.set('session', sessionId);
   else url.searchParams.delete('session');
@@ -107,6 +147,7 @@ export function switchTo(sessionId) {
 
 /** Point the dashboard at a different DESK of the tournament it is already on. */
 export function switchDesk(productionId) {
+  keepPlace();
   const url = new URL(location.href);
   if (productionId) url.searchParams.set('production', productionId);
   else url.searchParams.delete('production');

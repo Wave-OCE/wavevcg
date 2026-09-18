@@ -4232,6 +4232,25 @@ async function handleTournaments(pathname, req, res, ctx) {
     return sendJson(res, 200, {
       tournaments: tournaments.forUser(user.id).map(publicTournament),
       mayCreate: can(user, 'manageTournaments'),
+      /*
+       * Which tournament THIS request resolved to, so the page can agree with
+       * the server about where its data comes from.
+       *
+       * A dashboard opened at `/` sends no `?session=`, and `contextFor` then
+       * falls through to `tournaments.defaultFor` - the NEWEST non-archived
+       * one. The Tournament page used to seed itself from a localStorage
+       * pointer instead, so the two could name different tournaments and
+       * nothing reconciled them: the picker read "Alpha Cup", the settings
+       * below it were Alpha's, and every fetch on the page answered with
+       * Beta's. Measured that way round - an empty team library under a heading
+       * naming the tournament that had the teams.
+       *
+       * Reimplementing `defaultFor` in the browser was the other option and is
+       * the one this codebase keeps warning about: a second implementation of a
+       * rule is one edit away from disagreeing with the first, and this
+       * particular disagreement is invisible until somebody's roster is gone.
+       */
+      current: ctx.owner?.id ?? '',
     });
   }
 
@@ -4587,6 +4606,18 @@ async function handleAccount(pathname, req, res, ctx) {
       user: publicUser(user, { includeKey: true, includeControlKey: true }),
       companion: { enabled: companionOn(), path: COMPANION_PATH },
       sessions: visibleSessions(user, ctx?.production?.id ?? ''),
+      /*
+       * Which tournament an unqualified request resolves to, so the topbar
+       * marks the one the page is really looking at.
+       *
+       * It used to take `sessions[0]`, on the stated reasoning that the list is
+       * in the same order as the server's default so the first entry IS that
+       * default. That holds until something is ARCHIVED: `forUser` returns
+       * archived tournaments in the list and `defaultFor` skips them, so the
+       * newest being archived makes the two disagree and the picker names a
+       * tournament the data is not coming from.
+       */
+      current: ctx?.owner?.id ?? '',
       grantable: grantableUsers(user),
       passwordMin: PASSWORD_MIN,
     });

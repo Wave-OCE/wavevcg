@@ -945,6 +945,108 @@ try {
   await wait(500);
   ok('29. an archived tournament locks its fields', await guest.$eval('#tou-fields input[type=text]', (i) => i.disabled));
   ok('30. ...and says why', (await guest.textContent('#tou-saved')).includes('Archived'));
+
+  // ------------------------------------ swapping tournament swaps the DATA ---
+  /*
+   * Reported from a live deployment, in two halves that turned out to be one
+   * bug: "I created a new tournament and it doesn't update the teams/players
+   * library - I had to refresh the whole page", and "after swapping between
+   * tournaments the library no longer appeared for the tournament that had
+   * teams".
+   *
+   * Which tournament a REQUEST means comes from `?session=` in the URL and
+   * nowhere else. Neither the create button nor the Tournament page's own
+   * picker wrote it - they set a module-local variable, wrote a localStorage
+   * pointer and repainted - so both changed what the page DISPLAYED without
+   * changing what it ADDRESSED. Measured before the fix: the heading read
+   * "Alpha Cup", the settings under it were Alpha's, and the team library
+   * beneath them was empty, because every fetch still answered for whichever
+   * tournament the URL named.
+   *
+   * Everything here runs on its own page and its own two tournaments, so it
+   * depends on nothing above it and disturbs nothing below.
+   */
+  {
+    const make = async (name) => (await post('/api/tournaments', { action: 'create', name })).tournament;
+    const alpha = await make('Swap Alpha');
+    await fetch(`${BASE}/api/teams?session=${alpha.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: jar.join('; ') },
+      body: JSON.stringify({ action: 'save', team: { name: 'Swapworthy', shortName: 'SWP', players: [] } }),
+    });
+    // Beta second, so it is the NEWEST - which is what an unqualified request
+    // resolves to, and therefore the tournament a bare `/` opens on.
+    const beta = await make('Swap Beta');
+
+    const desk = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+    const deskErrors = [];
+    desk.on('pageerror', (event) => deskErrors.push(String(event)));
+    await signIn(desk, 'boss', 'a-long-enough-password');
+
+    const openTeams = async () => {
+      await desk.click('.rail-item[data-tab="tournament"]');
+      await wait(500);
+      await desk.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-teams"]');
+      await wait(800);
+    };
+    const shelf = async () => desk.$$eval('#wed-teams .team-card-name', (nodes) => nodes.map((n) => n.textContent.trim()));
+    const named = async () =>
+      desk.evaluate(() => {
+        const node = document.getElementById('tou-select');
+        return node?.options[node.selectedIndex]?.textContent ?? '';
+      });
+    const urlSession = () => new URL(desk.url()).searchParams.get('session') ?? '';
+
+    await openTeams();
+    ok('31. a bare URL opens on the tournament the SERVER resolves', (await named()).includes('Swap Beta'), await named());
+    ok('32. ...and its library is the one that belongs to it', (await shelf()).length === 0, JSON.stringify(await shelf()));
+
+    /*
+     * THE ONE THE OPERATOR REPORTED. Pick the tournament that has the teams,
+     * using the picker that is actually on the page they are looking at.
+     */
+    await desk.selectOption('#tou-select', alpha.id);
+    await wait(1800);
+    await openTeams();
+    eqv('33. picking a tournament writes it into the URL', urlSession(), alpha.id);
+    ok('34. ...and the heading follows', (await named()).includes('Swap Alpha'), await named());
+    ok('35. ...AND SO DOES THE LIBRARY', JSON.stringify(await shelf()) === '["Swapworthy"]', JSON.stringify(await shelf()));
+
+    await desk.selectOption('#tou-select', beta.id);
+    await wait(1800);
+    await openTeams();
+    ok('36. swapping back takes the library with it', (await shelf()).length === 0, JSON.stringify(await shelf()));
+
+    /*
+     * And creating one LANDS on it, rather than leaving the page displaying the
+     * previous tournament while every request resolves to the new one - which
+     * is what "I had to refresh the whole page" was describing.
+     */
+    desk.once('dialog', (dialog) => dialog.accept('Swap Gamma'));
+    await desk.click('#tou-new');
+    await wait(2000);
+    const gamma = (await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: jar.join('; ') } })).json()).tournaments.find(
+      (entry) => entry.name === 'Swap Gamma',
+    );
+    eqv('37. creating a tournament lands the page on it', urlSession(), gamma.id);
+    await openTeams();
+    ok('38. ...with its own empty library, not the last one\'s', (await shelf()).length === 0, JSON.stringify(await shelf()));
+
+    /*
+     * The page must not be able to disagree with the server about this. Both
+     * reads say which tournament an unqualified request resolves to; without
+     * them the browser has to reimplement `defaultFor`, and a second
+     * implementation of that rule is invisible when it drifts.
+     */
+    const listed = await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: jar.join('; ') } })).json();
+    eqv('39. the tournament list says which one is current', listed.current, gamma.id);
+    const account = await (await fetch(`${BASE}/api/account/me`, { headers: { Cookie: jar.join('; ') } })).json();
+    eqv('40. ...and so does the account, for the topbar', account.current, gamma.id);
+
+    ok('41. nothing threw while swapping', deskErrors.length === 0, deskErrors.join(' | '));
+    await desk.close();
+  }
+
 } catch (error) {
   failed += 1;
   console.log(`  FAIL  threw - ${error.message}`);

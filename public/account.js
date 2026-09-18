@@ -150,11 +150,16 @@ function paintTopbar() {
   if (!me) return;
 
   /*
-   * With no ?session= the server opens a default tournament, and this list is
-   * in the same order - so the first entry IS that default, and the selector
-   * shows what the page is actually looking at rather than nothing.
+   * With no ?session= the server opens a default tournament, and it SAYS which
+   * one rather than leaving this to infer it.
+   *
+   * This used to take `sessions[0]`, on the reasoning that the list is in the
+   * same order as the server's default so the first entry is that default. It
+   * holds until something is archived: `forUser` keeps archived tournaments in
+   * the list and `defaultFor` skips them, so the newest being archived made the
+   * picker name a tournament the data was not coming from.
    */
-  const current = SESSION_ID || me.sessions[0]?.id || '';
+  const current = SESSION_ID || me.current || me.sessions[0]?.id || '';
   els.target.replaceChildren(
     ...me.sessions.map((entry) =>
       el(

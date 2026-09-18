@@ -25,6 +25,7 @@
  */
 
 import { scalePreviews } from './preview-frame.js';
+import { takePlace } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -167,6 +168,16 @@ window.addEventListener('app-tab', (event) => paint(event.detail));
 // index.html marked, so read it rather than assume it.
 paint(document.querySelector('.tab[aria-selected="true"]')?.dataset.tab ?? 'lookup');
 
+/*
+ * If this load is the far side of a tournament or desk switch, go back to the
+ * page the operator was on.
+ *
+ * After `openTab` is defined below, because it is the same press - everything
+ * downstream of a tab (the lazy preview load, the body class, the app-tab
+ * event) has to happen exactly once, in the one place that does it.
+ */
+const place = takePlace();
+
 // ------------------------------------------------------------ rail: group ---
 
 /*
@@ -176,6 +187,11 @@ paint(document.querySelector('.tab[aria-selected="true"]')?.dataset.tab ?? 'look
  * one place it is written.
  */
 const openTab = (tab) => document.querySelector(`.tab[data-tab="${tab}"]`)?.click();
+
+// The far side of a switch. A tab that no longer exists - a rail item hidden
+// because this tournament does not have it - simply does not open, and the page
+// stays where index.html put it rather than blanking.
+if (place) openTab(place);
 
 for (const item of railItems) {
   if (item.dataset.section !== 'graphics') continue;

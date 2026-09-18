@@ -32,7 +32,7 @@ import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
-import { account, refreshAccount, switchDesk } from './session.js';
+import { SESSION_ID, account, refreshAccount, switchDesk, switchTo } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -594,7 +594,18 @@ if (els.pick) {
       all = payload.tournaments ?? [];
       mayCreate = payload.mayCreate === true;
 
-      const pick = wanted ?? current?.id ?? remembered();
+      /*
+       * Which tournament this page shows, in the order that keeps it honest.
+       *
+       * The URL first, because that is the only thing the SERVER reads - a page
+       * displaying one tournament while its fetches answer for another is the
+       * bug this whole block exists to prevent. Then what the server says an
+       * unqualified request resolves to, which is the honest answer on a bare
+       * `/`. The remembered pointer last: it is this browser's preference and
+       * it must never outrank either of the two facts above it, which is
+       * precisely what it used to do.
+       */
+      const pick = wanted ?? current?.id ?? (SESSION_ID || payload.current || remembered());
       current = all.find((entry) => entry.id === pick) ?? all[0] ?? null;
       remember(current?.id);
 
@@ -638,10 +649,30 @@ if (els.pick) {
 
   // ---------------------------------------------------------------- wiring ---
 
+  /*
+   * NAVIGATE, rather than repainting this page against a tournament the rest of
+   * the dashboard is not looking at.
+   *
+   * This used to set `current`, write the localStorage pointer and repaint -
+   * and nothing else. But which tournament a REQUEST means comes from
+   * `?session=` in the URL and nowhere else (`api()` in session.js composes it
+   * from `SESSION_ID`, read once at import), so picking one here changed what
+   * the page DISPLAYED and not what it ADDRESSED. Measured: pick the tournament
+   * that has the teams and the heading says its name, the settings below are
+   * its settings, and the team library under them is empty - because every
+   * fetch still answers for whichever tournament the URL named.
+   *
+   * This is the same press the topbar picker makes, and it always went through
+   * `switchTo`. Two pickers doing two different things to the same choice is
+   * what made this survive as long as it did.
+   */
   els.pick.addEventListener('change', () => {
-    current = all.find((entry) => entry.id === els.pick.value) ?? null;
-    remember(current?.id);
-    paint();
+    const wanted = els.pick.value;
+    // Guarded, because assigning the value already on screen would reload the
+    // page for nothing - and `paint()` sets this select's value itself.
+    if (!wanted || wanted === current?.id) return;
+    remember(wanted);
+    switchTo(wanted);
   });
 
   els.fresh.addEventListener('click', async () => {
@@ -651,8 +682,33 @@ if (els.pick) {
     if (name === null) return;
     try {
       const payload = await send({ action: 'create', name });
-      await load(payload.tournament.id);
-      toast(`Created "${tournamentLabel(payload.tournament)}"`);
+      /*
+       * NAVIGATE onto the new tournament rather than painting it in place.
+       *
+       * This used to call load(), which repainted this page and left the URL
+       * alone - and the URL is the whole problem. A dashboard opened at `/`
+       * carries no `?session=`, so every request on it resolves through
+       * `tournaments.defaultFor`, which is the NEWEST tournament. Creating one
+       * therefore moved the entire page onto it silently: the topbar picker
+       * followed, every subsequent fetch went to the new tournament, and every
+       * module still held the old one's data. Measured: the team library on
+       * screen still read "Sentinels" while an unqualified /api/teams answered
+       * empty. The operator saw a library that would not update and refreshed
+       * the page to fix it, which is exactly what was reported.
+       *
+       * `switchTo` writes `?session=` and reloads, which is the path the
+       * tournament picker has always used. That is a reload, and deliberately
+       * so - the same argument session.js makes about switchTo itself: the
+       * graphics stores, the three preview iframes and the SSE subscriptions
+       * are all bound to a tournament at page load, so repainting the libraries
+       * in place would fix the visible half and leave those pointing at the
+       * tournament the operator just left. One reload is honest; a half-switch
+       * is the kind of bug that only shows up on air.
+       *
+       * It also PINS the tournament. From here the URL names it, so the next
+       * tournament somebody creates cannot move this page again.
+       */
+      switchTo(payload.tournament.id);
     } catch (error) {
       toast(error.message);
     }
