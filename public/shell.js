@@ -27,17 +27,42 @@
 const $ = (id) => document.getElementById(id);
 
 /** Which rail item lights up for a given tab. */
+/*
+ * Which rail group owns each screen.
+ *
+ * Graphics was one section holding three screens and is now THREE, because
+ * seven in one strip is a strip that wraps at narrow widths and that nobody can
+ * scan. The split is by what the graphic is ABOUT rather than by when it was
+ * built: a match, a team, or the draw.
+ */
 const SECTION_OF = {
   lookup: 'lookup',
   setup: 'setup',
-  graphic: 'graphics',
-  winner: 'graphics',
-  select: 'graphics',
+  graphic: 'match',
+  winner: 'match',
+  select: 'match',
+  lineup: 'team',
+  headToHead: 'team',
+  vetoBoard: 'team',
   global: 'global',
   tournament: 'tournament',
   account: 'account',
   admin: 'admin',
 };
+
+/**
+ * Each group's screens, and the one it opens on.
+ *
+ * `lastOf` remembers where you were per group, which is what makes a rail item
+ * one click rather than two for the screen you were actually using. It was one
+ * variable for the single Graphics group; three groups means a map, and keeping
+ * the memory per group is the whole reason the split is tolerable.
+ */
+const GROUP_TABS = {
+  match: ['graphic', 'winner', 'select'],
+  team: ['lineup', 'headToHead', 'vetoBoard'],
+};
+const lastOf = { match: 'graphic', team: 'lineup' };
 
 /**
  * The heading, per tab.
@@ -51,15 +76,14 @@ const PAGE = {
   graphic: ['Post match', 'The end-of-map scoreboard'],
   winner: ['Winner splash', 'The end-of-series sequence'],
   select: ['Agent select', 'The draft strip'],
+  lineup: ['Team lineup', 'A squad, full screen'],
+  headToHead: ['Head to head', 'Two orgs before a match'],
+  vetoBoard: ['Map veto', 'The bans and picks, on air'],
   global: ['Global', 'Settings and libraries shared by every graphic'],
   tournament: ['Tournament', 'The competition, and who may work on it'],
   account: ['Account', 'Your keys, your sessions, and who may reach them'],
   admin: ['Admin', 'Server-wide switches, accounts and the log'],
 };
-
-/** Opening Graphics from the rail returns to whichever of its three you left. */
-const GRAPHICS_TABS = ['graphic', 'winner', 'select'];
-let lastGraphicsTab = 'graphic';
 
 const railItems = [...document.querySelectorAll('.rail-item')];
 const strips = [...document.querySelectorAll('.subtabs')];
@@ -71,7 +95,7 @@ const pageSub = $('page-sub');
 function paint(tab) {
   const section = SECTION_OF[tab];
   if (!section) return;
-  if (GRAPHICS_TABS.includes(tab)) lastGraphicsTab = tab;
+  if (GROUP_TABS[section]?.includes(tab)) lastOf[section] = tab;
 
   for (const item of railItems) {
     const owns = item.dataset.section ?? SECTION_OF[item.dataset.tab];
@@ -98,12 +122,13 @@ paint(document.querySelector('.tab[aria-selected="true"]')?.dataset.tab ?? 'look
 // ------------------------------------------------------------ rail: group ---
 
 for (const item of railItems) {
-  if (item.dataset.section !== 'graphics') continue;
+  const group = item.dataset.section;
+  if (!group || !GROUP_TABS[group]) continue;
   // Click the real tab rather than duplicating what it does. Everything
   // downstream of a tab press - the lazy preview load, the body class, the
   // app-tab event - then happens exactly once, in the one place it is written.
   item.addEventListener('click', () => {
-    document.querySelector(`.tab[data-tab="${lastGraphicsTab}"]`)?.click();
+    document.querySelector(`.tab[data-tab="${lastOf[group]}"]`)?.click();
   });
 }
 

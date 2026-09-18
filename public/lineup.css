@@ -1,0 +1,237 @@
+/*
+ * The team lineup, on air. Its own stylesheet like every other output page.
+ *
+ * A fixed 1920x1080 stage scaled as a whole - OBS renders a browser source at
+ * an exact canvas size, so a font size chosen here is the size that goes to
+ * air. Do not switch to viewport units.
+ */
+
+:root {
+  --ink: #ffffff;
+  --ink-dim: rgba(255, 255, 255, 0.55);
+  --plate: #05070b;
+  --accent: #c8aa6e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* `hidden` must actually hide: the attribute's display:none comes from the UA
+   sheet and loses to any rule here that sets display. Every format swap on this
+   page is an attribute toggle. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: Gabarito, 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+}
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: top left;
+}
+
+.lineup {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 360ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.lineup.is-on {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------- heading --- */
+
+.head {
+  position: absolute;
+  top: 96px;
+  right: 110px;
+  text-align: right;
+}
+
+.head-eyebrow {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.head-team {
+  font-size: 92px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* --------------------------------------------------- photos and detailed --- */
+
+/*
+ * One row, centred, sized so five never overflow the frame.
+ *
+ * `flex: 0 0 auto` on a fixed width rather than letting the row share space:
+ * five portraits must be the same size whether there are three of them or five,
+ * because a lineup that resizes itself as a squad fills in is the layout moving
+ * when the data changes - the one thing these pages must never do.
+ */
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 300px;
+  display: flex;
+  justify-content: center;
+  gap: 0;
+  padding: 0 110px;
+}
+
+.seat {
+  position: relative;
+  flex: 0 0 auto;
+  width: 226px;
+  opacity: 0;
+  transform: translateY(24px);
+  /* Cards arrive from the outside in - the delay is set per seat in the JS so
+     the count comes from the data rather than from five hardcoded rules. */
+  transition:
+    opacity 380ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 380ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.lineup.is-on .seat {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.seat-photo {
+  width: 226px;
+  height: 268px;
+  overflow: hidden;
+  background: #11151c;
+}
+
+.seat-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* No portrait and no team default. A flat plate rather than a broken image, and
+   the tricode in it so the seat still says who it is. */
+.seat-photo.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seat-stand {
+  font-size: 44px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.16);
+  letter-spacing: 0.06em;
+}
+
+.seat-plate {
+  height: 74px;
+  background: var(--plate);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.seat-name {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.seat-riot {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ names only --- */
+
+.names {
+  position: absolute;
+  left: 110px;
+  top: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.names .seat {
+  width: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 22px;
+}
+
+.names .seat-name {
+  font-size: 68px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+
+.names .seat-riot {
+  font-size: 20px;
+}
+
+.crest {
+  position: absolute;
+  right: 150px;
+  top: 340px;
+  width: 420px;
+  height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.crest img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* --------------------------------------------------------------- footer --- */
+
+.event-logo {
+  position: absolute;
+  left: 110px;
+  bottom: 72px;
+}
+
+.event-logo img {
+  max-height: 68px;
+  max-width: 380px;
+  object-fit: contain;
+}

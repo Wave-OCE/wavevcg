@@ -247,6 +247,19 @@ if (els.tab) {
   });
 
   // The OBS URL carries the key, like every other output.
+  /*
+   * The preview iframe is NOT loaded here.
+   *
+   * It carries `data-src` and dashboard.js loads it when its tab is first
+   * opened, which is the rule every other graphic follows and the reason is
+   * written up in CLAUDE.md: a browser allows six HTTP/1.1 connections per
+   * origin and a server-sent event stream holds one open for as long as the
+   * page lives. The dashboard's own stream plus one per live preview is the
+   * whole budget - setting `src` at module load meant three more streams opened
+   * before anybody had looked at these tabs, and with the three Match previews
+   * that is seven. The seventh request does not fail; it queues for ever, and
+   * under that the renderer eventually dies with "Target crashed".
+   */
   const paintUrl = async () => {
     // Async, because the key belongs to the tournament and is fetched. Writing
     // it synchronously printed "[object Promise]" into the OBS URL box - which
@@ -254,7 +267,6 @@ if (els.tab) {
     const url = outputUrl('/veto-board.html', await targetKey());
     els.obsUrl.textContent = url;
     els.open.href = url;
-    if (els.preview && !els.preview.src) els.preview.src = '/veto-board.html?bus=preview';
   };
   void paintUrl();
   window.addEventListener('account-changed', () => void paintUrl());

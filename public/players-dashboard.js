@@ -40,6 +40,7 @@
  */
 
 import { el, field, help, subhead, title } from './fields.js';
+import { mediaControl } from './media-field.js';
 import { api } from './session.js';
 import { indexPlayers, matchesPlayer, playerOrigin } from './players-index.js';
 import { stripTagline } from './select-schema.js';
@@ -70,6 +71,16 @@ let aliases = [];
 let needle = '';
 let host = null;
 let results = null;
+/*
+ * Which row has its photo control open, by row key.
+ *
+ * One at a time, and that is the whole reason this is a module-level key rather
+ * than state inside a row. The media control is a preview, a URL box and three
+ * buttons - a hundred pixels of it per row would make a list of forty players
+ * unusable, and a page of upload boxes is not what somebody searching for a
+ * handle came here for.
+ */
+let openPhoto = '';
 
 // ------------------------------------------------------------------ data ---
 
@@ -215,7 +226,50 @@ function playerRow(row, repaint) {
     controls.append(forget);
   }
 
+  /*
+   * The photo, behind a thumbnail.
+   *
+   * Only for a row that belongs to a TEAM: a photo lives on the player record,
+   * and the alias library has nowhere to put one - the same reason verification
+   * is offered to one and not the other. Inventing a column for it there would
+   * make a second store of record for one fact.
+   */
+  if (row.player && row.team) {
+    const thumb = el('button', 'ply-photo', {
+      type: 'button',
+      title: row.player.photo ? 'Change their photo' : 'Add a photo for the lineup graphic',
+    });
+    if (row.player.photo) thumb.append(el('img', null, { src: row.player.photo, alt: '' }));
+    else thumb.append(el('span', 'ply-photo-empty', {}, '+'));
+    thumb.addEventListener('click', () => {
+      openPhoto = openPhoto === row.key ? '' : row.key;
+      repaint();
+    });
+    controls.insertBefore(thumb, controls.firstChild);
+  }
+
   node.append(who, controls);
+
+  if (openPhoto === row.key && row.player && row.team) {
+    const slot = el('div', 'ply-photo-edit');
+    slot.append(
+      mediaControl(
+        'Photo',
+        () => row.player.photo ?? '',
+        async (value) => {
+          row.player.photo = value;
+          try {
+            await saveTeam(row.team);
+          } catch (error) {
+            toast(`Photo not saved: ${error.message}`);
+          }
+        },
+      ),
+      help('Their face on the team lineup graphic. A team-wide default covers anybody without one - set that on the Teams page.'),
+    );
+    node.append(slot);
+  }
+
   return node;
 }
 

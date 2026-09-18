@@ -58,6 +58,12 @@ const els = {
     graphic: $('tab-graphic'),
     winner: $('tab-winner'),
     select: $('tab-select'),
+    // The Team group: a lineup, a head-to-head and the map veto board. Each has
+    // its own module, its own preview iframe and its own bus pair - this map is
+    // only what showTab hides and reveals.
+    lineup: $('tab-lineup'),
+    headToHead: $('tab-headToHead'),
+    vetoBoard: $('tab-vetoBoard'),
     // No preview and no stream of its own - see index.html.
     global: $('tab-global'),
     tournament: $('tab-tournament'),

@@ -52,6 +52,27 @@ export const TEAM_FIELDS = [
   { key: 'shortName', type: 'text', max: 8, label: 'Short name / tricode', placeholder: 'SEN' },
   { key: 'region', type: 'choice', options: TEAM_REGIONS, max: 24, label: 'Region', placeholder: 'Americas' },
   { key: 'logo', type: 'image', max: 500, label: 'Logo' },
+  /*
+   * The backdrop behind this team on the head-to-head graphic.
+   *
+   * On the TEAM rather than only on the graphic because an org's key art is a
+   * property of the org - it should follow them into every matchup without
+   * being re-picked - and the graphic keeps a style image of its own for the
+   * teams that have none. Team first, style second.
+   *
+   * Safe to add here because `applyTeam` writes only keys the target side
+   * actually HAS: the scoreboard, winner and select sides have no `banner`, so
+   * this reaches the one graphic that can show it and no others.
+   */
+  { key: 'banner', type: 'image', max: 500, label: 'Backdrop' },
+  /*
+   * A stand-in portrait for anybody on this roster who has none of their own.
+   *
+   * The lineup graphic is five faces in a row and one empty slot is the thing
+   * an audience looks at - so a team-wide fallback is what stops a sub whose
+   * photo never arrived from being a hole in the middle of the graphic.
+   */
+  { key: 'playerPhoto', type: 'image', max: 500, label: 'Default player photo' },
   // Used for the accent bar behind the winning team, so a graphic can carry the
   // org's colour without the operator restyling the whole look per match.
   // Blank on purpose: a team with no colour of its own wears the colour of the
@@ -164,11 +185,16 @@ export const teamLabel = (team) => (team?.shortName || team?.name || '').trim();
  * So a team record carries `players` beside its fields, cleaned by
  * `sanitiseRoster` below rather than by `sanitiseTeamFields`.
  *
- * No image field. That was asked about and answered: every portrait in all
- * three output pages is an AGENT portrait from the valorant-api catalogue, no
- * schema has a player image and no page has an element to paint one into - so
- * "players have images" is new broadcast design work on a fixed 1920x1080
- * stage, not a storage change. It stays out until somebody designs where it goes.
+ * There IS an image field now, and the note that used to sit here said why
+ * there was not: every portrait in the first three output pages is an AGENT
+ * portrait from the catalogue, so "players have images" was new broadcast
+ * design work rather than a storage change, and it stayed out until somebody
+ * designed where it goes. The team lineup graphic is where it goes.
+ *
+ * It is edited on the PLAYERS page rather than in the roster editor, and that
+ * is deliberate. A photo is set once a season; the roster editor is the thing
+ * an operator opens ninety seconds before a match to fix a Riot ID, and ten
+ * upload controls in it would bury the two fields that are actually urgent.
  */
 export const PLAYER_FIELDS = [
   {
@@ -190,7 +216,24 @@ export const PLAYER_FIELDS = [
     placeholder: 'TenZ#SEN',
     help: 'GameName#Tag. Used to recognise them in a lobby, and to resolve their PUUID.',
   },
+  {
+    key: 'photo',
+    type: 'image',
+    max: 500,
+    label: 'Photo',
+    help: 'Their face, for the lineup graphic. A team-wide default covers anybody without one.',
+  },
 ];
+
+/**
+ * The player fields that are TYPED, which is not all of them.
+ *
+ * The roster editor builds a text input per entry, and an image field rendered
+ * that way would be a bare URL box - the one shape the standing rule about
+ * asset fields forbids. So the editor iterates this and the photo is edited
+ * with a real media control on the Players page.
+ */
+export const PLAYER_TEXT_FIELDS = PLAYER_FIELDS.filter((field) => field.type !== 'image');
 
 export const PLAYER_KEYS = PLAYER_FIELDS.map((field) => field.key);
 
@@ -217,6 +260,34 @@ const playerText = (value, max) =>
   typeof value === 'string' ? value.slice(0, max).replace(/[\x00-\x1f]/g, '').trim() : '';
 
 /**
+ * What an image field is allowed to be: an http(s) URL, or a path on this
+ * server.
+ *
+ * Here rather than in graphics.js because it is needed on BOTH sides of the
+ * line now - a team's logo is sanitised on the server and a player's photo is
+ * sanitised by the same function that runs in the browser. It used to live only
+ * in graphics.js, with the result that a team logo was validated and a player
+ * photo was any string at all: two fields holding the same kind of value,
+ * cleaned by different rules, one of which was "anything".
+ *
+ * Relative paths stay allowed so an operator can drop a file into ./public, and
+ * an upload is `/media/<hash>` which passes the same way. A `data:` URI does
+ * NOT pass, deliberately: these end up in graphic state that is written to
+ * disk, pushed over SSE to every dashboard and every output page, and a few
+ * hundred kilobytes of base64 per logo would be carried on every keystroke.
+ */
+export const imageValue = (value, fallback = '') => {
+  const candidate = String(value ?? '').trim();
+  if (!candidate) return fallback;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href.slice(0, 500) : fallback;
+  } catch {
+    return /^\/[\w./-]{0,200}$/.test(candidate) ? candidate : fallback;
+  }
+};
+
+/**
  * Clean one player.
  *
  * The three PUUID fields are carried but never typed: they are written by the
@@ -228,7 +299,12 @@ const playerText = (value, max) =>
 export function sanitisePlayer(input) {
   const source = input ?? {};
   const out = {};
-  for (const field of PLAYER_FIELDS) out[field.key] = playerText(source[field.key], field.max);
+  for (const field of PLAYER_FIELDS) {
+    // An image is checked, not merely trimmed - the same rule a team logo goes
+    // through. See imageValue.
+    out[field.key] =
+      field.type === 'image' ? imageValue(source[field.key], '') : playerText(source[field.key], field.max);
+  }
 
   return {
     ...out,

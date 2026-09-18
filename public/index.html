@@ -61,11 +61,23 @@
             </span>
             <span class="rail-label">Tournament</span>
           </button>
-          <button type="button" class="rail-item rail-group" data-section="graphics" aria-selected="false" title="Graphics">
+          <!--
+            Graphics was one group holding three screens and is now two, with a
+            third arriving for the bracket. Seven in one strip wraps at narrow
+            widths and cannot be scanned; the split is by what a graphic is
+            ABOUT - a match, a team - rather than by when it was built.
+          -->
+          <button type="button" class="rail-item rail-group" data-section="match" aria-selected="false" title="Match graphics">
             <span class="rail-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.4" y="2.6" width="13.2" height="10.8" rx="1.6" /><line x1="1.4" y1="6" x2="14.6" y2="6" /></svg>
             </span>
-            <span class="rail-label">Graphics</span>
+            <span class="rail-label">Match</span>
+          </button>
+          <button type="button" class="rail-item rail-group" data-section="team" aria-selected="false" title="Team graphics">
+            <span class="rail-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5.6" cy="5.4" r="2.4" /><circle cx="11" cy="6.2" r="1.9" /><path d="M1.6 13.4c0-2.3 1.8-3.8 4-3.8s4 1.5 4 3.8" /><path d="M10.2 9.8c2 0 4.2 1.2 4.2 3.6" /></svg>
+            </span>
+            <span class="rail-label">Team</span>
           </button>
           <button type="button" class="rail-item tab" role="tab" data-tab="global" aria-selected="false" title="Global">
             <span class="rail-icon" aria-hidden="true">
@@ -108,10 +120,15 @@
             here is a real tab; the Global strip switches sections INSIDE one
             panel and so is made of .subtab instead - see shell.js.
           -->
-          <nav class="subtabs" data-for="graphics" role="tablist" aria-label="Graphics" hidden>
+          <nav class="subtabs" data-for="match" role="tablist" aria-label="Match graphics" hidden>
             <button type="button" class="tab" role="tab" data-tab="graphic" aria-selected="false">Post match</button>
             <button type="button" class="tab" role="tab" data-tab="winner" aria-selected="false">Winner splash</button>
             <button type="button" class="tab" role="tab" data-tab="select" aria-selected="false">Agent select</button>
+          </nav>
+
+          <nav class="subtabs" data-for="team" role="tablist" aria-label="Team graphics" hidden>
+            <button type="button" class="tab" role="tab" data-tab="lineup" aria-selected="false">Lineup</button>
+            <button type="button" class="tab" role="tab" data-tab="headToHead" aria-selected="false">Head to head</button>
             <button type="button" class="tab" role="tab" data-tab="vetoBoard" aria-selected="false">Map veto</button>
           </nav>
 
@@ -794,6 +811,108 @@
       </div>
     </main>
 
+    <!-- ========================================================== lineup === -->
+    <main class="graphic-tab" id="tab-lineup" role="tabpanel" hidden>
+      <div class="graphic-toolbar">
+        <button type="button" id="l-reset" class="btn btn-ghost">Reset graphic</button>
+        <span class="toolbar-gap"></span>
+        <label class="obs-url">
+          <span>OBS browser source</span>
+          <span class="obs-url-row">
+            <code id="l-obs-url">/lineup.html</code>
+            <button type="button" class="btn-copy" data-copy-target="l-obs-url" title="Copy URL">Copy</button>
+            <a class="btn btn-ghost" id="l-open" href="/lineup.html" target="_blank" rel="noopener">Open</a>
+          </span>
+        </label>
+        <span id="l-status" class="save-status">Saved</span>
+      </div>
+
+      <div class="cue-bar">
+        <span class="cue-state" id="l-air">
+          <span class="cue-dot" aria-hidden="true"></span>
+          <span id="l-air-label">Off air</span>
+        </span>
+        <button type="button" id="l-show" class="btn btn-cue">Show</button>
+        <button type="button" id="l-hide" class="btn btn-ghost">Hide</button>
+        <span class="toolbar-gap"></span>
+        <span class="cue-note" id="l-note"></span>
+      </div>
+
+      <div class="take-bar" id="l-take-bar">
+        <span class="prog-state" id="l-prog">
+          <span class="prog-dot" aria-hidden="true"></span>
+          <span id="l-prog-label">Off air</span>
+        </span>
+        <button type="button" id="l-take" class="btn btn-take">Send to program</button>
+        <button type="button" id="l-revert" class="btn btn-ghost">Revert to air</button>
+        <span class="toolbar-gap"></span>
+        <span class="staged-note" id="l-staged" hidden>Preview differs from air</span>
+      </div>
+
+      <section class="panel preview-panel">
+        <h2 class="panel-title">Live preview <span class="pill">1920 &times; 1080</span></h2>
+        <div class="preview-frame checker" id="l-preview-frame">
+          <iframe id="l-preview" data-src="/lineup.html" title="Lineup preview" scrolling="no"></iframe>
+        </div>
+      </section>
+
+      <div class="editor-grid" data-cards="lineup">
+        <section class="panel" id="led-team"></section>
+        <section class="panel" id="led-style"></section>
+      </div>
+    </main>
+
+    <!-- ==================================================== head to head === -->
+    <main class="graphic-tab" id="tab-headToHead" role="tabpanel" hidden>
+      <div class="graphic-toolbar">
+        <button type="button" id="h-reset" class="btn btn-ghost">Reset graphic</button>
+        <span class="toolbar-gap"></span>
+        <label class="obs-url">
+          <span>OBS browser source</span>
+          <span class="obs-url-row">
+            <code id="h-obs-url">/headtohead.html</code>
+            <button type="button" class="btn-copy" data-copy-target="h-obs-url" title="Copy URL">Copy</button>
+            <a class="btn btn-ghost" id="h-open" href="/headtohead.html" target="_blank" rel="noopener">Open</a>
+          </span>
+        </label>
+        <span id="h-status" class="save-status">Saved</span>
+      </div>
+
+      <div class="cue-bar">
+        <span class="cue-state" id="h-air">
+          <span class="cue-dot" aria-hidden="true"></span>
+          <span id="h-air-label">Off air</span>
+        </span>
+        <button type="button" id="h-show" class="btn btn-cue">Show</button>
+        <button type="button" id="h-hide" class="btn btn-ghost">Hide</button>
+        <span class="toolbar-gap"></span>
+        <button type="button" id="h-swap" class="btn btn-ghost" title="Put the other team on the left">Swap sides</button>
+      </div>
+
+      <div class="take-bar" id="h-take-bar">
+        <span class="prog-state" id="h-prog">
+          <span class="prog-dot" aria-hidden="true"></span>
+          <span id="h-prog-label">Off air</span>
+        </span>
+        <button type="button" id="h-take" class="btn btn-take">Send to program</button>
+        <button type="button" id="h-revert" class="btn btn-ghost">Revert to air</button>
+        <span class="toolbar-gap"></span>
+        <span class="staged-note" id="h-staged" hidden>Preview differs from air</span>
+      </div>
+
+      <section class="panel preview-panel">
+        <h2 class="panel-title">Live preview <span class="pill">1920 &times; 1080</span></h2>
+        <div class="preview-frame checker" id="h-preview-frame">
+          <iframe id="h-preview" data-src="/headtohead.html" title="Head to head preview" scrolling="no"></iframe>
+        </div>
+      </section>
+
+      <div class="editor-grid" data-cards="headToHead">
+        <section class="panel" id="hed-teams"></section>
+        <section class="panel" id="hed-style"></section>
+      </div>
+    </main>
+
     <!-- ========================================================= map veto === -->
     <!--
       The map veto board.
@@ -1268,6 +1387,8 @@
     <script src="/players-dashboard.js" type="module"></script>
     <script src="/veto-dashboard.js" type="module"></script>
     <script src="/veto-board-dashboard.js" type="module"></script>
+    <script src="/lineup-dashboard.js" type="module"></script>
+    <script src="/headtohead-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

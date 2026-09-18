@@ -21,7 +21,7 @@ import {
   TEAM_FIELDS,
   TEAM_REGIONS,
   EMPTY_TEAM,
-  PLAYER_FIELDS,
+  PLAYER_TEXT_FIELDS,
   ROSTER_LIMIT,
   applyTeam,
   emptyPlayer,
@@ -902,7 +902,7 @@ let openRosterPaint = null;
  * panel underneath is now only a list and two buttons, with no text input in
  * it, so it may be rebuilt on any change without consequence.
  *
- * `draft` stays module-level because draftFields, draftControl, draftLogoField
+ * `draft` stays module-level because draftFields, draftControl, draftImageFields
  * and rosterEditor all write into it, and threading it through four call sites
  * to make it local would be churn for no property gained: one dialog at a time
  * is enforced by modal.js, so there is only ever one draft in flight.
@@ -969,7 +969,7 @@ function editTeam(team) {
   body.append(
     modalTitle(editing ? draft.name || 'Team' : 'Add a team', editing ? 'Editing a saved team' : null),
     grid(2, TEAM_FIELDS.map(draftControl).filter(Boolean)),
-    draftLogoField(),
+    ...draftImageFields(),
     subhead('Roster'),
     help(
       'Who plays for them. Optional, and nothing here goes on air by itself - it is how a player is recognised in ' +
@@ -1008,14 +1008,24 @@ function draftControl(entry) {
   }
 }
 
-/** The same control, writing into the draft rather than the live graphic. */
-const draftLogoField = () =>
-  mediaControl(
-    'Logo',
-    () => draft.logo,
-    (value) => {
-      draft.logo = value;
-    },
+/**
+ * A media control per IMAGE field on the team, writing into the draft.
+ *
+ * Built from the schema rather than written out once for the logo, which is
+ * what it used to be - the team gained a backdrop and a default player photo
+ * for the two new graphics, and a hand-written control would have meant those
+ * appearing in the schema, saving to disk, and silently never being editable.
+ * The same argument `teamContent` makes about one list of keys.
+ */
+const draftImageFields = () =>
+  TEAM_FIELDS.filter((entry) => entry.type === 'image').map((entry) =>
+    mediaControl(
+      entry.label,
+      () => draft[entry.key],
+      (value) => {
+        draft[entry.key] = value;
+      },
+    ),
   );
 
 function teamCard(team) {
@@ -1081,7 +1091,7 @@ function rosterEditor() {
         const row = el('div', 'roster-row');
         const inputs = {};
 
-        for (const entry of PLAYER_FIELDS) {
+        for (const entry of PLAYER_TEXT_FIELDS) {
           const input = el('input', null, {
             type: 'text',
             spellcheck: 'false',

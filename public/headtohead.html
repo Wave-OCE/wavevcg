@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VALORANT Head to Head - Output</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/headtohead.css" />
+  </head>
+
+  <!--
+    OBS browser source: 1920 x 1080, transparent, "Shutdown source when not
+    visible" off.
+
+    Two orgs before a match: crest, name, and a backdrop per side. The backdrop
+    is the TEAM's own key art where it has one and the show's house image where
+    it does not - team first, because key art belongs to the org and should
+    follow them into every matchup without being re-picked.
+
+    The markup is a fixed skeleton; updates only ever rewrite text, image URLs
+    and classes, so a correction cannot flash a crest that is already up.
+  -->
+  <body>
+    <div id="stage">
+      <div class="h2h" id="h2h">
+        <div class="half is-left" id="left">
+          <div class="half-back"><img id="left-back" alt="" /></div>
+          <div class="half-tint" id="left-tint" hidden></div>
+          <div class="half-logo"><img id="left-logo" alt="" /></div>
+          <div class="half-plate" id="left-name"></div>
+        </div>
+
+        <div class="half is-right" id="right">
+          <div class="half-back"><img id="right-back" alt="" /></div>
+          <div class="half-tint" id="right-tint" hidden></div>
+          <div class="half-logo"><img id="right-logo" alt="" /></div>
+          <div class="half-plate" id="right-name"></div>
+        </div>
+
+        <div class="middle">
+          <div class="heading" id="heading" hidden></div>
+          <div class="divider" id="divider">VS</div>
+          <div class="event-logo" id="event-logo" hidden><img id="event-logo-img" alt="" /></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/headtohead.js" type="module"></script>
+  </body>
+</html>

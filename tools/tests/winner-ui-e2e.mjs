@@ -88,7 +88,7 @@ try {
   await page.click('#login-submit');
   await page.waitForSelector('#whoami:not([hidden])', { timeout: 10000 });
 
-  await page.click('.rail-item[data-section="graphics"]');
+  await page.click('.rail-item[data-section="match"]');
   await page.click('.tab[data-tab="winner"]');
   await page.waitForTimeout(1200);
 

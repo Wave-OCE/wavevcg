@@ -50,7 +50,14 @@
  * change what this graphic is *doing*", not "did any byte differ".
  */
 
-import { makeGraphicStore, makeSelectStore, makeVetoBoardStore, makeWinnerStore } from './graphics.js';
+import {
+  makeGraphicStore,
+  makeHeadToHeadStore,
+  makeLineupStore,
+  makeSelectStore,
+  makeVetoBoardStore,
+  makeWinnerStore,
+} from './graphics.js';
 
 /** Matches the dashboards and companion.js. The counter wraps rather than growing. */
 export const CUE_WRAP = 1_000_000;
@@ -102,6 +109,27 @@ export const BUS_KINDS = {
      * time - which is exactly the failure the counter exists to prevent. The
      * page animates a row on its own arrival instead.
      */
+    transport: (state) => [state.anim.visible],
+    cue: (state) => state.anim.cue ?? 0,
+    withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),
+  },
+  /*
+   * The lineup and the head-to-head. Both are one-shot splashes: they arrive,
+   * they sit, they go. Visibility is the only thing an audience sees change, so
+   * it is the only thing in `transport` - a take that swapped the TEAM without
+   * changing whether it is up should not replay the entrance, because the
+   * operator is fixing a mistake rather than presenting a new graphic.
+   */
+  lineup: {
+    file: 'lineup.json',
+    make: makeLineupStore,
+    transport: (state) => [state.anim.visible],
+    cue: (state) => state.anim.cue ?? 0,
+    withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),
+  },
+  headToHead: {
+    file: 'headtohead.json',
+    make: makeHeadToHeadStore,
     transport: (state) => [state.anim.visible],
     cue: (state) => state.anim.cue ?? 0,
     withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),

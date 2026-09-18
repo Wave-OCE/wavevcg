@@ -29,7 +29,7 @@ import {
   DEFAULT_ANIM,
   inDurationMs,
 } from './public/animation.js';
-import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, sanitiseRoster, teamSlug } from './public/teams.js';
+import { EMPTY_TEAM, TEAM_FIELDS, TEAM_REGIONS, imageValue, sanitiseRoster, teamSlug } from './public/teams.js';
 import { mapCodeFromUrl, mapDisplayName } from './public/maps.js';
 import {
   LOBBY_SEATS,
@@ -41,6 +41,8 @@ import {
 } from './public/lobby-schema.js';
 import { DEFAULT_SETTINGS, sanitiseSettings } from './public/settings-schema.js';
 import { DEFAULT_VETO_BOARD, sanitiseVetoBoard } from './public/veto-board-schema.js';
+import { DEFAULT_LINEUP, sanitiseLineup } from './public/lineup-schema.js';
+import { DEFAULT_HEADTOHEAD, sanitiseHeadToHead } from './public/headtohead-schema.js';
 import {
   COLOUR_SOURCE_KEYS,
   DEFAULT_GLOBAL,
@@ -192,17 +194,12 @@ const colour = (value, fallback) => {
   return HEX.test(candidate) ? candidate.toLowerCase() : fallback;
 };
 
-const imageUrl = (value, fallback = '') => {
-  const candidate = String(value ?? '').trim();
-  if (!candidate) return fallback;
-  try {
-    const url = new URL(candidate);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href.slice(0, 500) : fallback;
-  } catch {
-    // Relative paths stay allowed so operators can drop a logo into ./public.
-    return /^\/[\w./-]{0,200}$/.test(candidate) ? candidate : fallback;
-  }
-};
+/*
+ * One rule for what an image field may hold, and it lives in teams.js because
+ * it is needed on both sides of the line - see the note there. This name is
+ * kept because a dozen sanitisers already call it.
+ */
+const imageUrl = imageValue;
 
 const ratio = (value, fallback) => {
   const parsed = Number.parseFloat(value);
@@ -1632,6 +1629,11 @@ export const makeWinnerStore = (filePath) => makeStateStore(filePath, sanitiseWi
  * the schema and this is the whole of the Node side.
  */
 export const makeVetoBoardStore = (filePath) => makeStateStore(filePath, sanitiseVetoBoard, DEFAULT_VETO_BOARD);
+/* The team lineup and the head-to-head. Both hold a COPY of a team rather than
+ * anything of their own, so the sanitiser lives with the schema and this is the
+ * whole of the Node side - the same shape as the veto board above. */
+export const makeLineupStore = (filePath) => makeStateStore(filePath, sanitiseLineup, DEFAULT_LINEUP);
+export const makeHeadToHeadStore = (filePath) => makeStateStore(filePath, sanitiseHeadToHead, DEFAULT_HEADTOHEAD);
 
 // -------------------------------------------------------------- presets ---
 

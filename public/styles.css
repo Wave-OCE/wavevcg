@@ -4014,7 +4014,8 @@ body.is-adrift {
 }
 
 body.is-adrift .rail-item[data-tab='lookup'],
-body.is-adrift .rail-item[data-section='graphics'],
+body.is-adrift .rail-item[data-section='match'],
+body.is-adrift .rail-item[data-section='team'],
 body.is-adrift .rail-item[data-tab='setup'],
 body.is-adrift .rail-item[data-tab='global'] {
   opacity: 0.45;
@@ -4146,4 +4147,37 @@ body.is-adrift .rail-item[data-tab='global'] {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+/* A player's photo on the Players page: a thumbnail that opens the real media
+   control below the row. One at a time - forty upload boxes is not a list. */
+.ply-photo {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  cursor: pointer;
+}
+
+.ply-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ply-photo-empty {
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 36px;
+}
+
+.ply-photo-edit {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
