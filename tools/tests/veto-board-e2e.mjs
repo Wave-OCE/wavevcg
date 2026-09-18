@@ -324,6 +324,147 @@ try {
   eq('24. ...with the full-screen block put away', lower.fullHidden, true);
   eq('25. ...and its own reveal transition still lands', lower.mapOpacity, 1);
 
+  // ================================ three colours that mean three things =====
+  /*
+   * This graphic had none: `--accent` and `--ban` were literals in the
+   * stylesheet, under a comment claiming they were set from the graphic's own
+   * fields that had never been true.
+   *
+   * THREE DIFFERENT COLOURS, deliberately. A trim, a highlight and a ban that
+   * all happened to be the same value would pass whichever way the three were
+   * wired, which is the shape of test that lets a mix-up through - and mixing
+   * these up is loud: a board announcing its bans in the sponsor's trim, or a
+   * picked map wearing the colour of a banned one.
+   */
+  await put({ ...board(bo3, Array.from({ length: 7 }, () => true)), layout: 'full', accent: '#0d1a2b', highlight: '#ab12cd', banColour: '#22ee44' });
+  await wait(900);
+
+  const vars = await page.evaluate(() => {
+    const board = document.getElementById('board');
+    const read = (n) => getComputedStyle(board).getPropertyValue(n).trim();
+    const of = (sel, prop) => {
+      const node = document.querySelector(sel);
+      return node ? getComputedStyle(node)[prop] : '(missing)';
+    };
+    return {
+      accent: read('--accent'),
+      highlight: read('--highlight'),
+      ban: read('--ban'),
+      vs: of('.full-vs', 'color'),
+      picker: of('.full-map-meta b', 'color'),
+    };
+  });
+  eq('27. the trim is the colour this graphic set', vars.accent, '#0d1a2b');
+  eq('28. a map that went through wears the highlight', vars.highlight, '#ab12cd');
+  eq('29. a map that is gone wears the ban colour', vars.ban, '#22ee44');
+  /*
+   * PAINTED, not just declared. The variables above prove the state reached the
+   * board; these two prove the stylesheet spends them on the right things - the
+   * VS divider is furniture and the picker's name is attached to a map that was
+   * taken, so they must not be the same colour.
+   */
+  eq('30. the VS divider takes the trim, not the ban colour', vars.vs, 'rgb(13, 26, 43)');
+  eq('31. and whoever took a map takes the highlight', vars.picker, 'rgb(171, 18, 205)');
+
+  /*
+   * ACCENT AND HIGHLIGHT INHERIT; THE BAN COLOUR DOES NOT.
+   *
+   * A ban reads red by a convention older than any one tournament. Tying it to
+   * an event trim would mean a board whose sponsor is green announcing its bans
+   * in green, so it keeps its own default and its own field.
+   */
+  await put({ ...board(bo3, Array.from({ length: 7 }, () => true)), layout: 'full', accent: '', highlight: '', banColour: '#22ee44' });
+  await fetch(`${BASE}/api/tournaments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ action: 'update', id: tournamentId, fields: { accent: '#0d1a2b', highlight: '#ab12cd' } }),
+  });
+  await wait(1000);
+  const inherited = await page.evaluate(() => {
+    const board = document.getElementById('board');
+    const read = (n) => getComputedStyle(board).getPropertyValue(n).trim();
+    return { accent: read('--accent'), highlight: read('--highlight'), ban: read('--ban') };
+  });
+  eq('32. a blank accent takes the one the EVENT set', inherited.accent, '#0d1a2b');
+  eq('33. a blank highlight takes the one the EVENT set', inherited.highlight, '#ab12cd');
+  eq('34. ...and the ban colour is untouched by either', inherited.ban, '#22ee44');
+
+  /*
+   * THE ASSERTION THAT ACTUALLY PINS IT, and 34 above does not.
+   *
+   * Wiring `banColour` through the same inherit chain as the other two is
+   * invisible while the board carries a colour of its own - the override wins
+   * either way, so a deliberate break of exactly that shape passed 34 without
+   * a murmur. What distinguishes them is a board that has NEVER had a ban
+   * colour set, beside an event whose trim is something else entirely: the
+   * default has to be this graphic's own red, not the event's.
+   *
+   * A ban reads red by a convention older than any one tournament. A board
+   * whose sponsor is navy must not announce its bans in navy.
+   */
+  await put({ ...board(bo3, Array.from({ length: 7 }, () => true)), layout: 'full', accent: '', highlight: '', banColour: '' });
+  await wait(900);
+  const untouched = await page.evaluate(() => {
+    const board = document.getElementById('board');
+    const read = (n) => getComputedStyle(board).getPropertyValue(n).trim();
+    return { accent: read('--accent'), ban: read('--ban') };
+  });
+  eq('34a. a board that set no ban colour still bans in red', untouched.ban, '#ff4655');
+  ok('34b. ...which is NOT what the event trim is', untouched.accent !== untouched.ban, JSON.stringify(untouched));
+
+  // ============================================ the team behind the box =====
+  /*
+   * Their mark, large and faint behind every box they acted on. It exists for
+   * the one thing a veto board is worst at: reading WHO did what at a glance,
+   * on a stream, in two seconds - which 15px of small caps cannot do.
+   *
+   * A logo when they have one, their TRICODE when they do not, and nothing at
+   * all when the switch is off. The third is the one an operator will reach
+   * for, so it is asserted rather than assumed.
+   */
+  const withLogos = {
+    ...board(bo3, Array.from({ length: 7 }, () => true)),
+    layout: 'full',
+    left: { name: 'Crusaders', shortName: 'CRU', logo: '/media/cru.png' },
+    right: { name: 'Jail Time', shortName: 'JAIL' },
+  };
+  await put(withLogos);
+  await wait(900);
+
+  const marks = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.full-ban')].map((n) => ({
+        logo: n.querySelector('.full-ban-team')?.getAttribute('src') ?? '',
+        tri: n.querySelector('.full-ban-tri')?.textContent ?? '',
+      })),
+    );
+  const shown = await marks();
+  ok('35. a team with a logo shows it behind their boxes', shown.some((m) => m.logo === '/media/cru.png'), JSON.stringify(shown));
+  ok('36. ...and a team with none shows their tricode instead', shown.some((m) => m.tri === 'JAIL'), JSON.stringify(shown));
+  ok('37. ...never both on one box', shown.every((m) => !(m.logo && m.tri)), JSON.stringify(shown));
+
+  await put({ ...withLogos, showTeamArt: false });
+  await wait(900);
+  const off = await marks();
+  ok('38. the switch turns every mark off', off.every((m) => !m.logo && !m.tri), JSON.stringify(off));
+
+  /*
+   * And the cross arrives WITH the ban. It used to be painted from the first
+   * frame, so a box reading "JAIL TO BAN" already had a strike through it -
+   * saying a map was gone before anybody had taken it. Nobody noticed while the
+   * box was otherwise empty; the team's mark made it busy enough to look at.
+   */
+  await put({ ...withLogos, showTeamArt: true, revealed: [true, true, false, false, false, false, false] });
+  await wait(900);
+  const crosses = await page.evaluate(() =>
+    [...document.querySelectorAll('.full-ban')].map((n) => ({
+      revealed: n.classList.contains('is-revealed'),
+      ink: Number(getComputedStyle(n, '::before').opacity),
+    })),
+  );
+  ok('39. a revealed ban is struck through', crosses.filter((c) => c.revealed).every((c) => c.ink > 0.5), JSON.stringify(crosses));
+  ok('40. ...and one nobody has taken is NOT', crosses.filter((c) => !c.revealed).every((c) => c.ink === 0), JSON.stringify(crosses));
+
   ok('26. no page errors', errors.length === 0, errors.join(' | '));
 } catch (error) {
   fail += 1;

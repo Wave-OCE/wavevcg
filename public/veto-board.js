@@ -22,8 +22,10 @@
  *   not shuffle the four beside it.
  */
 
-import { VETO_BOARD_LAYOUT_KEYS, groupedRows } from './veto-board-schema.js';
+import { VETO_BOARD_LAYOUT_KEYS, groupedRows, sideOfRow } from './veto-board-schema.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -249,6 +251,14 @@ function paintFull(state) {
      * building the revealed line when it arrives would resize the box.
      */
     node.append(
+      /*
+       * The team mark FIRST, so the map art paints over it. An unrevealed box
+       * is all mark; a revealed one is the map with the mark showing through.
+       * Paint order rather than a z-index, which would be the same statement
+       * made somewhere the next reader has to go and look for.
+       */
+      el('span', 'full-ban-tri'),
+      el('img', 'full-ban-team', { alt: '' }),
       el('img', 'full-ban-art', { alt: '' }),
       el('span', 'full-ban-wait'),
       el('span', 'full-ban-done'),
@@ -265,6 +275,24 @@ function paintFull(state) {
     // A banned map shows its art too, darkened and struck through: the audience
     // is being told what is GONE, and a name alone is the weakest way to say it.
     setArt(node.querySelector('.full-ban-art'), row.shown ? mapArt(row.map) : '');
+
+    /*
+     * Their logo, or their tricode when they have no logo, or nothing.
+     *
+     * `sideOfRow` matches the row back to a seat because a row records who
+     * acted by NAME - the board resolves seats to names on purpose so nothing
+     * dereferences a seat while it paints, and this is the one place that needs
+     * the seat back. A decider nobody chose matches nothing and shows nothing,
+     * which is correct rather than a gap.
+     */
+    const team = state.showTeamArt === false ? null : sideOfRow(row, state);
+    const teamLogo = node.querySelector('.full-ban-team');
+    const teamTri = node.querySelector('.full-ban-tri');
+    setArt(teamLogo, team?.logo ?? '');
+    // The tricode only when there is no logo to show, so a team with both does
+    // not paint one on top of the other.
+    teamTri.textContent = team && !team.logo ? (team.shortName || team.name || '').toUpperCase() : '';
+
     node.classList.add('is-shown');
     node.classList.toggle('is-revealed', row.shown);
   });
@@ -319,6 +347,18 @@ let latestState = null;
 function render(state) {
   if (!state) return;
   latestState = state;
+
+  /*
+   * Three colours, three meanings - see the stylesheet. The accent and the
+   * highlight fall back to the EVENT's when this board has none of its own;
+   * the ban colour does not, because a ban reads red by a convention older than
+   * any one tournament and tying it to an event trim would announce bans in
+   * whatever colour the sponsor happens to be.
+   */
+  const paint = brand();
+  board.style.setProperty('--accent', pick(state.accent, paint, 'accent'));
+  board.style.setProperty('--highlight', pick(state.highlight, paint, 'highlight'));
+  board.style.setProperty('--ban', state.banColour || '');
 
   const layout = VETO_BOARD_LAYOUT_KEYS.includes(state.layout) ? state.layout : 'lower';
   board.classList.toggle('is-lower', layout === 'lower');
@@ -380,6 +420,12 @@ stream.addEventListener('vetoBoard', (event) => {
 });
 
 stream.addEventListener('error', () => console.warn('veto board stream dropped - reconnecting'));
+
+// The event's colours, on the connection this page already has. A veto board is
+// up for the whole draft, so following a restyle live matters here.
+const brand = watchBrand(stream, () => {
+  if (latestState) render(latestState);
+});
 
 // After the stream is subscribed, so the first frame is never held up by the
 // art - names and boxes go to air and the splashes upgrade the frame later.

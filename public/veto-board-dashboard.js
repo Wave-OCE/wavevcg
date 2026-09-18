@@ -15,9 +15,10 @@
  *   animates the fourth row and leaves the three above it alone.
  */
 
-import { el, field, grid, help, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { makeTakeBar } from './take-bar.js';
 import { VETO_BOARD_LAYOUTS, boardIsStale, revealedCount } from './veto-board-schema.js';
@@ -136,6 +137,25 @@ if (els.tab) {
     );
   }
 
+  /*
+   * The colour controls need binding - a blank accent's swatch has to follow
+   * the tournament - and this tab had no makeFields at all. `set` writes into
+   * the live state and this saves the one key, which is what every other
+   * control here already does by hand.
+   */
+  const styleFields = makeFields(
+    () => state ?? {},
+    () => save({ accent: state?.accent ?? '', highlight: state?.highlight ?? '', banColour: state?.banColour ?? '' }),
+  );
+
+  let brand = { ...DEFAULT_BRAND };
+  onState('brand', (next) => {
+    brand = brandOf(next);
+    // Sync, not rebuild: this panel carries no text input today, but a bound
+    // swatch moving on its own is the behaviour every other tab here has.
+    styleFields.syncFields();
+  });
+
   function stylePanel() {
     const host = els.style;
 
@@ -151,11 +171,36 @@ if (els.tab) {
     const sidesLine = el('label', 'checkline');
     sidesLine.append(sides, el('span', null, {}, 'Show who starts on which side'));
 
+    const art = el('input', null, { type: 'checkbox' });
+    art.checked = state.showTeamArt !== false;
+    art.addEventListener('change', () => save({ showTeamArt: art.checked }));
+    const artLine = el('label', 'checkline');
+    artLine.append(art, el('span', null, {}, 'Show each team mark behind their boxes'));
+
     host.replaceChildren(
       title('Look'),
       grid(null, [field('Layout', layout)]),
       help(VETO_BOARD_LAYOUTS.find((entry) => entry.key === state.layout)?.help ?? ''),
       sidesLine,
+      artLine,
+      help(
+        'Their logo behind every box they banned or picked, large and faint - or their tricode when they have no ' +
+          'logo. It is there to make WHO did what readable at a glance on a stream, which the words alone are too ' +
+          'small to do. A revealed map paints over it.',
+      ),
+      subhead('Colours'),
+      help(
+        'Accent and highlight follow the tournament unless you set one here - Reset to default puts either back. ' +
+          'The ban colour belongs to this graphic alone: a ban reads red by a convention older than any one event, ' +
+          'and tying it to an event trim would announce bans in whatever colour that happens to be.',
+      ),
+      grid(2, [
+        styleFields.brandField('Accent', 'accent', { inherited: () => brand.accent }),
+        styleFields.brandField('Highlight', 'highlight', { inherited: () => brand.highlight }),
+      ]),
+      help('Accent is the trim - the VS divider and the logo bar. Highlight is a map that went through.'),
+      grid(2, [styleFields.colourField('Ban colour', 'banColour')]),
+      help('The ring and the strike through a map that is gone.'),
       subhead('Event logo'),
       help('Sits along the bottom of the lower third and under the full-screen board. Drop a file, paste one, or give it a URL.'),
       mediaControl(

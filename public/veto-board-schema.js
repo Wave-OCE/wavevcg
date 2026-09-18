@@ -77,6 +77,37 @@ export const VETO_BOARD_LAYOUT_KEYS = LAYOUTS.map((entry) => entry.key);
  */
 const emptyRow = () => ({ kind: 'ban', map: '', by: '', byShort: '', side: '', sideBy: '', sideByShort: '' });
 
+/**
+ * Which SIDE of the board a step belongs to, so the page can find their logo.
+ *
+ * A row records who acted by NAME, not by seat - `boardFromVeto` resolves the
+ * seats to names precisely so that nothing at 1920x1080 dereferences an 'a'
+ * into a team while it paints. That is still right, and it means the one place
+ * that does need the seat back - the logo behind a box - has to match on what
+ * the row carries.
+ *
+ * Matched on the tricode first and the full name second, both case-folded: the
+ * tricode is what a row usually carries and what a team is most consistently
+ * spelled as. Returns null rather than guessing, and a box with no match simply
+ * shows no mark, which is the ordinary state for a decider that nobody chose.
+ */
+export function sideOfRow(row, state) {
+  const want = (value) => String(value ?? '').trim().toLowerCase();
+  const short = want(row?.byShort);
+  const full = want(row?.by);
+  if (!short && !full) return null;
+
+  for (const seat of ['left', 'right']) {
+    const team = state?.[seat];
+    if (!team) continue;
+    if (short && want(team.shortName) === short) return team;
+    if (full && want(team.name) === full) return team;
+  }
+  return null;
+}
+
+import { brandHex } from './brand.js';
+
 const text = (value, max) =>
   typeof value === 'string' ? value.slice(0, max).replace(/[\x00-\x1f\x7f]/g, '').trim() : '';
 
@@ -108,6 +139,46 @@ export const DEFAULT_VETO_BOARD = {
    */
   revealed: [],
   showSides: true,
+
+  /*
+   * ---------------------------------------------------------------- colour --
+   *
+   * This graphic had none. `veto-board.css` carried `--accent` and `--ban` as
+   * literals, and a comment claiming they were "set from the graphic's own
+   * fields" that had never been true - nothing on the page wrote either of
+   * them, so restyling a veto board meant editing a stylesheet.
+   *
+   * THREE THINGS, because the board says three things:
+   *
+   *   accent     the TRIM - the VS divider and the header rules. Blank means
+   *              the EVENT's accent. It is the show's furniture, not a verdict
+   *              about a map.
+   *   highlight  a map that WENT THROUGH - the edge under a revealed pick and
+   *              the decider. Blank means the EVENT's highlight. This is
+   *              exactly what the event-wide highlight is for, so it inherits
+   *              rather than carrying a default of its own.
+   *   banColour  a map that is GONE - the strike and the box's edge. Its OWN
+   *              colour with a real default, deliberately: a ban reads red
+   *              because that is the convention every audience already knows,
+   *              and tying it to an event accent would make a board whose trim
+   *              is green announce its bans in green.
+   */
+  accent: '',
+  highlight: '',
+  banColour: '#ff4655',
+
+  /*
+   * The banning team's mark, large and faint behind each box.
+   *
+   * What it buys is the thing a veto board is hardest at: reading WHO did what
+   * at a glance, on a stream, in two seconds. The words already say it and the
+   * words are small. Their logo, or their tricode when they have no logo, is
+   * recognisable at a distance in a way "CRU" in 15px is not.
+   *
+   * ON by default. It is a new thing rather than a change to an old one, it is
+   * what this was asked for, and it is one switch away.
+   */
+  showTeamArt: true,
   anim: { visible: false, cue: 0 },
 };
 
@@ -163,6 +234,16 @@ export function sanitiseVetoBoard(input, fallback = DEFAULT_VETO_BOARD) {
       return Array.isArray(given) && given[index] === true;
     }),
     showSides: typeof source.showSides === 'boolean' ? source.showSides : (base.showSides ?? true),
+
+    /*
+     * Blank passes through as blank for the two that INHERIT, because blank is
+     * how "the event's" is spelled. `banColour` is not one of them: it has a
+     * real default, so a blank there falls back to it rather than to nothing.
+     */
+    accent: brandHex(source.accent ?? base.accent, ''),
+    highlight: brandHex(source.highlight ?? base.highlight, ''),
+    banColour: brandHex(source.banColour ?? base.banColour, base.banColour ?? '') || DEFAULT_VETO_BOARD.banColour,
+    showTeamArt: typeof source.showTeamArt === 'boolean' ? source.showTeamArt : (base.showTeamArt ?? true),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
       cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),
