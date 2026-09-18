@@ -83,7 +83,17 @@ export function sanitiseHeadToHead(input, fallback = DEFAULT_HEADTOHEAD) {
     divider: text(source.divider ?? base.divider, 16),
     heading: text(source.heading ?? base.heading, 40),
     eventLogo: text(source.eventLogo ?? base.eventLogo, 500),
-    // Blank passes through as blank, which is what makes inheriting sayable.
+    /*
+     * Blank passes through as blank, which is what makes inheriting sayable.
+     *
+     * An ABSENT key preserves (the `??`); a present-but-unparseable one lands
+     * on blank, which is to say "inherit the event's" rather than "keep the
+     * junk". That is the same thing the bracket's colours do - see 27c in
+     * bracket-graphic-e2e - and it is the only honest answer on a route that
+     * REPLACES: there is no previous value to fall back to, because the caller
+     * sent the whole state. The dashboard cannot produce junk here anyway; its
+     * control is an <input type="color">.
+     */
     accent: brandHex(source.accent ?? base.accent, ''),
     styleBackdrop: text(source.styleBackdrop ?? base.styleBackdrop, 500),
     tint: typeof source.tint === 'boolean' ? source.tint : (base.tint ?? false),

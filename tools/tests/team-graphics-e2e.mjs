@@ -224,6 +224,49 @@ try {
   // The tricode is copied in, because the graphic captions the org with it.
   eq('16f the tricode reaches the graphic', retired.body.state.shortName, 'CRU');
 
+  // ------------------------------------------- the trim, and what blank means ---
+  /*
+   * Both of these graphics had NO colour of their own before this. The lineup
+   * carried an `--accent` literal in its stylesheet that nothing could reach -
+   * `lineup.js` had zero setProperty calls - so dressing a show meant editing
+   * CSS. Head-to-head was the same.
+   *
+   * What is asserted here is the STATE half: that blank survives a round trip,
+   * because blank is what "inherit the tournament's" is spelled as, and a
+   * sanitiser that helpfully filled it in with a default would silently make
+   * every graphic an override and the whole feature a no-op. The other half -
+   * that blank actually resolves to the event's colour on the painted page - is
+   * in bracket-graphic-e2e, which has a browser open.
+   */
+  r = await get('/api/lineup', '&bus=preview');
+  eq('16g a lineup starts with no colour of its own', r.state.accent, '');
+
+  let tinted = await post('/api/lineup', { state: { ...r.state, accent: '#00B8D4' } }, '&bus=preview');
+  eq('16h ...takes one when the operator sets it', tinted.body.state.accent, '#00b8d4');
+
+  /*
+   * Junk lands on BLANK - which is to say "inherit" - rather than being stored.
+   *
+   * Not "keeps the previous colour", which is what this asserted first and what
+   * a hex field on a PATCH route does. This route replaces, so the caller sent
+   * the whole state and there is no previous to fall back to. The bracket's
+   * colours answer the same way (27c there), and the dashboard cannot produce
+   * junk at all: its control is an <input type="color">.
+   */
+  tinted = await post('/api/lineup', { state: { ...tinted.body.state, accent: 'not-a-colour' } }, '&bus=preview');
+  eq('16i ...and refuses junk rather than storing it', tinted.body.state.accent, '');
+
+  tinted = await post('/api/lineup', { state: { ...tinted.body.state, accent: '#ABC' } }, '&bus=preview');
+  eq('16i2 ...a three-digit hex is a hex, lowercased', tinted.body.state.accent, '#abc');
+
+  /*
+   * BLANK SURVIVES. This is the one that matters: it is what Reset to default
+   * writes, and a sanitiser treating empty as "missing, use the default" would
+   * make it impossible to go back to inheriting.
+   */
+  tinted = await post('/api/lineup', { state: { ...tinted.body.state, accent: '' } }, '&bus=preview');
+  eq('16j ...and blank is a real answer: it means the EVENT decides', tinted.body.state.accent, '');
+
   // -------------------------------------------------------- the head to head ---
   r = await post('/api/headtohead', { action: 'side', side: 'left', id: cru.id }, '&bus=preview');
   eq('17 a side takes a team', r.body.state.left.teamName, 'Crusaders');
@@ -287,6 +330,16 @@ try {
   eq('29 the same for the head to head', h2hRead.status, 200);
 
   ok('30 a load is logged', /lineup loaded/.test(log), 'no audit line for a lineup load');
+  r = await get('/api/headtohead', '&bus=preview');
+  eq('26a the head to head starts with no colour of its own', r.state.accent, '');
+  const h2hTint = await post('/api/headtohead', { state: { ...r.state, accent: '#ffcc00' } }, '&bus=preview');
+  eq('26b ...and takes one', h2hTint.body.state.accent, '#ffcc00');
+  eq(
+    '26c ...without disturbing the team colours, which mean something else here',
+    JSON.stringify([h2hTint.body.state.left.colour, h2hTint.body.state.right.colour]),
+    JSON.stringify([r.state.left.colour, r.state.right.colour]),
+  );
+
   ok('31 no session key reached the log', !log.includes(key), 'KEY LEAKED');
 } catch (error) {
   fail += 1;

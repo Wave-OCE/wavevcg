@@ -14,6 +14,7 @@
 
 import { FONT_CHOICES } from './preset-schema.js';
 import { onState } from './live.js';
+import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { mediaControl } from './media-field.js';
 import { SIDE_CHOICES, applyTeam } from './teams.js';
 import { mapDisplayName } from './maps.js';
@@ -143,7 +144,21 @@ async function save() {
 }
 
 const fields = makeFields(() => state, queueSave);
-const { textField, choiceField, selectField, colourField, checkField, rangeField, numberField } = fields;
+const { textField, choiceField, selectField, colourField, brandField, checkField, rangeField, numberField } = fields;
+
+/*
+ * The event's colours, so a blank accent can SHOW what it inherits.
+ *
+ * SYNC, never rebuild. This tab's style panel carries text inputs and a bound
+ * swatch moves without replacing the box beside it - a repaint here would take
+ * the caret with it, which is the one thing every panel in this program is
+ * built to avoid.
+ */
+let brand = { ...DEFAULT_BRAND };
+onState('brand', (next) => {
+  brand = brandOf(next);
+  fields.syncFields();
+});
 
 // ------------------------------------------------------------- transport ---
 
@@ -913,6 +928,8 @@ function styleField(entry) {
     case 'ms':
       return numberField(entry.label, path, { min: entry.min, max: entry.max });
     default:
+      // The accent inherits; every other colour on this graphic is its own.
+      if (entry.key === 'accent') return brandField(entry.label, path, { inherited: () => brand.accent });
       return colourField(entry.label, path);
   }
 }

@@ -32,6 +32,11 @@
   --left: #4ea8de;
   --right: #ff4655;
 
+  /* The trim. Written from state by applyStyle, which resolves it through the
+     tournament's accent when the graphic has none of its own - the fallback
+     here is only what an unstyled page paints before the first frame. */
+  --accent: #93a4b5;
+
   --pick-opacity: 0.55;
   --pick-scale: 0.88;
   /* Half the entrance, matching what select.js computes onto the stage. Named
@@ -398,12 +403,20 @@ body {
   display: none;
 }
 
+/*
+ * The VS mark: the one piece of trim on this graphic.
+ *
+ * `currentColor` on the border is kept deliberately - it is what makes the rule
+ * and the word one mark rather than two things that have to be set in step. The
+ * colour moved from `--dim-text` to `--accent`, so the mark now carries the
+ * event's trim while the two halves of the strip stay team-coloured.
+ */
 .ident-vs {
   flex: none;
   font-size: 34px;
   font-weight: 900;
   letter-spacing: 0.14em;
-  color: var(--dim-text);
+  color: var(--accent);
   padding: 8px 20px;
   border: 3px solid currentColor;
   /* Corners cut off rather than a full border, which is the shape language the

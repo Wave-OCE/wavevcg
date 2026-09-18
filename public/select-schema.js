@@ -197,6 +197,17 @@ export const SELECT_STYLE_FIELDS = [
 
   { key: 'text', type: 'hex', group: 'Colour', label: 'Primary text', default: '#ffffff' },
   { key: 'dimText', type: 'hex', group: 'Colour', label: 'Secondary text', default: '#93a4b5' },
+  /*
+   * The trim, and on this graphic there is exactly one thing wearing it: the
+   * VS mark between the two teams - a cut-cornered rule that is the only piece
+   * of furniture here which is neither a surface nor a word.
+   *
+   * Blank means the EVENT's accent, which is the whole point. It used to take
+   * `--dim-text`, so an install that had never touched a colour drew a
+   * grey-blue mark; it now draws the tournament's, and the two halves of the
+   * strip stay team-coloured as they always were.
+   */
+  { key: 'accent', type: 'hex', group: 'Colour', label: 'Accent', default: '' },
 
   /*
    * The three numbers that make an unlocked pick read as provisional.

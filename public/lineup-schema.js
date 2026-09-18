@@ -137,7 +137,17 @@ export function sanitiseLineup(input, fallback = DEFAULT_LINEUP) {
     logo: text(source.logo ?? base.logo, 500),
     colour: text(source.colour ?? base.colour, 24),
     defaultPhoto: text(source.defaultPhoto ?? base.defaultPhoto, 500),
-    // Blank passes through as blank, which is what makes inheriting sayable.
+    /*
+     * Blank passes through as blank, which is what makes inheriting sayable.
+     *
+     * An ABSENT key preserves (the `??`); a present-but-unparseable one lands
+     * on blank, which is to say "inherit the event's" rather than "keep the
+     * junk". That is the same thing the bracket's colours do - see 27c in
+     * bracket-graphic-e2e - and it is the only honest answer on a route that
+     * REPLACES: there is no previous value to fall back to, because the caller
+     * sent the whole state. The dashboard cannot produce junk here anyway; its
+     * control is an <input type="color">.
+     */
     accent: brandHex(source.accent ?? base.accent, ''),
     /*
      * A line above the team name - "STARTING LINEUP", "THE ROSTER", whatever

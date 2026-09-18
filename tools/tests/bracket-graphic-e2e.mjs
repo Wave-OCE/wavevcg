@@ -600,6 +600,68 @@ try {
     eq('41 the stage name does not grow with the sheet', furniture.stageName, '40px');
     eq('42 ...nor does the winner panel', furniture.panelW, 320);
 
+    // =========================== the event's colours, and the names that lie ===
+    /*
+     * THE TRAP, stated as a test.
+     *
+     * This graphic's field called `accent` is its HIGHLIGHT - the slot of
+     * whoever went through, the flow along the edges - and `trim` is its
+     * ACCENT, the corner marks on the winner panel. The schema's own comment
+     * has always said so; the field names predate the word "highlight"
+     * existing in this codebase.
+     *
+     * So the EVENT's accent has to land on `--trim` and the EVENT's highlight
+     * on `--slot-won`, which reads like a mistake in the source and is the
+     * opposite of one. Swapped, the tournament's trim colour paints the winning
+     * team's slot while the frame wears the highlight: it looks deliberate, it
+     * is wrong on every bracket on the server, and nothing fails.
+     *
+     * TWO DIFFERENT COLOURS, deliberately. With one colour for both the
+     * assertion passes whichever way round the mapping is, which is exactly the
+     * shape of test that lets this bug back in.
+     */
+    /*
+     * BLANKED FIRST, and the reason is a mistake this block made on its first
+     * run: assertion 27f above leaves the graphic's own accent set, so
+     * measuring inheritance without clearing it measured an OVERRIDE. Worse,
+     * the colour it leaves behind was the same one this block had chosen for
+     * the tournament, so the numbers agreed and three assertions failed
+     * pointing at the wrong thing entirely. Blank means inherit; a suite about
+     * inheriting has to start from blank and say so.
+     */
+    const cleared = (await post('/api/bracket', { state: { ...(await get('/api/bracket', '&bus=preview')).state, accent: '', trim: '' } }, '&bus=preview')).body.state;
+    ok('43a the graphic is left with no colours of its own', cleared.accent === '' && cleared.trim === '', JSON.stringify(cleared));
+
+    await fetch(`${BASE}/api/tournaments`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ action: 'update', id: tournamentId, fields: { accent: '#0d1a2b', highlight: '#ab12cd' } }),
+    });
+    await wait(900);
+
+    const colours = () =>
+      page.evaluate(() => {
+        const board = document.getElementById('board');
+        const read = (name) => getComputedStyle(board).getPropertyValue(name).trim();
+        return { trim: read('--trim'), won: read('--slot-won'), flow: read('--flow'), accent: read('--accent') };
+      });
+
+    const inherited = await colours();
+    eq('44 the event ACCENT lands on the frame, not the winner', inherited.trim, '#0d1a2b');
+    eq('45 the event HIGHLIGHT lands on the slot that went through', inherited.won, '#ab12cd');
+    eq('46 ...and on the flow along its edges', inherited.flow, '#ab12cd');
+
+    /*
+     * And an override still wins. The graphic's own value is what the operator
+     * typed; the event's is only what they get for typing nothing.
+     */
+    const now = (await get('/api/bracket', '&bus=preview')).state;
+    await post('/api/bracket', { state: { ...now, trim: '#ff00ff' } }, '&bus=preview');
+    await wait(700);
+    const overridden = await colours();
+    eq('47 a trim set on the graphic beats the event', overridden.trim, '#ff00ff');
+    eq('48 ...and leaves the highlight still inheriting', overridden.won, '#ab12cd');
+
     ok('43 the page threw nothing', errors.length === 0, errors.join(' | '));
   }
 

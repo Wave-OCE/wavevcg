@@ -27,6 +27,8 @@ import {
 import { mapDisplayName } from './maps.js';
 import { teamColour } from './teams.js';
 import { api, PAGE_BUS } from './session.js';
+import { pick } from './brand.js';
+import { watchBrand } from './brand-stream.js';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -195,6 +197,9 @@ function applyStyle(style, state) {
   const root = document.documentElement.style;
   for (const [field, variable] of Object.entries(STYLE_VARS)) root.setProperty(variable, style[field]);
 
+  // The graphic's own trim, or the event's. Not in STYLE_VARS because that
+  // loop writes values verbatim and this one has a chain behind it.
+  root.setProperty('--accent', pick(style.accent, brand(), 'accent'));
   root.setProperty('--bg-opacity', String(style.bgOpacity));
   root.setProperty('--font', `"${style.font}"`);
   root.setProperty('--offset-y', `${style.offsetY}px`);
@@ -587,6 +592,13 @@ let latestState = null;
 // Subscribe first so the first frame is not held up by the catalogue fetch;
 // names paint immediately and the portraits fill in after.
 const stream = new EventSource(api('/api/select/events', PAGE_BUS));
+
+// The event's colours, on the connection this page already has. Agent select
+// sits on screen for the whole draft, so following a restyle live matters here
+// as much as anywhere.
+const brand = watchBrand(stream, () => {
+  if (latestState) render(latestState);
+});
 
 stream.addEventListener('select', (event) => {
   try {
