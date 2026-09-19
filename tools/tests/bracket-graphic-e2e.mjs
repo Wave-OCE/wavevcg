@@ -547,13 +547,42 @@ try {
     // x-then-y when it reads the rule back.
     eq('32 the draw is DECLARED to scale from its top left corner', grown.origin, 'left top');
     /*
-     * Three columns and four rows with no winner panel fits at 2.15, and a node
-     * is 224 wide. 224 * 2.15 = 481.6 -> 482 painted. Asserted as the NUMBER
-     * rather than as "bigger than 224", because "bigger" passes at 1.01 and the
-     * whole point is that a small sheet reads from across a room.
+     * Three columns and four rows with no winner panel, and a node is 224 wide.
+     * Asserted as the NUMBER rather than as "bigger than 224", because "bigger"
+     * passes at 1.01 and the whole point is that a small sheet reads from
+     * across a room.
+     *
+     * 824 x 390 of ink into 1776 x 792 of room fits at 2.03, floored to the
+     * 0.05 grid as 2.00, and 224 * 2 = 448. The 390 is 4 rows of 92 less the
+     * air under the last one PLUS the 40px band the ROUND HEADINGS take - which
+     * is what turns the height into the binding constraint here. It used to be
+     * the width, at 2.15.
      */
-    eq('33 a small bracket is painted BIGGER than it was drawn', grown.node.w, 482);
-    eq('34 ...by the factor the arithmetic asked for', grown.transform, 'matrix(2.15, 0, 0, 2.15, 0, 0)');
+    eq('33 a small bracket is painted BIGGER than it was drawn', grown.node.w, 448);
+    eq('34 ...by the factor the arithmetic asked for', grown.transform, 'matrix(2, 0, 0, 2, 0, 0)');
+
+    /*
+     * AND THE HEADINGS ARE REALLY IN THE ARITHMETIC.
+     *
+     * 33 and 34 alone cannot tell "the labels take room" from "the labels are
+     * drawn on top of the top row" - both paint at some factor and neither
+     * fails. Turning them off has to give the old number back exactly: 792/372
+     * stops binding, the width does at 2.155, and it floors to 2.15. If the
+     * band were being ignored the two measurements would be identical.
+     */
+    const headed = await get('/api/bracket', '&bus=preview');
+    await post('/api/bracket', { state: { ...headed.state, showRoundLabels: false } }, '&bus=preview');
+    await wait(400);
+    const bare = await measure();
+    eq('34a with the round headings off the sheet gets that room back', bare.transform, 'matrix(2.15, 0, 0, 2.15, 0, 0)');
+    eq('34b ...and paints at the size it did before they existed', bare.node.w, 482);
+    ok(
+      '34c ...which is the assertion proving the band is reserved rather than drawn over',
+      bare.node.w !== grown.node.w,
+      `${bare.node.w} vs ${grown.node.w}`,
+    );
+    await post('/api/bracket', { state: { ...headed.state, showRoundLabels: true } }, '&bus=preview');
+    await wait(400);
 
     /*
      * And it is still ON the frame. This is the assertion that a magnified
@@ -661,6 +690,192 @@ try {
     const overridden = await colours();
     eq('47 a trim set on the graphic beats the event', overridden.trim, '#ff00ff');
     eq('48 ...and leaves the highlight still inheriting', overridden.won, '#ab12cd');
+
+    // ================================ what each round and each band is called ==
+    /*
+     * Names, not positions. `roundName` used to answer "Upper round 2" - where
+     * a round SITS - and this graphic had nothing at all, so a sheet on air
+     * never said which round anything was.
+     *
+     * Derived from where each round sits in its half and COPIED IN at Load,
+     * like everything else in this drawing: the output page must not know what
+     * a stage is, let alone how a round gets its name.
+     */
+    const headings = () =>
+      page.evaluate(() => {
+        const box = (node) => {
+          const r = node.getBoundingClientRect();
+          return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) };
+        };
+        const rounds = [...document.querySelectorAll('.round-label')];
+        return {
+          rounds: rounds.map((n) => n.textContent),
+          shown: rounds.filter((n) => n.classList.contains('is-shown')).map((n) => n.textContent),
+          boxes: rounds.map(box),
+          bands: [...document.querySelectorAll('.band-label')].map((n) => n.textContent),
+          bandBoxes: [...document.querySelectorAll('.band-label')].map(box),
+          nodeLeft: Math.min(...[...document.querySelectorAll('.node')].map((n) => n.getBoundingClientRect().left)),
+          drawRight: Math.max(...[...document.querySelectorAll('.node')].map((n) => n.getBoundingClientRect().right)),
+        };
+      });
+
+    const solo = (await get('/api/bracket', '&bus=preview')).state;
+    await post(
+      '/api/bracket',
+      { state: { ...solo, reveal: solo.columns, showRoundLabels: true, showBandLabels: true, autoSize: true, drawScale: 1 } },
+      '&bus=preview',
+    );
+    await page.goto(pageUrl('preview'));
+    await measure();
+    const named = await headings();
+
+    eq('49 a single elimination names its rounds from the end', named.rounds.join(' | '), 'QUARTER-FINALS | SEMI-FINALS | FINAL');
+    /*
+     * AND NAMES NO BAND. Upper above lower is the universal convention, so a
+     * draw with one band has nothing to disambiguate - which is the answer to
+     * the question CLAUDE.md has had open since this graphic was built, and the
+     * reason the switch defaults off. Asserted with the switch ON, so it is the
+     * DRAWING refusing rather than the operator.
+     */
+    eq('50 ...and names no band, even asked to', named.bands.length, 0);
+
+    /*
+     * A heading arrives with the round it names. A word over a column of empty
+     * boxes announces a round nobody has revealed - the same thing the veto
+     * board's cross was doing before it was made to wait for its ban.
+     */
+    await post('/api/bracket', { state: { ...solo, reveal: 1, showRoundLabels: true } }, '&bus=preview');
+    await wait(500);
+    const walking = await headings();
+    eq('51 a heading waits for its own round', walking.shown.join(','), 'QUARTER-FINALS');
+    eq('51a ...while the rest are drawn and held back', walking.rounds.length, 3);
+
+    // ---------------------------------------------- a DOUBLE elimination ----
+    /*
+     * The first time this graphic has been drawn from one, which is the other
+     * question CLAUDE.md has had open - and the one that made the overlap
+     * below visible.
+     */
+    await post('/api/schedule', { action: 'stage.save', stage: { name: 'Double', kind: 'bracket', bestOf: 3 } });
+    await save({ id: 'd-u1', stageId: 'double', round: 1, slot: 0, bracket: 'upper', bestOf: 3, left: T('Alpha', 'ALP'), right: T('Beta', 'BET') });
+    await save({ id: 'd-u2', stageId: 'double', round: 1, slot: 1, bracket: 'upper', bestOf: 3, left: T('Gamma', 'GAM'), right: T('Delta', 'DEL') });
+    await save({
+      id: 'd-uf',
+      stageId: 'double',
+      round: 2,
+      slot: 0,
+      bracket: 'upper',
+      bestOf: 3,
+      left: { source: { fixtureId: 'd-u1', take: 'winner' } },
+      right: { source: { fixtureId: 'd-u2', take: 'winner' } },
+    });
+    await save({
+      id: 'd-l1',
+      stageId: 'double',
+      round: 1,
+      slot: 0,
+      bracket: 'lower',
+      bestOf: 3,
+      left: { source: { fixtureId: 'd-u1', take: 'loser' } },
+      right: { source: { fixtureId: 'd-u2', take: 'loser' } },
+    });
+    await save({
+      id: 'd-gf',
+      stageId: 'double',
+      round: 1,
+      slot: 0,
+      bracket: 'final',
+      bestOf: 5,
+      left: { source: { fixtureId: 'd-uf', take: 'winner' } },
+      right: { source: { fixtureId: 'd-l1', take: 'winner' } },
+    });
+
+    const dbl = await post('/api/bracket', { action: 'load', id: 'double' }, '&bus=preview');
+    eq('52 a double elimination loads', dbl.status, 200);
+    await post(
+      '/api/bracket',
+      {
+        state: {
+          ...dbl.body.state,
+          reveal: dbl.body.state.columns,
+          showRoundLabels: true,
+          showBandLabels: true,
+          winner: { ...dbl.body.state.winner, show: false },
+          autoSize: true,
+          drawScale: 1,
+        },
+      },
+      '&bus=preview',
+    );
+    await page.goto(pageUrl('preview'));
+    await measure();
+    const both = await headings();
+
+    eq(
+      '53 a double elimination says which band each round is in',
+      both.rounds.join(' | '),
+      'UPPER SEMI-FINALS | UPPER FINAL | LOWER FINAL | GRAND FINAL',
+    );
+    /*
+     * THE ONE A SCREENSHOT CAUGHT AND NO STATE ASSERTION COULD.
+     *
+     * Upper round 1 and lower round 1 are both COLUMN 0 - the lower bracket
+     * starts underneath the upper one, not to the right of it - so one heading
+     * per column painted the two on top of each other and the sheet read
+     * "UPPEQUAR TERD 1NALS". Every payload was correct throughout.
+     *
+     * Asked of the PAINTED boxes rather than of the rows in the state, because
+     * a row that is right and an offset that is wrong look identical to the
+     * state and identical to each other on screen.
+     */
+    const overlaps = both.boxes.filter((a, i) =>
+      both.boxes.some(
+        (b, j) => j !== i && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom,
+      ),
+    );
+    eq('54 no two round headings are painted on top of each other', overlaps.length, 0);
+
+    eq('55 the two bands are named', both.bands.join(' | '), 'UPPER BRACKET | LOWER BRACKET');
+    /*
+     * And the grand final is NOT one. It is a single match, its column heading
+     * already says "Grand final", and a second copy down the side of it landed
+     * in the same gutter as the upper bracket's - two words overlapping where
+     * there should have been one.
+     */
+    ok('55a ...and the grand final is not a band', !both.bands.some((name) => /GRAND/.test(name)), both.bands.join(' | '));
+
+    /*
+     * A band name COSTS THE SHEET NOTHING. It hangs into the 72px margin
+     * `#draw` already sits inside, because taking sheet width for it made a
+     * five-column draw run 46px further under the winner panel - the one
+     * collision this graphic already has a standing note about.
+     */
+    ok('56 a band name hangs left of the sheet', Math.max(...both.bandBoxes.map((b) => b.right)) <= both.nodeLeft + 1, JSON.stringify([both.bandBoxes, both.nodeLeft]));
+    ok('56a ...and is still on the frame', Math.min(...both.bandBoxes.map((b) => b.left)) >= 0, JSON.stringify(both.bandBoxes));
+
+    /*
+     * AN OVERRIDE REACHES THE DRAWING, and it is resolved at Load like every
+     * other thing in here - the output page is handed words, never a rule for
+     * making them.
+     */
+    const stageNow = (await (await fetch(at('/api/schedule'), { headers: { Cookie: cookie } })).json()).schedule.stages.find(
+      (entry) => entry.id === 'double',
+    );
+    await post('/api/schedule', {
+      action: 'stage.save',
+      stage: { ...stageNow, roundLabels: { 'final/1': 'THE DECIDER' } },
+    });
+    const relabelled = await post('/api/bracket', { action: 'load', id: 'double' }, '&bus=preview');
+    ok(
+      '57 a name typed on the stage reaches the drawing',
+      (relabelled.body.state.rounds ?? []).some((entry) => entry.label === 'THE DECIDER'),
+      JSON.stringify(relabelled.body.state.rounds),
+    );
+    ok(
+      '57a ...and leaves every other round on its derived name',
+      (relabelled.body.state.rounds ?? []).some((entry) => entry.label === 'Upper final'),
+      JSON.stringify(relabelled.body.state.rounds),
+    );
 
     ok('43 the page threw nothing', errors.length === 0, errors.join(' | '));
   }

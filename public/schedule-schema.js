@@ -677,6 +677,101 @@ export const emptyStage = () => ({
   groups: [],
 });
 
+/**
+ * WHAT A ROUND IS CALLED, derived from where it sits in its half.
+ *
+ * There is no round RECORD in this model and there deliberately still is not: a
+ * round is `fixture.round` beside `fixture.bracket`, a number and a band. So
+ * there is nowhere to hang a name, and the names are derivable anyway - which
+ * is the schedule's own rule. An operator should never have to type
+ * "Quarter-finals" into a four-round bracket.
+ *
+ * COUNTED BACK FROM THE LAST ROUND OF THE HALF. The last is the Final, the one
+ * before it the Semi-finals, then the Quarter-finals, then the Round of 16.
+ * Not counted forward, because the front of a bracket is where the byes and the
+ * odd shapes live and the back of one is always the same three rounds.
+ *
+ * The honest cost: a half-built bracket names its last round "Final" because
+ * that IS the last round that exists. Laying the rest of it out fixes itself,
+ * and an override is one box away - the same answer a blank accent gives.
+ *
+ * A TABLE STAGE gets none of this. Round 3 of a round robin is round 3; naming
+ * it the semi-final would be a lie about a format where nobody is eliminated.
+ */
+const KNOCKOUT = ['Final', 'Semi-finals', 'Quarter-finals', 'Round of 16', 'Round of 32', 'Round of 64'];
+
+/*
+ * THE LOWER BRACKET BORROWS ONLY THE LAST TWO, and that asymmetry is the point
+ * rather than an omission.
+ *
+ * An upper bracket IS a single elimination, so counting back from its end lands
+ * on the real words every time: four rounds of eight teams is quarter, semi,
+ * final and the count agrees. A lower bracket is not - the second round of the
+ * lower bracket of an eight-team draw is two matches between four teams who
+ * have already lost once, and it is the quarter-final of nothing. Counting the
+ * same way there produced "Round of 16" in an eight-team event, which is not a
+ * near miss, it is a different competition.
+ *
+ * So it keeps the two names that ARE true of it - the lower final and the round
+ * before it - and everything earlier is the round number, which is what a
+ * broadcast says out loud.
+ */
+const LOWER_KNOCKOUT = ['Final', 'Semi-finals'];
+
+export function derivedRoundName(stage, { half, round, rounds, bands = 1 } = {}) {
+  if (stageHasTable(stage)) return `Round ${round}`;
+  /*
+   * The grand final is its own band and its own name. A second round in that
+   * band is the bracket reset - the match a lower-bracket team earns by winning
+   * the first one - which has a name of its own everywhere it is played.
+   */
+  if (half === 'final') return round <= 1 ? 'Grand final' : 'Bracket reset';
+
+  /*
+   * The band is NAMED IN THE ROUND when there is more than one, because the
+   * band heading is off by default: an unqualified "Final" appearing twice on
+   * one sheet is worse than saying "Upper final" beneath a heading that already
+   * said Upper.
+   */
+  const where = bands > 1 ? (half === 'lower' ? 'Lower ' : 'Upper ') : '';
+  const table = bands > 1 && half === 'lower' ? LOWER_KNOCKOUT : KNOCKOUT;
+
+  const ordered = [...new Set(rounds ?? [])].sort((a, b) => a - b);
+  const fromEnd = ordered.length ? ordered.length - 1 - ordered.indexOf(round) : -1;
+  const named = fromEnd < 0 ? '' : table[fromEnd];
+  if (!named) return `${where}round ${round}`.replace(/^r/, 'R');
+  // "Upper final", not "Upper Final" - one name, sentence case after the band.
+  return where ? `${where}${named.toLowerCase()}` : named;
+}
+
+/** The key an override is filed under. One string, so nothing composes it twice. */
+export const roundKey = (half, round) => `${half}/${round}`;
+
+/**
+ * What a round is called, override first.
+ *
+ * Blank means "the derived one", exactly as a blank accent means the event's -
+ * and for the same reason: a tick-box beside a name that still shows a name
+ * would be two controls saying one thing.
+ */
+export function roundLabel(stage, where) {
+  const override = stage?.roundLabels?.[roundKey(where?.half, where?.round)];
+  return (typeof override === 'string' && override.trim()) || derivedRoundName(stage, where);
+}
+
+/**
+ * What a BAND is called. Upper above lower is the universal convention, so on a
+ * single elimination there is nothing to disambiguate and the caller is
+ * expected not to ask - `showBandLabels` defaults off for exactly that reason.
+ */
+/*
+ * THE GRAND FINAL IS NOT A BAND WORTH NAMING. It is one match, its column
+ * heading already says "Grand final", and a second copy of the words down the
+ * side of it is the redundancy - a screenshot showed the two overlapping the
+ * upper bracket's own name in the same gutter.
+ */
+export const BAND_LABELS = { upper: 'Upper bracket', lower: 'Lower bracket' };
+
 export function sanitiseStage(input) {
   const source = input ?? {};
   const name = text(source.name, 80);
@@ -692,7 +787,40 @@ export function sanitiseStage(input) {
     // grand final in a Bo3 bracket is a Bo5 and the record must allow it.
     bestOf: oneOf(whole(source.bestOf, MAX_MAPS), BEST_OF_CHOICES, 3),
     groups: sanitiseGroups(source.groups),
+    roundLabels: sanitiseRoundLabels(source.roundLabels),
   };
+}
+
+/**
+ * The names an operator typed over the derived ones.
+ *
+ * A MAP keyed `"<half>/<round>"`, not a list of round records, because a round
+ * has no identity of its own to preserve - it is a number and a band. The cost
+ * is that inserting a round shifts the keys, and that is the right cost to pay:
+ * it is visible on the page and re-editable, where a mis-keyed id would be
+ * neither.
+ *
+ * NOTHING SWEEPS A LABEL WHOSE ROUND HAS GONE, deliberately - a departure from
+ * the plan, which called for one. A label costs nothing at all while its round
+ * does not exist (nothing resolves it and nothing draws it), and deleting a
+ * round by accident should not also destroy the name somebody typed for it.
+ * The cap is what keeps it bounded, and a stage cannot reach it by accident:
+ * MAX_ROUND_LABELS is more rounds than a 64-team double elimination has.
+ */
+export const MAX_ROUND_LABELS = 48;
+
+export function sanitiseRoundLabels(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const out = {};
+  for (const [key, value] of Object.entries(source)) {
+    const match = /^(upper|lower|final)\/([1-9][0-9]?)$/.exec(String(key));
+    if (!match) continue;
+    const label = text(value, 40);
+    if (!label) continue;
+    out[`${match[1]}/${Number(match[2])}`] = label;
+    if (Object.keys(out).length >= MAX_ROUND_LABELS) break;
+  }
+  return out;
 }
 
 /**
@@ -1370,6 +1498,18 @@ export function bracketLayout(schedule, stageId) {
 
   let bandTop = 0;
   let widest = 0;
+  /*
+   * WHERE the bands and the rounds sit, alongside where the matches do.
+   *
+   * Pure geometry, which is why it belongs here rather than in whatever wants
+   * to draw a heading: this function already knows which column a round landed
+   * in and which rows a band occupies, and a second thing working it out from
+   * the nodes is one refactor from disagreeing with the drawing it is labelling.
+   * What each one is CALLED is not decided here - that needs the stage, and
+   * this takes a schedule.
+   */
+  const bands = [];
+  const rounds = [];
 
   /*
    * The three halves as three BANDS, stacked.
@@ -1383,7 +1523,7 @@ export function bracketLayout(schedule, stageId) {
     const mine = all.filter((fixture) => fixture.bracket === half);
     if (!mine.length) continue;
 
-    const rounds = [...new Set(mine.map((fixture) => fixture.round))].sort((a, b) => a - b);
+    const roundNumbers = [...new Set(mine.map((fixture) => fixture.round))].sort((a, b) => a - b);
     // The grand final sits after everything else, however many rounds it has
     // (a bracket reset is two). Everything else starts at the left edge.
     const columnBase = half === 'final' ? widest : 0;
@@ -1396,7 +1536,7 @@ export function bracketLayout(schedule, stageId) {
     const centre = half === 'final' ? Math.max(0, bandTop - 2) / 2 : 0;
     let bandRows = 0;
 
-    for (const [index, round] of rounds.entries()) {
+    for (const [index, round] of roundNumbers.entries()) {
       const inRound = mine
         .filter((fixture) => fixture.round === round)
         .sort((a, b) => a.slot - b.slot || a.order - b.order);
@@ -1411,6 +1551,7 @@ export function bracketLayout(schedule, stageId) {
        * between generating a bracket and wiring it up.
        */
       let nextFreeRow = 0;
+      rounds.push({ half, round, column: columnBase + index, rounds: roundNumbers });
 
       const wanted = inRound.map((fixture) => {
         /*
@@ -1448,6 +1589,16 @@ export function bracketLayout(schedule, stageId) {
       }
     }
 
+    /*
+     * The band's own extent, for anything that wants to label it. Taken from
+     * the rows the band ACTUALLY filled rather than from the fixtures, because
+     * the push-apart above can have moved them.
+     */
+    const mineRows = nodes.filter((entry) => entry.half === half).map((entry) => entry.row);
+    if (mineRows.length) {
+      bands.push({ half, topRow: Math.min(...mineRows), rows: Math.max(...mineRows) - Math.min(...mineRows) + 1 });
+    }
+
     // A blank row between bands, so upper and lower do not touch. The grand
     // final shares the space rather than opening a band of its own.
     if (half !== 'final') bandTop = bandRows + 1;
@@ -1480,5 +1631,7 @@ export function bracketLayout(schedule, stageId) {
     rows: nodes.reduce((most, node) => Math.max(most, node.row + 1), 0),
     nodes,
     links,
+    bands,
+    rounds,
   };
 }

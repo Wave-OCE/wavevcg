@@ -49,6 +49,7 @@ import {
   EDGE_TAKES,
   STAGE_KINDS,
   STAGE_TEMPLATES,
+  BAND_LABELS,
   emptyMapRow,
   fixtureLabel,
   fixtureScore,
@@ -57,6 +58,8 @@ import {
   bracketLayout,
   mapRowPlayed,
   mapsNeeded,
+  roundKey,
+  roundLabel,
   slotLabel,
   stageHasGroups,
   stageHasTable,
@@ -712,6 +715,54 @@ if (host) {
       stageRow([lay]),
     );
 
+    /*
+     * WHAT EACH ROUND IS CALLED, and every box starts EMPTY.
+     *
+     * Blank means "the derived one", the same thing a blank accent means about
+     * the event's colour - so the placeholder carries the name the round has
+     * right now and typing over it is the override. A box pre-filled with the
+     * derived name would turn every round an operator merely looked at into a
+     * stored override, which then stops following the draw when a round is
+     * added in front of it.
+     *
+     * A stage with no matches has no rounds to name, and says so rather than
+     * showing an empty pane: a round only exists because a match is in it.
+     */
+    const roundPane = el('div');
+    const rounds = roundsOf(stage.id);
+    draft.roundLabels = { ...(stage.roundLabels ?? {}) };
+
+    roundPane.append(
+      help(
+        'Names are worked out from where each round sits in the draw, so a finished bracket needs nothing typed ' +
+          'here. Type over one to override it; clear the box to go back to the worked-out name.',
+      ),
+      ...(rounds.length
+        ? rounds.map((entry) => {
+            const box = el('input', null, {
+              type: 'text',
+              maxlength: 40,
+              'aria-label': `Name for ${entry.key}`,
+              placeholder: roundLabel({ ...stage, roundLabels: {} }, entry),
+            });
+            box.value = draft.roundLabels[entry.key] ?? '';
+            box.addEventListener('input', () => {
+              const typed = box.value.trim();
+              if (typed) draft.roundLabels[entry.key] = box.value;
+              else delete draft.roundLabels[entry.key];
+            });
+            /*
+             * Labelled by WHERE it is rather than by what it is called: the
+             * name is the thing being edited, so using it as the field's label
+             * would leave two copies of it side by side, one of them stale the
+             * moment anybody typed.
+             */
+            const where = entry.bands > 1 ? `${BAND_LABELS[entry.half] ?? entry.half} - round ${entry.round}` : `Round ${entry.round}`;
+            return field(where, box);
+          })
+        : [help('This stage has no matches yet, so it has no rounds to name. Lay it out or add a round first.')]),
+    );
+
     // Snapshotted after the form is built, so nothing the form does to the
     // draft on the way up reads as the operator's work - see modal.js. It
     // watches the WHOLE draft, not the open tab: a name typed on one pane and
@@ -723,6 +774,7 @@ if (host) {
       tabs: [
         { id: 'about', label: 'Stage', body: aboutPane },
         { id: 'groups', label: 'Groups', body: groupPane },
+        { id: 'rounds', label: 'Rounds', body: roundPane },
         { id: 'matches', label: 'Matches', body: matchPane },
       ],
       tab: startTab,
@@ -999,11 +1051,47 @@ if (host) {
 
   /** `Round 2`, or `Lower round 2` where a stage uses both halves of a bracket. */
   function roundName(stage, fixture) {
-    if (stageHasTable(stage)) return `Round ${fixture.round}`;
-    const halves = new Set(fixturesIn(stage.id).map((entry) => entry.bracket));
-    if (fixture.bracket === 'final') return 'Grand final';
-    if (halves.size > 1) return `${fixture.bracket === 'lower' ? 'Lower' : 'Upper'} round ${fixture.round}`;
-    return `Round ${fixture.round}`;
+    /*
+     * ONE implementation of what a round is called, in the schema, used by the
+     * page and by the graphic's snapshot alike. It used to be three lines of
+     * position here - "Upper round 2" - which is where a round SITS rather
+     * than what it IS, and the graphic had nothing at all.
+     *
+     * A stage with no id resolves to nothing and falls back to "Round N",
+     * which is the right answer for the callers that pass `{}`.
+     */
+    const mine = fixturesIn(stage?.id ?? '');
+    return roundLabel(stage, {
+      half: fixture.bracket,
+      round: fixture.round,
+      rounds: mine.filter((entry) => entry.bracket === fixture.bracket).map((entry) => entry.round),
+      bands: new Set(mine.map((entry) => entry.bracket)).size,
+    });
+  }
+
+  /**
+   * Every round a stage actually has, in the order a draw is read.
+   *
+   * Derived rather than stored, because a round is still not a record - it is
+   * `fixture.round` beside `fixture.bracket`. This is what the Rounds tab
+   * lists and what tells the derivation how many rounds a half holds.
+   */
+  function roundsOf(stageId) {
+    const mine = fixturesIn(stageId);
+    const bands = new Set(mine.map((entry) => entry.bracket)).size;
+    const seen = new Map();
+    for (const fixture of mine) {
+      const key = roundKey(fixture.bracket, fixture.round);
+      if (seen.has(key)) continue;
+      seen.set(key, {
+        key,
+        half: fixture.bracket,
+        round: fixture.round,
+        bands,
+        rounds: mine.filter((entry) => entry.bracket === fixture.bracket).map((entry) => entry.round),
+      });
+    }
+    return [...seen.values()];
   }
 
   /**

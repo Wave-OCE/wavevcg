@@ -34,7 +34,7 @@ import {
   bracketFromStage,
   bracketIsStale,
 } from './bracket-graphic-schema.js';
-import { bracketLayout, fixtureScore, fixtureWinner } from './schedule-schema.js';
+import { BAND_LABELS, bracketLayout, fixtureScore, fixtureWinner, roundLabel } from './schedule-schema.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -155,6 +155,11 @@ if (els.tab) {
       stage,
       score: fixtureScore,
       winnerOf: fixtureWinner,
+      // The SAME two functions the server hands in, or the staleness badge
+      // would light on every paint because the browser's copy of the drawing
+      // has no headings in it and the loaded one does.
+      roundLabel,
+      bandLabel: (half, bands) => (bands > 1 ? (BAND_LABELS[half] ?? '') : ''),
     });
   };
 
@@ -300,6 +305,27 @@ if (els.tab) {
       toggle('Animate the flow along the bracket', () => state.flow !== false, (on) => save({ flow: on })),
       help('Only the edges somebody actually came along move. An edge into an undecided match is drawn and stays still.'),
       toggle('Show map scores', () => state.showScores !== false, (on) => save({ showScores: on })),
+
+      /*
+       * The headings, and the two defaults are deliberately opposite.
+       *
+       * ROUNDS ON: a sheet whose columns are not named is one an audience has
+       * to count, and every broadcast bracket names them. BANDS OFF: upper
+       * above lower is the universal convention, so a single elimination has
+       * one band and naming it is noise - which is the answer to the question
+       * this codebase has had open since the bracket was built.
+       */
+      subhead('Headings'),
+      toggle('Name each round', () => state.showRoundLabels !== false, (on) => save({ showRoundLabels: on })),
+      help(
+        'Quarter-finals, Semi-finals, Final - worked out from where each round sits in the draw, so nothing has to ' +
+          'be typed. Rename any of them on the Rounds tab of that stage, on the Schedule page.',
+      ),
+      toggle('Name the upper and lower brackets', () => state.showBandLabels === true, (on) => save({ showBandLabels: on })),
+      help(
+        'Down the left of each band. Nothing is drawn on a single elimination whichever way this is set: there is ' +
+          'one band and no question about which it is.',
+      ),
 
       /*
        * Size, and it is two controls rather than one because they answer two

@@ -108,6 +108,72 @@ body {
   transform-origin: top left;
 }
 
+/*
+ * The column headings, one per round.
+ *
+ * Placed and sized from bracket.js in the same draw space the nodes live in,
+ * so they scale with the sheet rather than staying put while it grows - which
+ * is the whole reason they are inside `#draw` and not beside it.
+ *
+ * They arrive with the round they name: a heading over a column of empty boxes
+ * announces a round nobody has revealed, which is the same thing the veto
+ * board's cross was doing before it was made to wait for its ban.
+ */
+.round-label {
+  position: absolute;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 340ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.round-label.is-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/*
+ * A band's name, down the left gutter - where a draw sheet has always put one.
+ *
+ * `writing-mode` plus a half-turn gives bottom-to-top text, which is the way
+ * round a vertical label is read on a broadcast. It carries a rule of its own
+ * rather than a box, because the band it names is already a block of boxes and
+ * a second frame round them reads as a panel.
+ *
+ * Not animated: a band heading says which half of the draw you are looking at
+ * and is true from the first frame, so fading it in with a reveal would be
+ * re-announcing something the audience has already read.
+ */
+.band-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding-right: 12px;
+  border-right: 2px solid var(--trim);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--trim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 .links {
   position: absolute;
   left: 0;

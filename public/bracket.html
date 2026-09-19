@@ -37,7 +37,13 @@
           <div class="head-stage" id="stage-name"></div>
         </div>
 
+        <!-- Inside #draw, so the headings scale with the sheet they label
+             rather than staying put while it grows. Built in bracket.js from
+             the drawing's own `rounds` and `bands`, which carry the column and
+             the rows each one belongs to. -->
         <div id="draw">
+          <div id="bands" aria-hidden="true"></div>
+          <div id="round-labels" aria-hidden="true"></div>
           <svg class="links" id="links" aria-hidden="true"></svg>
           <div id="nodes"></div>
         </div>

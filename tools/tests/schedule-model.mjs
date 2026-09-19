@@ -25,7 +25,10 @@ const {
   fixtureWinner,
   mapsNeeded,
   bracketLayout,
+  derivedRoundName,
+  roundLabel,
   roundRobinPairs,
+  sanitiseRoundLabels,
   sanitiseFixture,
   sanitiseSchedule,
   sanitiseStage,
@@ -593,6 +596,127 @@ const maps = (...rows) => rows.map(([left, right]) => ({ name: 'Ascent', left, r
   eq('47 an empty stage draws nothing', empty.nodes.length, 0);
   eq('47b ...and has no size', `${empty.columns}x${empty.rows}`, '0x0');
   eq('48 a stage id nobody has draws nothing either', bracketLayout(single, 'nope').nodes.length, 0);
+
+  /*
+   * WHERE THE HEADINGS GO, which is geometry and therefore this function's job.
+   *
+   * A second thing working out which column a round landed in, from the nodes,
+   * is one refactor from disagreeing with the drawing it is labelling - the
+   * same argument that keeps the drawing itself coming from here.
+   */
+  layout = bracketLayout(double, 's');
+  eq('48a the layout names its bands', layout.bands.map((b) => b.half).join(','), 'upper,lower,final');
+  /*
+   * The grand final's row is 1.5, and that is not a rounding error: it belongs
+   * to neither band and centres on the whole drawing, which `bracketLayout`
+   * answers in abstract units that are "both possibly fractional". Anything
+   * carrying this number onward has to keep the half - truncating it puts the
+   * heading half a row above the match it names.
+   */
+  eq(
+    '48b ...with the rows each one actually filled',
+    JSON.stringify(layout.bands.map((b) => [b.half, b.topRow, b.rows])),
+    JSON.stringify([['upper', 0, 2], ['lower', 3, 1], ['final', 1.5, 1]]),
+  );
+  /*
+   * THE ONE A SCREENSHOT CAUGHT. Upper round 1 and lower round 1 are both
+   * COLUMN 0 - the lower bracket starts underneath the upper one, not to the
+   * right of it - so a heading per column painted the two on top of each other
+   * and the sheet read "UPPEQUAR TERD 1NALS". They have to differ by BAND.
+   */
+  const firstColumn = layout.rounds.filter((entry) => entry.column === 0);
+  eq('48c two bands share column 0', firstColumn.length, 2);
+  ok('48d ...and they are different halves', new Set(firstColumn.map((e) => e.half)).size === 2, JSON.stringify(firstColumn));
+}
+
+
+// =============================================== what a round is called ======
+/*
+ * There is still no round RECORD, deliberately: a round is `fixture.round`
+ * beside `fixture.bracket`. So the names are DERIVED and only an override is
+ * stored - the schedule's own "nothing derivable is stored" rule.
+ */
+{
+  const bracket = { id: 's', kind: 'bracket', roundLabels: {} };
+  const table = { id: 't', kind: 'roundrobin', roundLabels: {} };
+  const name = (stage, half, round, rounds, bands) => derivedRoundName(stage, { half, round, rounds, bands });
+
+  // A single elimination of three rounds: counted back from the end.
+  eq('49 the last round of a bracket is the Final', name(bracket, 'upper', 3, [1, 2, 3], 1), 'Final');
+  eq('49a ...the one before it the Semi-finals', name(bracket, 'upper', 2, [1, 2, 3], 1), 'Semi-finals');
+  eq('49b ...and the one before that the Quarter-finals', name(bracket, 'upper', 1, [1, 2, 3], 1), 'Quarter-finals');
+  eq('49c a four-round draw opens at the Round of 16', name(bracket, 'upper', 1, [1, 2, 3, 4], 1), 'Round of 16');
+
+  /*
+   * COUNTED BACK, not forward, and this is the case that decides it: the front
+   * of a bracket is where the byes and the odd shapes live, and the back of one
+   * is always the same three rounds. A two-round draw's first round is the
+   * semi-final whatever else is true about it.
+   */
+  eq('49d a two-round draw opens at the Semi-finals', name(bracket, 'upper', 1, [1, 2], 1), 'Semi-finals');
+
+  // Two bands: the band is named IN the round, because the band heading is off
+  // by default and an unqualified "Final" appearing twice is worse than saying
+  // "Upper final" under a heading that already said Upper.
+  eq('50 a double elimination qualifies its upper rounds', name(bracket, 'upper', 3, [1, 2, 3], 2), 'Upper final');
+  eq('50a ...and its lower ones', name(bracket, 'lower', 4, [1, 2, 3, 4], 2), 'Lower final');
+  /*
+   * THE ASYMMETRY THAT MATTERS. An upper bracket IS a single elimination, so
+   * counting back lands on the real words. A lower bracket is not - its second
+   * round is four teams who have already lost once, and it is the quarter-final
+   * of nothing. Counting the same way there produced "Round of 16" in an
+   * eight-team event, which is not a near miss, it is a different competition.
+   */
+  eq('50b the lower bracket keeps its own semi-final', name(bracket, 'lower', 3, [1, 2, 3, 4], 2), 'Lower semi-finals');
+  eq('50c ...and does NOT borrow quarter-finals for the round before it', name(bracket, 'lower', 2, [1, 2, 3, 4], 2), 'Lower round 2');
+  eq('50d ...nor round of 16 for the one before that', name(bracket, 'lower', 1, [1, 2, 3, 4], 2), 'Lower round 1');
+  ok(
+    '50e ...while the upper bracket of the same draw still does',
+    name(bracket, 'upper', 2, [1, 2, 3, 4], 2) === 'Upper quarter-finals',
+    name(bracket, 'upper', 2, [1, 2, 3, 4], 2),
+  );
+
+  eq('51 the grand final is its own name', name(bracket, 'final', 1, [1], 3), 'Grand final');
+  eq('51a ...and a second round of it is the bracket reset', name(bracket, 'final', 2, [1, 2], 3), 'Bracket reset');
+
+  /*
+   * A TABLE STAGE GETS NONE OF IT. Round 3 of a round robin is round 3; naming
+   * it the semi-final would be a lie about a format where nobody is eliminated.
+   */
+  eq('52 a round robin numbers its rounds', name(table, 'upper', 3, [1, 2, 3], 1), 'Round 3');
+
+  // Blank means the derived one, the same thing a blank accent means about the
+  // event's colour - so an override that is only whitespace is not one.
+  const named = { ...bracket, roundLabels: { 'upper/2': 'Championship semi', 'upper/1': '   ' } };
+  eq('53 an override wins', roundLabel(named, { half: 'upper', round: 2, rounds: [1, 2, 3], bands: 1 }), 'Championship semi');
+  eq('53a ...and a blank one does not', roundLabel(named, { half: 'upper', round: 1, rounds: [1, 2, 3], bands: 1 }), 'Quarter-finals');
+
+  /*
+   * The key is `"<half>/<round>"` and nothing else gets in. A map with keys
+   * nobody validates is a map that resolves for rounds that cannot exist, and
+   * the cheapest way for that to happen is a hand-edited schedule.json.
+   */
+  const cleaned = sanitiseRoundLabels({
+    'upper/2': ' Semi ',
+    'lower/10': 'Deep',
+    'bogus/1': 'no such band',
+    'upper/0': 'no such round',
+    'upper/2/3': 'not a key',
+    'upper/2 ': 'trailing space',
+    nope: 'not a key either',
+    // Clearing the box on the Rounds tab is how an operator goes back to the
+    // derived name, so a blank must not be STORED as an override - it would
+    // resolve to the derived name anyway and then sit in the record for ever,
+    // pinning a round that is meant to be following the draw.
+    'final/1': '   ',
+  });
+  eq('54 only real keys survive', JSON.stringify(cleaned), JSON.stringify({ 'upper/2': 'Semi', 'lower/10': 'Deep' }));
+  eq('54a ...and a stage that has none reads as an empty map', JSON.stringify(sanitiseStage({ name: 'X' }).roundLabels), '{}');
+  eq(
+    '54b a label survives a round trip through the stage sanitiser',
+    sanitiseStage({ name: 'X', roundLabels: { 'upper/3': 'Championship final' } }).roundLabels['upper/3'],
+    'Championship final',
+  );
 }
 
 

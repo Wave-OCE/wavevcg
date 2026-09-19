@@ -50,6 +50,8 @@ const board = document.getElementById('board');
 const draw = document.getElementById('draw');
 const links = document.getElementById('links');
 const nodes = document.getElementById('nodes');
+const bands = document.getElementById('bands');
+const roundLabels = document.getElementById('round-labels');
 const stageName = document.getElementById('stage-name');
 const eyebrow = document.getElementById('eyebrow');
 const eventLogo = document.getElementById('event-logo');
@@ -89,8 +91,50 @@ function el(tag, className, attrs = {}) {
   return node_;
 }
 
-const atX = (column) => column * COL_W;
-const atY = (row) => row * ROW_H;
+/*
+ * The room the headings take, in draw-space pixels.
+ *
+ * ARITHMETIC, like everything else about this sheet's size: a row of round
+ * names above the columns and a band name down the left both take space the
+ * layout does not otherwise reserve, and asking the DOM how tall a label is
+ * would mean measuring a page OBS renders while nothing is on screen.
+ *
+ * It flows into `drawW`/`drawH` and therefore into `bracketAutoFit`, which is
+ * already what keeps a sixteen-team double elimination inside a 1080 frame -
+ * so turning the headings on shrinks the fit rather than pushing the top row
+ * out through the header above it.
+ */
+const LABEL_H = 40;
+const BAND_W = 46;
+
+/*
+ * Only the ROUND headings cost the sheet anything.
+ *
+ * A band name hangs into the left margin instead - `#draw` sits 72px in from
+ * the frame's edge with nothing under the header on that side, and a band name
+ * down the gutter is where a draw sheet has always put one. Taking sheet width
+ * for it made a five-column draw run 46px further under the winner panel,
+ * which is the one collision this graphic already has a standing note about.
+ *
+ * The round headings cannot do the same, because the space ABOVE the sheet is
+ * where the stage name lives: a 40px label at a 2.15 fit reaches 86px up, and
+ * the header ends 72px above the sheet.
+ */
+const padOf = (state) => ({
+  x: 0,
+  y: state.showRoundLabels !== false && (state.rounds ?? []).length ? LABEL_H : 0,
+});
+
+/*
+ * The offsets the whole sheet is drawn at. Module-level rather than threaded
+ * through every helper because `atX`/`atY` are called from the node painter,
+ * the elbow painter and the SVG viewBox alike, and one of those forgetting to
+ * add the pad is a drawing whose links miss its boxes by 40px.
+ */
+let pad = { x: 0, y: 0 };
+
+const atX = (column) => pad.x + column * COL_W;
+const atY = (row) => pad.y + row * ROW_H;
 
 /** One match: two slots, each a crest, a name and a score. */
 function makeNode() {
@@ -128,6 +172,53 @@ function paintNode(node_, data, state) {
 
   // Reveal is by COLUMN: a round at a time is how a caster walks a bracket out.
   node_.classList.toggle('is-shown', data.column < state.reveal);
+}
+
+/**
+ * The headings: one per column, one per band.
+ *
+ * Rebuilt rather than reused because there are at most a dozen of them and
+ * they carry no animation of their own - the sheet they sit in animates, and
+ * `.is-shown` on a node is what walks a bracket out. A band name is rotated in
+ * the left gutter, which is where a draw sheet has always put one.
+ */
+function paintLabels(state) {
+  const wantRounds = state.showRoundLabels !== false ? (state.rounds ?? []) : [];
+  const wantBands = state.showBandLabels !== false && (state.bands ?? []).length > 1 ? (state.bands ?? []) : [];
+
+  roundLabels.replaceChildren(
+    ...wantRounds.map((entry) => {
+      const node_ = el('div', 'round-label');
+      node_.style.left = `${atX(entry.column)}px`;
+      /*
+       * Above its OWN band. The top band's heading lands in the reserved pad;
+       * a lower band's lands in the blank row bracketLayout leaves between the
+       * two, which is 92px of air for a 40px label.
+       */
+      node_.style.top = `${atY(entry.row ?? 0) - LABEL_H}px`;
+      node_.style.width = `${NODE_W}px`;
+      node_.style.height = `${LABEL_H}px`;
+      node_.textContent = (entry.label || '').toUpperCase();
+      // A heading belongs to the round it names, so it arrives with it.
+      node_.classList.toggle('is-shown', entry.column < state.reveal);
+      return node_;
+    }),
+  );
+
+  bands.replaceChildren(
+    ...wantBands.map((entry) => {
+      const node_ = el('div', 'band-label');
+      // Into the left margin, outside the sheet's own width - see padOf.
+      node_.style.left = `${-BAND_W}px`;
+      node_.style.top = `${atY(entry.row)}px`;
+      node_.style.width = `${BAND_W}px`;
+      // The band's own rows, less the air ROW_H leaves under the last one, so
+      // the rule beside it stops level with the bottom of the last box.
+      node_.style.height = `${Math.max(0, entry.rows * ROW_H - (ROW_H - NODE_H))}px`;
+      node_.textContent = (entry.label || '').toUpperCase();
+      return node_;
+    }),
+  );
 }
 
 /**
@@ -176,8 +267,8 @@ function paintLinks(state) {
     flow.style.opacity = on ? '' : '0';
   });
 
-  const width = (state.columns || 0) * COL_W;
-  const height = (state.rows || 0) * ROW_H;
+  const width = pad.x + (state.columns || 0) * COL_W;
+  const height = pad.y + (state.rows || 0) * ROW_H;
   links.setAttribute('width', String(width));
   links.setAttribute('height', String(height));
   links.setAttribute('viewBox', `0 0 ${width} ${height}`);
@@ -219,8 +310,8 @@ function paintLinks(state) {
  * width and the space reserved for it below is still right.
  */
 function placeDraw(state) {
-  const drawW = Math.max(0, (state.columns || 0) * COL_W - (COL_W - NODE_W));
-  const drawH = Math.max(0, (state.rows || 0) * ROW_H - (ROW_H - NODE_H));
+  const drawW = Math.max(0, pad.x + (state.columns || 0) * COL_W - (COL_W - NODE_W));
+  const drawH = Math.max(0, pad.y + (state.rows || 0) * ROW_H - (ROW_H - NODE_H));
 
   // Left edge, top band, bottom band, and what the winner panel takes.
   const LEFT = 72;
@@ -320,11 +411,19 @@ function render(state) {
   eventLogo.hidden = !logo;
   if (logo && eventLogoImg.getAttribute('src') !== logo) eventLogoImg.setAttribute('src', logo);
 
+  /*
+   * The pad is worked out BEFORE anything is placed, because `atX`/`atY` read
+   * it - the nodes, the elbows and the SVG viewBox all have to agree about
+   * where the origin is, and a helper that ran first would draw at the old one.
+   */
+  pad = padOf(state);
+
   const wanted = state.nodes ?? [];
   while (nodes.children.length < wanted.length) nodes.append(makeNode());
   while (nodes.children.length > wanted.length) nodes.lastElementChild.remove();
   wanted.forEach((data, index) => paintNode(nodes.children[index], data, state));
 
+  paintLabels(state);
   paintLinks(state);
   placeDraw(state);
   paintWinner(state);

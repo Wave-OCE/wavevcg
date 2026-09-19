@@ -235,11 +235,63 @@ export const DEFAULT_BRACKET_GRAPHIC = {
    */
   autoSize: true,
   drawScale: 1,
+
+  /*
+   * ------------------------------------------------------------- labels ----
+   *
+   * What each column and each band is CALLED, resolved at Load and copied in
+   * like everything else in this drawing. The output page must not know what a
+   * stage is, let alone how a round gets its name - that derivation lives in
+   * `schedule-schema.js` beside the thing it derives from.
+   *
+   * ROUNDS DEFAULT ON and BANDS DEFAULT OFF. A sheet whose columns are not
+   * named is one an audience has to count, and every broadcast bracket names
+   * them; a single elimination has one band and naming it is noise, which is
+   * also the answer to the question CLAUDE.md has had open since this graphic
+   * was built.
+   */
+  rounds: [],
+  bands: [],
+  showRoundLabels: true,
+  showBandLabels: false,
   anim: { visible: false, cue: 0 },
 };
 
 /** A bracket bigger than this is not a graphic, it is a spreadsheet. */
 export const BRACKET_NODE_LIMIT = 64;
+
+/**
+ * One round's heading: where it is, and what it says.
+ *
+ * A ROW as well as a column, which is the thing a screenshot caught and no
+ * amount of reading would have. Upper round 1 and lower round 1 are both
+ * COLUMN 0 - the lower bracket starts under the upper one, not to the right of
+ * it - so one heading per column painted them on top of each other and the
+ * sheet read "UPPEQUAR TERD 1NALS". Each band gets its own row of headings,
+ * which is what a real draw sheet does anyway.
+ */
+const roundMark = (input) => {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    column: whole(source.column, 0, 40, 0),
+    // `number`, not `whole`: a row here can be FRACTIONAL, because a grand
+    // final centres between the two bands rather than taking a row of its own -
+    // `bracketLayout` answers in abstract units and says so. Truncating it
+    // would put the heading half a row above where its match actually sits.
+    row: Math.max(0, number(source.row, 0)),
+    label: text(source.label, 40),
+  };
+};
+
+/** One band's heading: which rows it spans, and what it says. */
+const bandMark = (input) => {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    row: Math.max(0, number(source.row, 0)),
+    rows: Math.max(1, number(source.rows, 1)),
+    label: text(source.label, 40),
+  };
+};
 
 export function sanitiseBracketGraphic(input, fallback = DEFAULT_BRACKET_GRAPHIC) {
   const source = input && typeof input === 'object' ? input : {};
@@ -280,6 +332,25 @@ export function sanitiseBracketGraphic(input, fallback = DEFAULT_BRACKET_GRAPHIC
     // disables itself on upgrade is a nasty surprise.
     autoSize: typeof source.autoSize === 'boolean' ? source.autoSize : (base.autoSize ?? true),
     drawScale: multiplier(source.drawScale ?? base.drawScale, 1),
+    /*
+     * One heading per column and one per band, each capped at what a drawing
+     * can hold: a label with no column under it is a word floating over the
+     * sheet, and the node limit is already the answer to "how big can this be".
+     */
+    rounds: (Array.isArray(source.rounds) ? source.rounds : (base.rounds ?? []))
+      .slice(0, 40)
+      .map(roundMark)
+      .filter((entry) => entry.label),
+    bands: (Array.isArray(source.bands) ? source.bands : (base.bands ?? []))
+      .slice(0, BRACKET_HALVES_LIMIT)
+      .map(bandMark)
+      .filter((entry) => entry.label),
+    // Feature switches, so a record written before these existed reads as the
+    // default rather than as off - the asymmetry settings-schema.js states.
+    showRoundLabels:
+      typeof source.showRoundLabels === 'boolean' ? source.showRoundLabels : (base.showRoundLabels ?? true),
+    showBandLabels:
+      typeof source.showBandLabels === 'boolean' ? source.showBandLabels : (base.showBandLabels ?? false),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
       cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),
@@ -299,7 +370,10 @@ export function sanitiseBracketGraphic(input, fallback = DEFAULT_BRACKET_GRAPHIC
  * this file would otherwise pull the whole schedule schema into an output page
  * that has no other use for it.
  */
-export function bracketFromStage({ layout, stage, score, winnerOf }) {
+/** Upper, lower and the grand final. There is no fourth band to draw. */
+const BRACKET_HALVES_LIMIT = 3;
+
+export function bracketFromStage({ layout, stage, score, winnerOf, roundLabel, bandLabel }) {
   if (!layout) return null;
 
   const decided = new Map();
@@ -339,6 +413,21 @@ export function bracketFromStage({ layout, stage, score, winnerOf }) {
     });
   });
 
+  /*
+   * The names, RESOLVED HERE and copied into the drawing.
+   *
+   * `roundLabel` and `bandLabel` are handed in rather than imported, for the
+   * reason `score` and `winnerOf` already are: this file is loaded by an output
+   * page that has no other use for the schedule's schema, and importing it to
+   * name a column would pull the whole competition model onto a browser source.
+   *
+   * One entry per column and one per band. A band whose label is blank is
+   * dropped by the sanitiser rather than drawn empty.
+   */
+  const bands = layout.bands ?? [];
+  // Which row each band starts on, so a round heading can sit above its OWN
+  // band rather than above whatever else shares its column.
+  const topOf = new Map(bands.map((entry) => [entry.half, entry.topRow]));
   return {
     stageId: stage?.id ?? '',
     stageName: stage?.name ?? '',
@@ -346,6 +435,16 @@ export function bracketFromStage({ layout, stage, score, winnerOf }) {
     rows: layout.rows,
     nodes,
     links,
+    rounds: (layout.rounds ?? []).map((entry) => ({
+      column: entry.column,
+      row: topOf.get(entry.half) ?? 0,
+      label: roundLabel ? roundLabel(stage, { ...entry, bands: bands.length }) : '',
+    })),
+    bands: bands.map((entry) => ({
+      row: entry.topRow,
+      rows: entry.rows,
+      label: bandLabel ? bandLabel(entry.half, bands.length) : '',
+    })),
   };
 }
 
@@ -359,7 +458,7 @@ export function bracketFromStage({ layout, stage, score, winnerOf }) {
 export function bracketIsStale(state, fresh) {
   if (!state?.stageId || !fresh || state.stageId !== fresh.stageId) return false;
   const shape = (value) =>
-    JSON.stringify(
+    JSON.stringify([
       (value.nodes ?? []).map((entry) => [
         entry.id,
         entry.left?.name ?? '',
@@ -368,7 +467,12 @@ export function bracketIsStale(state, fresh) {
         entry.right?.score ?? 0,
         entry.winner ?? '',
       ]),
-    );
+      // A renamed round IS something the audience can see, unlike a renamed
+      // stage - so it lights the badge. The rule is "what the graphic SHOWS",
+      // and this graphic shows these.
+      (value.rounds ?? []).map((entry) => [entry.column, entry.label]),
+      (value.bands ?? []).map((entry) => [entry.row, entry.label]),
+    ]);
   return shape(state) !== shape(fresh);
 }
 

@@ -527,11 +527,24 @@ try {
     fixture: { ...seasonOne.find((f) => f.round === 1), maps: [{ map: 'Ascent', left: 13, right: 4 }, { map: 'Bind', left: 13, right: 8 }] },
   }));
 
+  /*
+   * A ROUND'S NAME IS SHAPE, so it copies. The same argument that carries the
+   * format, the groups and the edges: "Championship final" is a fact about how
+   * this competition is laid out, not about who played in it.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'season-one', name: 'Season one', kind: 'bracket', bestOf: 3, roundLabels: { 'upper/2': 'Championship final' } },
+  }));
+  const withLabels = (await boss(here('/api/schedule'))).json.schedule.stages.find((entry) => entry.id === 'season-one');
+  ok('25c1. a round label survives the route', withLabels?.roundLabels?.['upper/2'] === 'Championship final', JSON.stringify(withLabels?.roundLabels));
+
   r = await boss(here('/api/schedule'), json({ action: 'stage.duplicate', id: 'season-one', name: 'Season two' }));
   const copy = r.json.schedule.stages.find((entry) => entry.name === 'Season two');
   const copied = r.json.schedule.fixtures.filter((f) => f.stageId === copy?.id);
   ok('25d2. duplicating makes a new stage', Boolean(copy) && copy.id !== 'season-one', JSON.stringify(copy));
   ok('25d3. ...with the same format and series', copy.kind === 'bracket' && copy.bestOf === 3, JSON.stringify(copy));
+  ok('25d3a. ...and the names its rounds were given', copy.roundLabels?.['upper/2'] === 'Championship final', JSON.stringify(copy.roundLabels));
   ok('25d4. ...and the same number of matches', copied.length === seasonOne.length, `${copied.length} vs ${seasonOne.length}`);
   ok(
     '25d5. ...in the same places in the draw',

@@ -55,6 +55,7 @@ import { lineupFromTeam } from './public/lineup-schema.js';
 import { halfFromTeam, headToHeadFromFixture } from './public/headtohead-schema.js';
 import { bracketFromStage } from './public/bracket-graphic-schema.js';
 import {
+  BAND_LABELS,
   bracketLayout,
   emptyMapRow,
   fixtureLabel,
@@ -64,6 +65,7 @@ import {
   fixturePatch,
   fixturesFedBy,
   nextMapIndex,
+  roundLabel,
   roundRobinPairs,
   sanitiseFixture,
   sanitiseMapRow,
@@ -6499,6 +6501,17 @@ async function handlePost(pathname, req, res, ctx, params) {
             stage,
             score: fixtureScore,
             winnerOf: fixtureWinner,
+            // Handed in rather than imported by the schema, which is loaded by
+            // an output page that must not pull the competition model with it.
+            roundLabel,
+            /*
+             * Upper above lower is the universal convention, so a SINGLE
+             * elimination has nothing to disambiguate - it gets no band name at
+             * all rather than one saying "Upper bracket" over the only bracket
+             * there is. The switch on the graphic is off by default for the
+             * same reason; this is what makes turning it on harmless.
+             */
+            bandLabel: (half, bands) => (bands > 1 ? (BAND_LABELS[half] ?? '') : ''),
           });
           if (!drawing.nodes.length) {
             throw new ProviderError(400, 'That stage has no matches to draw.', 'Add fixtures to it first.');

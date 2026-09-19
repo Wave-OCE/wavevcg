@@ -1280,7 +1280,7 @@ try {
       footOutside: Boolean(document.querySelector('.rl-modal > .rl-modal-foot')),
     };
   });
-  ok('27g1c. the stage editor is tabbed', tabShape.tabs.length === 3, JSON.stringify(tabShape));
+  ok('27g1c. the stage editor is tabbed', tabShape.tabs.length === 4, JSON.stringify(tabShape));
   ok(
     '27g1d. ...every tab names a pane and every pane has a tab',
     JSON.stringify(tabShape.tabs) === JSON.stringify(tabShape.panes),
@@ -1903,8 +1903,13 @@ try {
    * which on the unwired bracket this control exists to build is every match -
    * so the blank option read "Winner of Fixture" and said nothing at all.
    * Caught in a break's failure detail rather than by an assertion.
+   *
+   * And the place is the round's NAME, not its number. This stage is two
+   * rounds of one match, so counting back from the end makes round 1 the
+   * semi-final - which is also what the picker offered it as, and what the
+   * bracket graphic will print over that column.
    */
-  ok('27x10a. ...by where that match sits in the draw', /Winner of Round 1, match 1/.test(wired.blank), JSON.stringify(wired));
+  ok('27x10a. ...by where that match sits in the draw', /Winner of Semi-finals, match 1/.test(wired.blank), JSON.stringify(wired));
   /*
    * The copied team goes when the edge arrives, because under an edge the copy
    * is DERIVED and `propagate` owns it. A hand-picked name left sitting in a
@@ -1983,6 +1988,98 @@ try {
     Boolean(flowed.left?.source) && Boolean(flowed.right?.source),
     JSON.stringify([flowed.left?.source, flowed.right?.source]),
   );
+
+  /*
+   * ========================= WHAT EACH ROUND IS CALLED =====================
+   *
+   * `roundName` used to answer where a round SITS - "Round 1", "Upper round 2"
+   * - and the bracket graphic had nothing at all, so a sheet on air never said
+   * which round anything was. The names are derived by counting back from the
+   * last round of a half, which is the schedule's own "nothing derivable is
+   * stored" rule; only an override is kept.
+   *
+   * This stage is two rounds of one match, so the derivation makes round 1 the
+   * semi-final and round 2 the final.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await stageTab('rounds');
+  const roundsTab = await page.evaluate(() => {
+    const pane = document.querySelector('.rl-modal-pane[data-pane="rounds"]');
+    const boxes = [...(pane?.querySelectorAll('input[type=text]') ?? [])];
+    return {
+      pane: Boolean(pane),
+      rows: boxes.length,
+      values: boxes.map((b) => b.value),
+      placeholders: boxes.map((b) => b.placeholder),
+      labels: [...(pane?.querySelectorAll('.g-field > span') ?? [])].map((n) => n.textContent),
+    };
+  });
+  ok('27y1. the stage editor has a Rounds tab', roundsTab.pane, JSON.stringify(roundsTab));
+  ok('27y2. ...with a row per round the stage actually has', roundsTab.rows === 2, String(roundsTab.rows));
+  /*
+   * EVERY BOX STARTS EMPTY, and the derived name is the PLACEHOLDER.
+   *
+   * A box pre-filled with the derived name would turn every round an operator
+   * merely looked at into a stored override - which then stops following the
+   * draw the moment a round is added in front of it. Blank means "the derived
+   * one", the same thing a blank accent means about the event's colour.
+   */
+  ok('27y3. ...every box empty, because blank means the derived name', roundsTab.values.join('|') === '|', JSON.stringify(roundsTab.values));
+  ok('27y4. ...which is shown as the placeholder instead', roundsTab.placeholders.join(' | ') === 'Semi-finals | Final', JSON.stringify(roundsTab.placeholders));
+  /*
+   * Labelled by WHERE the round is, not by what it is called: the name is the
+   * thing being edited, so using it as the field label would leave two copies
+   * of it side by side with one going stale the moment anybody typed.
+   */
+  ok('27y5. ...and each row says which round it is', roundsTab.labels.join(' | ') === 'Round 1 | Round 2', JSON.stringify(roundsTab.labels));
+
+  await page.fill('.rl-modal-pane[data-pane="rounds"] input[type=text] >> nth=0', 'Championship semi');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1100);
+
+  const storedLabels = await page.evaluate(async () => {
+    const doc = (await (await fetch('/api/schedule')).json()).schedule;
+    return doc.stages.find((entry) => entry.name === 'Wiring')?.roundLabels ?? null;
+  });
+  ok(
+    '27y6. a typed name is stored under its own key',
+    JSON.stringify(storedLabels) === JSON.stringify({ 'upper/1': 'Championship semi' }),
+    JSON.stringify(storedLabels),
+  );
+  ok('27y7. ...and ONLY that one, so the rest keep following the draw', Object.keys(storedLabels).length === 1, JSON.stringify(storedLabels));
+
+  // And the page reads it back: the match editor's subtitle is `roundName`.
+  await openMatchRow(0);
+  const subtitle = await page.textContent('.sch-modal-sub');
+  await page.keyboard.press('Escape');
+  await wait(400);
+  ok('27y8. the page calls that round by the name it was given', subtitle === 'Championship semi', String(subtitle));
+
+  /*
+   * Clearing the box is how an operator goes back to the derived name - there
+   * is deliberately no "inherit?" tick beside it, for the reason a blank accent
+   * has none: a tick-box beside a name that still shows a name is two controls
+   * saying one thing.
+   *
+   * TWO THINGS have to hold for this and the assertion below can only see the
+   * second: the form drops the key, and `sanitiseRoundLabels` refuses a blank
+   * value whatever the form sent. A deliberate break of the form alone stayed
+   * green here because the server caught it - which is the right outcome and
+   * the wrong thing to claim, so this says which one it is pinning. The form's
+   * half is pinned in schedule-model, on the sanitiser.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await stageTab('rounds');
+  await page.fill('.rl-modal-pane[data-pane="rounds"] input[type=text] >> nth=0', '');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1100);
+  const cleared = await page.evaluate(async () => {
+    const doc = (await (await fetch('/api/schedule')).json()).schedule;
+    return doc.stages.find((entry) => entry.name === 'Wiring')?.roundLabels ?? null;
+  });
+  ok('27y9. clearing the box takes the override away rather than storing a blank', JSON.stringify(cleared) === '{}', JSON.stringify(cleared));
 
   /*
    * A STAGE THAT HIDES THE ROW STILL SHOWS AN EDGE THAT EXISTS.
