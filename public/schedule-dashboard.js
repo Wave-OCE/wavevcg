@@ -47,6 +47,7 @@ import {
   MAX_GROUPS,
   BRACKET_HALVES,
   STAGE_KINDS,
+  STAGE_TEMPLATES,
   emptyMapRow,
   fixtureLabel,
   fixtureScore,
@@ -120,7 +121,31 @@ if (host) {
   // ------------------------------------------------------------ the stages ---
 
   const stageOf = (id) => doc.stages.find((entry) => entry.id === id) ?? null;
-  const fixturesIn = (id) => doc.fixtures.filter((fixture) => fixture.stageId === id);
+  /*
+   * A stage's matches, in the order a person reads a draw.
+   *
+   * Upper bracket, then lower, then the grand final; within each, by round and
+   * then by slot. The document's own order is whatever they were written in,
+   * which was harmless while the only way to build a bracket was `generate`
+   * laying out one round of one half - and became visibly wrong the moment a
+   * template could produce all three. A grand final at the top of the list
+   * under its own heading, with the first round beneath it, is a draw nobody
+   * can read.
+   *
+   * `BRACKET_HALVES` is the order, taken from the schema rather than written
+   * out here: it is already `['upper', 'lower', 'final']` because that is the
+   * order they happen in, and a second copy of that fact is one edit from
+   * disagreeing with the layout the graphic draws from.
+   */
+  const fixturesIn = (id) =>
+    doc.fixtures
+      .filter((fixture) => fixture.stageId === id)
+      .sort(
+        (a, b) =>
+          BRACKET_HALVES.indexOf(a.bracket) - BRACKET_HALVES.indexOf(b.bracket) ||
+          (a.round ?? 0) - (b.round ?? 0) ||
+          (a.slot ?? 0) - (b.slot ?? 0),
+      );
 
   function stageStrip() {
     const row = el('div', 'sch-stages');
@@ -311,6 +336,74 @@ if (host) {
       });
     });
 
+    /*
+     * A WHOLE STAGE FROM A TEMPLATE, wired.
+     *
+     * The thing an operator actually wants at eight in the morning: "this is a
+     * sixteen-team double elimination", not thirty matches added a round at a
+     * time and fifty-eight edges drawn by hand. The shapes are in the schema;
+     * this is the press.
+     *
+     * It REPLACES, so it takes the same bar as deleting the stage once there is
+     * anything to lose - the exact name typed back. Its own box rather than
+     * sharing Delete's: two destructive buttons armed by one field is a mis-aim
+     * away from the wrong one, which is the reason the two are at opposite ends
+     * of the footer in the first place. Different section, different label,
+     * different button.
+     */
+    const templatePick = el('select', null, { 'aria-label': 'Template' });
+    for (const entry of STAGE_TEMPLATES) {
+      templatePick.append(el('option', null, { value: entry.key }, entry.label));
+    }
+    const templateHelp = help('');
+    const templateGroups = el('input', null, { type: 'number', min: '1', max: '16', value: '1', 'aria-label': 'Groups' });
+    const templateGroupsField = field('Groups', templateGroups);
+
+    const lay = el(
+      'button',
+      'btn btn-small',
+      { type: 'button' },
+      held ? `Replace ${held} match${held === 1 ? '' : 'es'} and lay out` : 'Lay this stage out',
+    );
+
+    let layTyped = null;
+    if (held) {
+      layTyped = el('input', null, { type: 'text', placeholder: stage.name, 'aria-label': 'Type the stage name to replace the matches' });
+      lay.disabled = true;
+      layTyped.addEventListener('input', () => {
+        lay.disabled = layTyped.value.trim() !== String(stage.name ?? '').trim();
+      });
+    }
+
+    const syncTemplate = () => {
+      const entry = STAGE_TEMPLATES.find((e) => e.key === templatePick.value);
+      templateHelp.textContent = entry?.help ?? '';
+      // Groups are a round-robin idea. A number box beside a bracket template
+      // is a control that does nothing, on a form somebody is reading fast.
+      templateGroupsField.hidden = entry?.key !== 'roundrobin';
+    };
+    templatePick.addEventListener('change', syncTemplate);
+    syncTemplate();
+
+    lay.addEventListener('click', () => {
+      const teams = askForTeams(stage, templatePick.value);
+      if (!teams) return;
+      act(
+        {
+          action: 'template.apply',
+          stageId: stage.id,
+          template: templatePick.value,
+          teams,
+          groups: Number.parseInt(templateGroups.value, 10) || 1,
+          confirm: layTyped ? layTyped.value.trim() : undefined,
+        },
+        () => {
+          toast(`Laid "${stage.name}" out`);
+          dialog?.close();
+        },
+      );
+    });
+
     const gen = el('button', 'btn btn-small', { type: 'button' }, 'Save and generate matches');
     gen.addEventListener('click', () => {
       if (!String(draft.name ?? '').trim()) {
@@ -472,6 +565,16 @@ if (host) {
       ),
       stageRow([gen]),
       stageRow([field('Matches in the round', roundCount), ...(roundGroup ? [field('In', roundGroup)] : []), addRound]),
+      el('div', 'subhead', {}, 'Lay it out from a template'),
+      help(
+        'The whole stage in one press, WIRED - every winner carries forward on its own, and in a double ' +
+          'elimination every loser drops into the lower bracket. This REPLACES whatever is in the stage, which is ' +
+          'why it asks for the name once there is anything to lose.',
+      ),
+      grid(2, [field('Template', templatePick), templateGroupsField]),
+      templateHelp,
+      ...(layTyped ? [field('Type the name to replace them', layTyped)] : []),
+      stageRow([lay]),
       el('div', 'subhead', {}, 'Delete'),
       help(
         held
@@ -508,6 +611,41 @@ if (host) {
    * removes the fixtures and sees how many they are removing. The server
    * enforces the same thing.
    */
+  /**
+   * Which teams are in it, asked once.
+   *
+   * Shared by Generate and by the templates so the two cannot come to disagree
+   * about what an operator typed - and so the list of names they are matched
+   * against is the same list in both places. Returns null when the operator
+   * backed out, which is different from an empty answer.
+   */
+  function askForTeams(stage, what) {
+    if (library.length < 2) {
+      toast('Add at least two teams to the library first.');
+      return null;
+    }
+    const picked = window.prompt(
+      `Which teams are in "${stage.name}"${what ? ` for a ${what} draw` : ''}?\n\n` +
+        `Comma-separated, from the library:\n${library.map(teamLabel).join(', ')}\n\n` +
+        'The ORDER is the seeding - the first name is seed one.',
+      library.map(teamLabel).join(', '),
+    );
+    if (picked === null) return null;
+
+    const wanted = picked
+      .split(',')
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean)
+      .map((name) => library.find((team) => teamLabel(team).toLowerCase() === name || team.name.toLowerCase() === name))
+      .filter(Boolean);
+
+    if (wanted.length < 2) {
+      toast('Could not match at least two teams to the library.');
+      return null;
+    }
+    return wanted.map(asSlot);
+  }
+
   /**
    * Lay a stage - or ONE GROUP of it - out from the team library.
    *
@@ -582,10 +720,20 @@ if (host) {
     for (const bucket of listBuckets(stage, rows)) {
       if (bucket.name) list.append(el('h3', 'sch-group-head', {}, bucket.name));
 
-      let lastRound = null;
+      /*
+       * The heading changes when the HALF changes as well as the round.
+       *
+       * Watching the round alone put the whole of a double elimination under
+       * one heading: the grand final is round 1 of the `final` half, upper
+       * round 1 is round 1 too, and the first fixture through the loop won the
+       * heading for all of them. Keyed on both, which is also what `roundName`
+       * already reads.
+       */
+      let lastHead = null;
       for (const fixture of bucket.rows) {
-        if (fixture.round !== lastRound) {
-          lastRound = fixture.round;
+        const head = `${fixture.bracket}/${fixture.round}`;
+        if (head !== lastHead) {
+          lastHead = head;
           list.append(el('h3', 'sch-round', {}, roundName(stage, fixture)));
         }
         list.append(fixtureRow(fixture));

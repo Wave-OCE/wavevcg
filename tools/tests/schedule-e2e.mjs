@@ -317,6 +317,103 @@ try {
   r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'twin-pools', group: 'nope', count: 2 }));
   ok('r15. ...and so is a group that does not', r.status === 400, r.text.slice(0, 120));
 
+
+  // ======================================================== the templates =====
+  /*
+   * The SHAPE is `buildTemplate`, a pure function asserted in schedule-model
+   * with no server at all. What is here is the half that needs a store: minting
+   * an id per match and swapping every `ref` for one, so that what reaches disk
+   * is a document whose edges name real fixtures.
+   *
+   * That swap is the part that can silently half-work. A ref resolved to
+   * nothing leaves a dangling edge, `apply` refuses the WHOLE write, and the
+   * message an operator gets is about an edge rather than about the template
+   * they just pressed.
+   */
+  await boss(here('/api/schedule'), json({ action: 'stage.save', stage: { name: 'Main event', kind: 'bracket', bestOf: 3 } }));
+  const eight = Array.from({ length: 8 }, (_, i) => ({ name: `Seed ${i + 1}` }));
+
+  r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'double', teams: eight }));
+  ok('t1. a template lays a stage out', r.status === 200, r.text.slice(0, 200));
+
+  let main = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'main-event');
+  ok('t2. ...as the whole draw, not one round', main.length === 14, String(main.length));
+  ok('t3. ...across both halves and a grand final', new Set(main.map((f) => f.bracket)).size === 3, JSON.stringify([...new Set(main.map((f) => f.bracket))]));
+
+  /*
+   * EVERY EDGE NAMES A REAL FIXTURE. This is the assertion the ref-to-id swap
+   * exists for, and it is asked of the whole document rather than spot-checked
+   * - one dangling edge is one match that never fills in, and it would be found
+   * in the semi-final.
+   */
+  const ids = new Set(main.map((f) => f.id));
+  const edges = main.flatMap((f) => [f.left?.source?.fixtureId, f.right?.source?.fixtureId].filter(Boolean));
+  ok('t4. every edge names a match that exists', edges.length > 0 && edges.every((id) => ids.has(id)), JSON.stringify(edges.filter((id) => !ids.has(id))));
+  ok('t5. ...and there are as many as the shape needs', edges.length === (14 - 4) * 2, String(edges.length));
+  ok('t6. ...with losers wired as well as winners', main.some((f) => f.left?.source?.take === 'loser' || f.right?.source?.take === 'loser'), 'no loser edges');
+
+  /*
+   * A WINNER CARRIES ITSELF FORWARD. The whole reason to wire a bracket rather
+   * than type it: a result filed in round one fills in round two with nobody
+   * touching it. `propagate` does the work; this is the assertion that the
+   * template gave it something to work with.
+   */
+  const r1 = main.filter((f) => f.round === 1 && f.bracket === 'upper').sort((a, b) => a.slot - b.slot);
+  await boss(here('/api/schedule'), json({
+    action: 'result',
+    id: r1[0].id,
+    maps: [{ name: 'Ascent', left: 13, right: 8 }, { name: 'Bind', left: 13, right: 4 }],
+  }));
+  main = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'main-event');
+  const semi = main.find((f) => f.bracket === 'upper' && f.round === 2 && f.left?.source?.fixtureId === r1[0].id);
+  ok('t7. a result carries the winner into the next round', semi?.left?.name === r1[0].left.name, JSON.stringify({ want: r1[0].left.name, got: semi?.left?.name }));
+  const drop = main.find((f) => f.bracket === 'lower' && (f.left?.source?.fixtureId === r1[0].id || f.right?.source?.fixtureId === r1[0].id));
+  const dropped = drop?.left?.source?.fixtureId === r1[0].id ? drop?.left : drop?.right;
+  ok('t8. ...and the loser into the lower bracket', dropped?.name === r1[0].right.name, JSON.stringify({ want: r1[0].right.name, got: dropped?.name }));
+
+  /*
+   * IT REPLACES, behind the same bar as deleting the stage. "Lay this out as a
+   * double elimination" is a statement about the whole stage, and a template
+   * folded into existing matches produces a shape that is neither.
+   */
+  r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'single', teams: eight }));
+  ok('t9. laying out over existing matches is not done on the bare ask', r.status === 400, r.text.slice(0, 200));
+  ok('t10. ...and says nothing has changed', /nothing has been changed/i.test(r.json?.error?.hint ?? ''), JSON.stringify(r.json?.error));
+  ok('t11. ...leaving the draw alone', (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'main-event').length === 14);
+
+  r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'single', teams: eight, confirm: 'Main event' }));
+  ok('t12. the exact name lays it out again', r.status === 200, r.text.slice(0, 200));
+  main = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'main-event');
+  ok('t13. ...as the new shape', main.length === 7, String(main.length));
+  ok('t14. ...with nothing of the old one left', main.every((f) => f.bracket === 'upper'), JSON.stringify([...new Set(main.map((f) => f.bracket))]));
+
+  /*
+   * A ROUND ROBIN TEMPLATE CHANGES WHAT THE STAGE IS. A pool of matches on a
+   * stage still marked "bracket" would draw a bracket of them.
+   */
+  r = await boss(here('/api/schedule'), json({
+    action: 'template.apply',
+    stageId: 'main-event',
+    template: 'roundrobin',
+    teams: eight,
+    groups: 2,
+    confirm: 'Main event',
+  }));
+  ok('t15. a round robin template applies', r.status === 200, r.text.slice(0, 200));
+  const templated = (await boss(here('/api/schedule'))).json.schedule;
+  const mainStage = templated.stages.find((e) => e.id === 'main-event');
+  ok('t16. ...and the stage becomes a round robin', mainStage.kind === 'roundrobin', mainStage.kind);
+  ok('t17. ...carrying the groups it made', mainStage.groups.map((g) => g.name).join(',') === 'Group A,Group B', JSON.stringify(mainStage.groups));
+  const pooled = templated.fixtures.filter((f) => f.stageId === 'main-event');
+  ok('t18. ...eight teams in two pools is twelve matches', pooled.length === 12, String(pooled.length));
+  ok('t19. ...every one of them in a group', pooled.every((f) => f.group), JSON.stringify(pooled.map((f) => f.group)));
+
+  r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'nonsense', teams: eight, confirm: 'Main event' }));
+  ok('t20. an unknown template is refused', r.status === 400, r.text.slice(0, 120));
+  ok('t21. ...and says which there are', /single/.test(r.json?.error?.hint ?? ''), JSON.stringify(r.json?.error));
+  r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'single', teams: [{ name: 'Alone' }], confirm: 'Main event' }));
+  ok('t22. one team is not a draw', r.status === 400, r.text.slice(0, 120));
+
   // ---------------------------------------------------------- the results ---
 
   const first = (await boss(here('/api/schedule'))).json.schedule.fixtures[0];

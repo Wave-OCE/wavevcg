@@ -69,6 +69,9 @@ import {
   sanitiseMapRow,
   sanitiseSlot,
   sanitiseStage,
+  buildTemplate,
+  STAGE_TEMPLATES,
+  STAGE_TEMPLATE_KEYS,
   slotFilled,
 } from './public/schedule-schema.js';
 import { makeTrackerBrowser } from './browser.js';
@@ -2339,6 +2342,108 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
         }),
       );
 
+    /*
+     * A WHOLE STAGE, laid out and wired.
+     *
+     * `generate` does round one of a single elimination and the whole of a
+     * round robin, and stops. Everything after round one had to be added by
+     * hand and then WIRED by hand, one source edge per slot: a sixteen-team
+     * double elimination is thirty matches and fifty-eight edges, and an
+     * operator doing that before doors gets one wrong. A wrong edge is the
+     * worst kind of wrong here - it carries the right team into the wrong
+     * match, silently, and the semi-final is what tells you.
+     *
+     * The SHAPE is `buildTemplate`, a pure function in the schema with no ids
+     * and no store in it, driven by schedule-model with no server at all. What
+     * this does is the half that needs a store: mint an id per fixture and swap
+     * every `ref` for one.
+     *
+     * It REPLACES the stage rather than adding to it, because "lay this out as
+     * a double elimination" is a statement about the whole stage and a template
+     * folded into existing matches produces a shape that is neither. So it
+     * takes the same bar as deleting the stage: the exact name typed back once
+     * there is anything to lose. Empty asks nothing.
+     */
+    case 'template.apply':
+      return out(
+        schedule.apply((draft) => {
+          const stage = draft.stages.find((entry) => entry.id === String(body?.stageId ?? ''));
+          if (!stage) throw badRequest('No such stage.');
+
+          const template = STAGE_TEMPLATES.find((entry) => entry.key === String(body?.template ?? ''));
+          if (!template) {
+            throw badRequest('No such template.', `One of: ${STAGE_TEMPLATE_KEYS.join(', ')}.`);
+          }
+
+          const seats = (Array.isArray(body?.teams) ? body.teams : []).map(sanitiseSlot).filter(slotFilled);
+          if (seats.length < 2) throw badRequest('Pick at least two teams.');
+
+          const holding = draft.fixtures.filter((entry) => entry.stageId === stage.id);
+          if (holding.length) {
+            const typed = String(body?.confirm ?? '').trim();
+            if (!typed || typed !== String(stage.name ?? '').trim()) {
+              throw badRequest(
+                `"${stage.name}" already holds ${holding.length} match${holding.length === 1 ? '' : 'es'}, and laying it out again replaces them.`,
+                `Type "${stage.name}" exactly to confirm. Nothing has been changed.`,
+              );
+            }
+          }
+
+          let built;
+          try {
+            built = buildTemplate({
+              template: template.key,
+              teams: seats,
+              bestOf: stage.bestOf,
+              groups: Number.parseInt(body?.groups, 10) || 1,
+            });
+          } catch (error) {
+            throw badRequest(error.message);
+          }
+
+          /*
+           * Every ref gets an id BEFORE anything is wired, because an edge can
+           * name a match that comes later in the list - the grand final points
+           * at a lower-bracket round built after it. One pass to mint, one to
+           * resolve.
+           */
+          const ids = new Map(built.fixtures.map((fixture) => [fixture.ref, schedule.mintId()]));
+          const slotOf = (slot) => {
+            if (!slot) return {};
+            if (!slot.source) return slot;
+            const fixtureId = ids.get(slot.source.ref);
+            // An edge naming a ref that was never built is dropped rather than
+            // written as a dangling one - `apply` would refuse the whole
+            // document for it, and the message would be about an edge rather
+            // than about the template.
+            return fixtureId ? { source: { fixtureId, take: slot.source.take } } : {};
+          };
+
+          const made = built.fixtures.map((fixture) =>
+            sanitiseFixture({
+              id: ids.get(fixture.ref),
+              stageId: stage.id,
+              group: fixture.group ?? '',
+              round: fixture.round,
+              slot: fixture.slot,
+              bracket: fixture.bracket,
+              bestOf: fixture.bestOf,
+              left: slotOf(fixture.left),
+              right: slotOf(fixture.right),
+            }),
+          );
+
+          draft.fixtures = draft.fixtures.filter((entry) => entry.stageId !== stage.id);
+          draft.fixtures.push(...made);
+
+          // The stage becomes what the template says it is - a round robin
+          // template on a stage still marked "bracket" would draw a bracket of
+          // pool matches.
+          stage.kind = template.kind;
+          if (built.groups.length) stage.groups = built.groups;
+        }),
+      );
+
     case 'fixture.save':
       return out(
         schedule.apply((draft) => {
@@ -2498,7 +2603,7 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
       throw new ProviderError(
         400,
         'Unknown schedule action.',
-        'One of: stage.save, stage.remove, round.add, fixture.save, fixture.remove, result, move, generate.',
+        'One of: stage.save, stage.remove, round.add, template.apply, fixture.save, fixture.remove, result, move, generate.',
       );
   }
 }

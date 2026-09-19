@@ -1252,6 +1252,107 @@ try {
   await wait(800);
   ok('27p2. the bracket stage is showing again', await page.isVisible('#sch-body .sch-bracket'), 'left on the wrong stage');
 
+  // ================================================ laying a stage out ======
+  /*
+   * The SHAPE of every template is asserted in schedule-model and its write in
+   * schedule-e2e, both with no browser. What is here is the operator's own
+   * path: the picker exists, the groups box appears only for the one idea it
+   * belongs to, and a stage holding matches will not be replaced until its name
+   * is typed.
+   *
+   * On a fresh EMPTY stage, so nothing above it moves.
+   */
+  await page.click('#sch-body button:has-text("Add stage")');
+  await wait(900);
+  await page.fill('.rl-modal input[type=text]', 'Main draw');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(900);
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+
+  const offered = await page.$$eval('.rl-modal select[aria-label="Template"] option', (nodes) => nodes.map((n) => n.value));
+  ok('27q. the three templates are offered', offered.join(',') === 'single,double,roundrobin', JSON.stringify(offered));
+
+  /*
+   * The groups box belongs to ONE of them. A number input beside a bracket
+   * template is a control that does nothing, on a form somebody reads fast.
+   */
+  const groupsHidden = async () => page.evaluate(() => document.querySelector('.rl-modal input[aria-label="Groups"]')?.closest('.g-field')?.hidden);
+  ok('27r. the groups box is hidden for a bracket template', (await groupsHidden()) === true, String(await groupsHidden()));
+  await page.selectOption('.rl-modal select[aria-label="Template"]', 'roundrobin');
+  await wait(200);
+  ok('27s. ...and appears for a round robin', (await groupsHidden()) === false, String(await groupsHidden()));
+
+  /*
+   * An EMPTY stage asks for nothing: there is nothing to lose, and asking
+   * anyway trains the answer out of somebody for the case that matters.
+   */
+  const emptyGate = await page.evaluate(() => ({
+    typed: Boolean(document.querySelector('.rl-modal input[aria-label="Type the stage name to replace the matches"]')),
+    disabled: [...document.querySelectorAll('.rl-modal button')].find((b) => /Lay this stage out/.test(b.textContent))?.disabled,
+  }));
+  ok('27t. an empty stage is laid out with no confirmation', emptyGate.typed === false && emptyGate.disabled === false, JSON.stringify(emptyGate));
+
+  /*
+   * The team names come from the LIBRARY as it stands rather than from
+   * literals: the blocks above this one have added and renamed teams, and a
+   * hard-coded pair here fails as "laying it out makes the draw" when what
+   * actually happened is that nothing matched the library.
+   */
+  const pickable = await page.evaluate(async () => {
+    const payload = await (await fetch('/api/teams')).json();
+    return (payload.teams ?? []).map((team) => team.name);
+  });
+  ok('27t2. there are teams to draw from', pickable.length >= 2, JSON.stringify(pickable));
+
+  await page.selectOption('.rl-modal select[aria-label="Template"]', 'double');
+  page.once('dialog', (d) => d.accept(pickable.slice(0, 2).join(', ')));
+  await page.click('.rl-modal button:has-text("Lay this stage out")');
+  await wait(1400);
+  ok('27u. laying it out makes the draw', (await page.$$('#sch-body .sch-fixture')).length >= 1, String((await page.$$('#sch-body .sch-fixture')).length));
+
+  /*
+   * And now it holds matches, so doing it again wants the name. The button is
+   * disabled until it matches, so the confirmation is visible BEFORE the click
+   * - the same shape Delete uses, in its own section with its own box, because
+   * two destructive buttons armed by one field is a mis-aim away from the wrong
+   * one.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  const fullGate = await page.evaluate(() => {
+    const box = document.querySelector('.rl-modal input[aria-label="Type the stage name to replace the matches"]');
+    const button = [...document.querySelectorAll('.rl-modal button')].find((b) => /Replace .* and lay out/.test(b.textContent));
+    return { hasBox: Boolean(box), disabled: button?.disabled, label: button?.textContent ?? '' };
+  });
+  ok('27v. a stage with matches asks before being laid out again', fullGate.hasBox === true, JSON.stringify(fullGate));
+  ok('27w. ...saying how many it would replace', /Replace 1 match/.test(fullGate.label), fullGate.label);
+  ok('27x. ...with the button disabled until the name matches', fullGate.disabled === true, JSON.stringify(fullGate));
+
+  await page.fill('.rl-modal input[aria-label="Type the stage name to replace the matches"]', 'Main draw');
+  await wait(200);
+  ok(
+    '27y. ...and armed once it does',
+    await page.evaluate(() => [...document.querySelectorAll('.rl-modal button')].find((b) => /Replace .* and lay out/.test(b.textContent))?.disabled === false),
+  );
+
+  /*
+   * TWO BOXES, TWO BUTTONS, and they must not be the same one. Delete and
+   * re-layout both destroy results; arming one from the other's field is the
+   * mis-aim this arrangement exists to prevent.
+   */
+  ok(
+    '27z. arming the re-layout does NOT arm Delete',
+    await page.evaluate(() => document.querySelector('.rl-modal-danger')?.disabled === true),
+    'the delete button was armed by the wrong field',
+  );
+
+  await page.keyboard.press('Escape');
+  await wait(500);
+  await page.click('#sch-body .sch-stage:has-text("Playoff bracket")');
+  await wait(800);
+  ok('27z2. and the suite leaves the bracket stage showing', await page.isVisible('#sch-body .sch-bracket'), 'left on the wrong stage');
+
   /*
    * THE CARET RULE, asserted as the shape rather than by typing.
    *

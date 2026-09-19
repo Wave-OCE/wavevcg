@@ -374,6 +374,272 @@ export function fixtureLabel(fixture) {
   return fixture?.label || left || right || 'Fixture';
 }
 
+
+// ------------------------------------------------------------- templates ---
+
+/**
+ * The shapes a competition actually comes in.
+ *
+ * `generate` lays out round ONE of a single elimination and the whole of a
+ * round robin, and stops - so a bracket's later rounds had to be added by hand
+ * and then WIRED by hand, one source edge per slot. A sixteen-team double
+ * elimination is thirty matches and fifty-eight edges, and an operator doing
+ * that at eight in the morning gets one wrong. A wrong edge is the worst kind
+ * of wrong here: it carries the right team into the wrong match, silently, and
+ * only the semi-final tells you.
+ */
+export const STAGE_TEMPLATES = [
+  {
+    key: 'single',
+    label: 'Single elimination',
+    kind: 'bracket',
+    help: 'Lose once and you are out. Rounds down to a final, wired so a winner carries forward on its own.',
+  },
+  {
+    key: 'double',
+    label: 'Double elimination',
+    kind: 'bracket',
+    help:
+      'An upper and a lower bracket, and a grand final. Losing once drops you; losing twice is out. Every ' +
+      'winner AND every loser is wired.',
+  },
+  {
+    key: 'roundrobin',
+    label: 'Round robin',
+    kind: 'roundrobin',
+    help: 'Everybody plays everybody. Split it into groups to turn one long pool into several short ones.',
+  },
+];
+
+export const STAGE_TEMPLATE_KEYS = STAGE_TEMPLATES.map((entry) => entry.key);
+
+/**
+ * Seeded first-round order: 1 plays the last seed, 2 the second-last.
+ *
+ * The seeds a bracket is drawn from, not the slots they sit in - `slot` is
+ * geometry and this is the draw. Byes are left as empty slots rather than
+ * auto-advanced, because a bye is a real thing an operator wants to see and
+ * label rather than a match that silently is not there.
+ */
+const seedOrder = (size) => Array.from({ length: size / 2 }, (_, i) => [i, size - 1 - i]);
+
+/**
+ * Lay a whole stage out: matches, rounds, halves and EDGES.
+ *
+ * Pure - a list of teams in, a list of fixtures out, no ids minted and nothing
+ * touched. The caller mints the ids and writes them, which is what lets the
+ * suite drive this with no server and no port, the same way `bracketLayout` is
+ * tested.
+ *
+ * Fixtures come back with a `ref` instead of an id, and edges name a `ref`.
+ * The caller swaps both for real ids in one pass - see `applyTemplate` on the
+ * server. Minting here would mean this function knowing about a store.
+ *
+ * @param {object} options
+ * @param {string} options.template  one of STAGE_TEMPLATE_KEYS
+ * @param {object[]} options.teams   slots, already copied from the library
+ * @param {number} [options.bestOf]
+ * @param {number} [options.groups]  round robin only: how many pools
+ * @returns {{fixtures: object[], groups: {id: string, name: string}[]}}
+ */
+export function buildTemplate({ template, teams, bestOf = 3, groups = 1 } = {}) {
+  const seats = Array.isArray(teams) ? teams : [];
+  if (seats.length < 2) throw new Error('A template needs at least two teams.');
+
+  if (template === 'roundrobin') return roundRobinTemplate(seats, bestOf, groups);
+  if (template === 'single') return { fixtures: singleElim(seats, bestOf), groups: [] };
+  if (template === 'double') return { fixtures: doubleElim(seats, bestOf), groups: [] };
+  throw new Error(`Unknown template: ${template}`);
+}
+
+/** A pool, or several. Teams are dealt round the groups rather than sliced. */
+function roundRobinTemplate(seats, bestOf, groups) {
+  const pools = Math.max(1, Math.min(MAX_GROUPS, Math.floor(groups) || 1));
+
+  if (pools === 1) {
+    return { fixtures: poolFixtures(seats, bestOf, ''), groups: [] };
+  }
+
+  /*
+   * DEALT, not sliced. Slicing sixteen seeded teams into four gives the top
+   * four their own group and the bottom four theirs, which is the opposite of
+   * a draw - dealing round puts one of each quarter in every pool, which is
+   * what a seeded group stage is for.
+   */
+  const dealt = Array.from({ length: pools }, () => []);
+  seats.forEach((seat, index) => dealt[index % pools].push(seat));
+
+  const made = [];
+  const named = dealt.map((_, index) => ({
+    id: teamSlug(`group ${String.fromCharCode(65 + index)}`),
+    name: `Group ${String.fromCharCode(65 + index)}`,
+  }));
+
+  dealt.forEach((pool, index) => {
+    // A pool of one plays nobody. It is still a group - somebody may be about
+    // to add a team to it - so it is created and simply has no matches.
+    if (pool.length < 2) return;
+    made.push(...poolFixtures(pool, bestOf, named[index].id));
+  });
+
+  return { fixtures: made, groups: named };
+}
+
+function poolFixtures(seats, bestOf, group) {
+  const made = [];
+  roundRobinPairs(seats.length).forEach((pairs, round) => {
+    pairs.forEach(([a, b], slot) => {
+      made.push({
+        ref: `${group || 'pool'}-r${round + 1}-s${slot}`,
+        group,
+        round: round + 1,
+        slot,
+        bestOf,
+        bracket: 'upper',
+        left: seats[a],
+        right: seats[b],
+      });
+    });
+  });
+  return made;
+}
+
+/**
+ * Upper-bracket rounds, wired winner-forward.
+ *
+ * Round one carries the teams; every later round is empty and takes its two
+ * sides from the winners below it. That is the whole difference between this
+ * and `generate`, which laid out round one and left the rest to be typed.
+ */
+function singleElim(seats, bestOf, prefix = 'u') {
+  const size = 2 ** Math.ceil(Math.log2(seats.length));
+  const rounds = Math.log2(size);
+  const made = [];
+
+  seedOrder(size).forEach(([a, b], slot) => {
+    made.push({
+      ref: `${prefix}1-${slot}`,
+      round: 1,
+      slot,
+      bestOf,
+      bracket: 'upper',
+      left: seats[a] ?? {},
+      right: seats[b] ?? {},
+    });
+  });
+
+  for (let round = 2; round <= rounds; round += 1) {
+    const count = size / 2 ** round;
+    for (let slot = 0; slot < count; slot += 1) {
+      made.push({
+        ref: `${prefix}${round}-${slot}`,
+        round,
+        slot,
+        bestOf,
+        bracket: 'upper',
+        left: { source: { ref: `${prefix}${round - 1}-${slot * 2}`, take: 'winner' } },
+        right: { source: { ref: `${prefix}${round - 1}-${slot * 2 + 1}`, take: 'winner' } },
+      });
+    }
+  }
+
+  return made;
+}
+
+/**
+ * Upper, lower and a grand final, every edge wired.
+ *
+ * The lower bracket alternates MINOR rounds (two lower-bracket survivors meet)
+ * with MAJOR ones (a survivor meets somebody who has just dropped out of the
+ * upper bracket). That alternation is what makes the two halves finish
+ * together, and it is the part nobody gets right by hand.
+ *
+ * The major rounds CROSS: lower slot i meets the loser of upper slot
+ * `count - 1 - i` rather than slot i. Without it a team that has just knocked
+ * somebody into the lower bracket meets them again immediately, which is the
+ * one pairing a double elimination exists to avoid.
+ */
+function doubleElim(seats, bestOf) {
+  const size = 2 ** Math.ceil(Math.log2(seats.length));
+  const k = Math.log2(size);
+  const made = singleElim(seats, bestOf);
+
+  // A two-team draw has no lower bracket to build - one match decides it, and
+  // a grand final between the same two people is the same match again.
+  if (k < 2) return made;
+
+  const lower = (round, slot) => `l${round}-${slot}`;
+  let lowerRound = 0;
+
+  // The first lower round is the only one fed entirely by the upper bracket.
+  lowerRound += 1;
+  for (let slot = 0; slot < size / 4; slot += 1) {
+    made.push({
+      ref: lower(lowerRound, slot),
+      round: lowerRound,
+      slot,
+      bestOf,
+      bracket: 'lower',
+      left: { source: { ref: `u1-${slot * 2}`, take: 'loser' } },
+      right: { source: { ref: `u1-${slot * 2 + 1}`, take: 'loser' } },
+    });
+  }
+
+  for (let m = 1; m <= k - 1; m += 1) {
+    // MAJOR: a lower-bracket survivor meets somebody dropping out of the upper.
+    const majorCount = size / 2 ** (m + 1);
+    const previous = lowerRound;
+    lowerRound += 1;
+    for (let slot = 0; slot < majorCount; slot += 1) {
+      made.push({
+        ref: lower(lowerRound, slot),
+        round: lowerRound,
+        slot,
+        bestOf,
+        bracket: 'lower',
+        left: { source: { ref: lower(previous, slot), take: 'winner' } },
+        // Crossed - see the note above.
+        right: { source: { ref: `u${m + 1}-${majorCount - 1 - slot}`, take: 'loser' } },
+      });
+    }
+
+    // MINOR: two survivors meet. The last major round is the lower final and
+    // has nothing after it, so there is no minor round to follow it.
+    if (m > k - 2) continue;
+    const minorCount = size / 2 ** (m + 2);
+    const beforeMinor = lowerRound;
+    lowerRound += 1;
+    for (let slot = 0; slot < minorCount; slot += 1) {
+      made.push({
+        ref: lower(lowerRound, slot),
+        round: lowerRound,
+        slot,
+        bestOf,
+        bracket: 'lower',
+        left: { source: { ref: lower(beforeMinor, slot * 2), take: 'winner' } },
+        right: { source: { ref: lower(beforeMinor, slot * 2 + 1), take: 'winner' } },
+      });
+    }
+  }
+
+  /*
+   * The grand final belongs to NEITHER half, which is why `bracket` has three
+   * values rather than two - `bracketLayout` centres it on the whole drawing
+   * for the same reason.
+   */
+  made.push({
+    ref: 'gf',
+    round: 1,
+    slot: 0,
+    bestOf,
+    bracket: 'final',
+    left: { source: { ref: `u${k}-0`, take: 'winner' } },
+    right: { source: { ref: lower(lowerRound, 0), take: 'winner' } },
+  });
+
+  return made;
+}
+
 // ----------------------------------------------------------------- stages ---
 
 /**

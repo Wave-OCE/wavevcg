@@ -30,6 +30,8 @@ const {
   sanitiseSchedule,
   sanitiseStage,
   sanitiseGroups,
+  buildTemplate,
+  STAGE_TEMPLATE_KEYS,
   stageTables,
   standings,
 } = schema;
@@ -679,6 +681,174 @@ const maps = (...rows) => rows.map(([left, right]) => ({ name: 'Ascent', left, r
    * no group argument has always meant.
    */
   eq('g20 the stage as a whole still counts everybody', standings(doc, stage.id).length, 5);
+}
+
+
+// ========================================================== the templates =====
+/*
+ * A whole stage, laid out and WIRED.
+ *
+ * `generate` does round one of a single elimination and stops, so everything
+ * after it had to be added and then wired by hand - one source edge per slot. A
+ * sixteen-team double elimination is thirty matches and fifty-eight edges, and
+ * an operator doing that before doors gets one wrong. A wrong edge is the worst
+ * kind of wrong here: it carries the RIGHT team into the WRONG match, silently,
+ * and the semi-final is what tells you.
+ *
+ * Here rather than in an e2e for the reason the bracket layout is: it is a pure
+ * function from a list of teams to a list of matches, with no store in it.
+ */
+{
+  const teams = (n) => Array.from({ length: n }, (_, i) => ({ name: `T${i + 1}` }));
+  const byRef = (built) => new Map(built.fixtures.map((f) => [f.ref, f]));
+
+  // ------------------------------------------------- single elimination ---
+  const single = buildTemplate({ template: 'single', teams: teams(8) });
+  eq('t1 eight teams make seven matches', single.fixtures.length, 7);
+  eq('t2 ...over three rounds', [...new Set(single.fixtures.map((f) => f.round))].join(','), '1,2,3');
+  eq('t3 ...four of them in round one', single.fixtures.filter((f) => f.round === 1).length, 4);
+  eq('t4 ...and one final', single.fixtures.filter((f) => f.round === 3).length, 1);
+
+  /*
+   * SEEDED: one plays the last seed, two the second-last, so the top seeds meet
+   * last. A bracket drawn in listed order puts the best two teams in round one.
+   */
+  const first = single.fixtures.filter((f) => f.round === 1);
+  eq('t5 the top seed plays the bottom one', `${first[0].left.name}v${first[0].right.name}`, 'T1vT8');
+  eq('t6 ...and the second plays the seventh', `${first[1].left.name}v${first[1].right.name}`, 'T2vT7');
+
+  /*
+   * WIRED. This is the assertion the whole feature exists for: round two takes
+   * its two sides from the winners of the two matches below it, so a result
+   * filed in round one carries itself forward with nobody typing anything.
+   */
+  const s = byRef(single);
+  eq('t7 round two is fed by round one', s.get('u2-0').left.source.ref, 'u1-0');
+  eq('t8 ...from both sides of it', s.get('u2-0').right.source.ref, 'u1-1');
+  eq('t9 ...taking the WINNER', s.get('u2-0').left.source.take, 'winner');
+  eq('t10 the final is fed by the semi-finals', `${s.get('u3-0').left.source.ref}/${s.get('u3-0').right.source.ref}`, 'u2-0/u2-1');
+  ok('t11 only round one carries teams', single.fixtures.filter((f) => f.round > 1).every((f) => !f.left.name && !f.right.name));
+
+  // A draw that is not a power of two rounds UP and leaves byes as empty slots
+  // rather than auto-advancing: a bye is a real thing to see and label.
+  const six = buildTemplate({ template: 'single', teams: teams(6) });
+  eq('t12 six teams draw an eight-team bracket', six.fixtures.filter((f) => f.round === 1).length, 4);
+  eq('t13 ...with the byes left as empty slots', six.fixtures.filter((f) => f.round === 1 && !f.right.name).length, 2);
+
+  // ------------------------------------------------- double elimination ---
+  const dbl = buildTemplate({ template: 'double', teams: teams(8) });
+  const d = byRef(dbl);
+  const half = (name) => dbl.fixtures.filter((f) => f.bracket === name).length;
+
+  eq('t14 eight teams double-elim into fourteen matches', dbl.fixtures.length, 14);
+  eq('t15 ...seven upper', half('upper'), 7);
+  eq('t16 ...six lower', half('lower'), 6);
+  eq('t17 ...and one grand final', half('final'), 1);
+  eq('t18 the lower bracket runs four rounds', [...new Set(dbl.fixtures.filter((f) => f.bracket === 'lower').map((f) => f.round))].join(','), '1,2,3,4');
+
+  /*
+   * THE LOSERS ARE WIRED TOO, which is the half that cannot be done by hand
+   * without mistakes. Lower round one is fed entirely by people dropping out of
+   * upper round one.
+   */
+  eq('t19 lower round one takes upper losers', d.get('l1-0').left.source.take, 'loser');
+  eq('t20 ...from upper round one', d.get('l1-0').left.source.ref, 'u1-0');
+  eq('t21 ...both sides of it', d.get('l1-0').right.source.ref, 'u1-1');
+
+  /*
+   * THE MAJOR ROUNDS CROSS, and this is the assertion that matters most.
+   *
+   * Lower slot i meets the loser of upper slot `count - 1 - i`, not slot i.
+   * Without the cross, a team that has just knocked somebody into the lower
+   * bracket meets them again immediately - the one pairing a double elimination
+   * exists to avoid, and the kind of thing that looks fine until the bracket is
+   * on air.
+   */
+  eq('t22 a major lower round takes a survivor', d.get('l2-0').left.source.ref, 'l1-0');
+  eq('t23 ...against somebody dropping out of the upper bracket', d.get('l2-0').right.source.take, 'loser');
+  ok('t24 ...CROSSED, so nobody meets who just knocked them down', d.get('l2-0').right.source.ref === 'u2-1', d.get('l2-0').right.source.ref);
+  ok('t25 ...and the other way for the other slot', d.get('l2-1').right.source.ref === 'u2-0', d.get('l2-1').right.source.ref);
+
+  // A minor round is two lower-bracket survivors, no upper involvement.
+  eq('t26 a minor lower round is two survivors', `${d.get('l3-0').left.source.ref}/${d.get('l3-0').right.source.ref}`, 'l2-0/l2-1');
+  ok('t27 ...both winners', [d.get('l3-0').left, d.get('l3-0').right].every((slot) => slot.source.take === 'winner'));
+
+  // The lower final takes the upper final's loser, which is what makes the two
+  // halves finish together.
+  eq('t28 the lower final takes the upper final loser', d.get('l4-0').right.source.ref, 'u3-0');
+  eq('t29 ...as a loser', d.get('l4-0').right.source.take, 'loser');
+
+  const gf = d.get('gf');
+  eq('t30 the grand final belongs to neither half', gf.bracket, 'final');
+  eq('t31 ...taking the upper winner', gf.left.source.ref, 'u3-0');
+  eq('t32 ...against the lower winner', gf.right.source.ref, 'l4-0');
+
+  /*
+   * EVERY EDGE NAMES A MATCH THAT EXISTS. One dangling ref and `apply` refuses
+   * the whole document, with a message about an edge rather than about the
+   * template - so this is asserted over the WHOLE set rather than spot-checked.
+   */
+  const refs = new Set(dbl.fixtures.map((f) => f.ref));
+  const edges = dbl.fixtures.flatMap((f) => [f.left?.source?.ref, f.right?.source?.ref].filter(Boolean));
+  ok('t33 every edge names a match in the draw', edges.every((ref) => refs.has(ref)), JSON.stringify(edges.filter((ref) => !refs.has(ref))));
+  /*
+   * TWENTY, and the number is derivable rather than observed: fourteen matches,
+   * of which the four in upper round one carry teams instead of edges, leaves
+   * ten wired matches with two sides each. A count that is merely whatever came
+   * out would pass against a template that had quietly stopped wiring a round.
+   */
+  eq('t34 ...and there are as many as the shape needs', edges.length, (14 - 4) * 2);
+
+  // Four teams is the smallest real double elimination, and its lower bracket
+  // is two rounds rather than none - the arithmetic has to hold at the bottom.
+  const d4 = buildTemplate({ template: 'double', teams: teams(4) });
+  eq('t35 four teams double-elim into six matches', d4.fixtures.length, 6);
+  eq('t36 ...with a two-round lower bracket', d4.fixtures.filter((f) => f.bracket === 'lower').length, 2);
+
+  // ------------------------------------------------------- round robin ---
+  const rr = buildTemplate({ template: 'roundrobin', teams: teams(4) });
+  eq('t37 four teams play six matches', rr.fixtures.length, 6);
+  eq('t38 ...and make no groups', rr.groups.length, 0);
+  ok('t39 ...carrying teams, not edges', rr.fixtures.every((f) => f.left.name && f.right.name));
+
+  /*
+   * GROUPS ARE THE POINT: sixteen teams in four pools is four round robins of
+   * six rather than one of a hundred and twenty.
+   */
+  const pooled = buildTemplate({ template: 'roundrobin', teams: teams(16), groups: 4 });
+  eq('t40 sixteen in four pools is twenty-four matches', pooled.fixtures.length, 24);
+  eq('t41 ...not the hundred and twenty one pool would be', buildTemplate({ template: 'roundrobin', teams: teams(16) }).fixtures.length, 120);
+  eq('t42 ...in four named groups', pooled.groups.map((g) => g.name).join(','), 'Group A,Group B,Group C,Group D');
+  ok('t43 ...every match stamped with one', pooled.fixtures.every((f) => f.group), JSON.stringify(pooled.fixtures.map((f) => f.group).slice(0, 4)));
+
+  /*
+   * DEALT, not sliced. Slicing sixteen seeded teams into four gives the top
+   * four their own group and the bottom four theirs, which is the opposite of a
+   * draw - dealing round puts one of each quarter in every pool.
+   */
+  const groupA = pooled.fixtures.filter((f) => f.group === 'group-a');
+  const inA = new Set(groupA.flatMap((f) => [f.left.name, f.right.name]));
+  ok('t44 the top seed is in the first pool', inA.has('T1'), JSON.stringify([...inA]));
+  ok('t45 ...and so is one from the bottom quarter, because pools are dealt', inA.has('T13'), JSON.stringify([...inA]));
+  ok('t46 ...rather than the second seed, which went to the next pool', !inA.has('T2'), JSON.stringify([...inA]));
+
+  // Two is the floor everywhere, and an unknown template is refused rather than
+  // quietly producing nothing.
+  let refused = null;
+  try {
+    buildTemplate({ template: 'single', teams: teams(1) });
+  } catch (error) {
+    refused = error;
+  }
+  ok('t47 one team is not a draw', refused !== null, String(refused));
+  refused = null;
+  try {
+    buildTemplate({ template: 'nonsense', teams: teams(4) });
+  } catch (error) {
+    refused = error;
+  }
+  ok('t48 an unknown template is refused', refused !== null, String(refused));
+  ok('t49 the three offered are the three that work', STAGE_TEMPLATE_KEYS.join(',') === 'single,double,roundrobin', STAGE_TEMPLATE_KEYS.join(','));
 }
 
 rmSync(DIR, { recursive: true, force: true });
