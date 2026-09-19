@@ -166,15 +166,42 @@ try {
   ok('THE SERVER KEPT A VALUE ABOVE 1', ceiling === 2, String(ceiling));
 
   // ------------------------------------------ existing sliders untouched ---
+  /*
+   * SCOPED TO THE WINNER TAB, which it was not.
+   *
+   * It asked `document` for every range input and expected exactly three with a
+   * readout - but the dashboard holds every tab in the DOM at once, so the
+   * count was really "every scale field in the whole program". The moment the
+   * bracket gained one of its own it read four, and the failure said "only the
+   * scale fields grew a readout" about a page where exactly that was still
+   * true. A question about one graphic has to be asked of that graphic.
+   *
+   * The intent is unchanged and is the thing worth pinning: a `scale` gets a
+   * readout because a bare handle cannot be steered back to a default, and a
+   * `ratio` does not because a proportion has no default to return to.
+   */
   const plain = await page.evaluate(() => {
-    const ranges = [...document.querySelectorAll('input[type="range"]')];
+    const ranges = [...document.querySelectorAll('#tab-winner input[type="range"]')];
     const withReadout = ranges.filter((r) => r.closest('.g-field')?.classList.contains('has-readout'));
-    return { total: ranges.length, withReadout: withReadout.length };
+    return {
+      total: ranges.length,
+      withReadout: withReadout.length,
+      labelled: withReadout.map((r) => r.closest('.g-field')?.querySelector('span')?.textContent ?? '?'),
+    };
   });
   ok('several sliders exist', plain.total > 3, JSON.stringify(plain));
-  // Three scale fields now: the logo size and the two layout controls. Every
-  // other slider is a ratio and must still be a bare handle.
   ok('only the scale fields grew a readout', plain.withReadout === 3, JSON.stringify(plain));
+  /*
+   * Named, not just counted. Three of anything is a number that happens to be
+   * right; these are the three fields the rule is ABOUT, so a future swap that
+   * moved a readout from one slider to another would keep the count and still
+   * be wrong.
+   */
+  ok(
+    '...and they are the three that are scales',
+    plain.labelled.length === 3 && plain.labelled.every((label) => /size|width|spacing/i.test(label)),
+    JSON.stringify(plain.labelled),
+  );
 
   // A plain ratio slider must still round-trip.
   const opacity = page.locator('.g-field').filter({ hasText: /backdrop opacity/i }).locator('input[type="range"]').first();
