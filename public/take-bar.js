@@ -65,6 +65,23 @@ function comparable(graphic, state) {
  * @param {(state: object) => boolean} options.isLive     is it on screen
  * @param {(message: string) => void} options.toast
  */
+/**
+ * What Revert is, said where a Reset button needs to say it.
+ *
+ * Every Reset in this program writes to PREVIEW - measured in all seven
+ * dashboards rather than assumed - so clearing a graphic does not move what an
+ * audience is looking at, and Revert copies air back over preview. That makes
+ * this button the undo a Reset otherwise has none of, which is worth telling
+ * somebody at the moment they are being asked to confirm one.
+ *
+ * Exported from here rather than written out seven times because Revert is this
+ * module's button: the source of a fact owns how it is described, or seven
+ * dashboards grow seven slightly different ideas of what Reset costs.
+ */
+export const REVERT_NOTE =
+  'It lands on PREVIEW. What is on air is untouched, and Revert on the take bar copies air back over this - ' +
+  'which is the closest thing to an undo this has.';
+
 export function makeTakeBar({ graphic, prefix, programChannel, previewChannel, describe, isLive, toast }) {
   const els = {
     bar: $(`${prefix}-take-bar`),

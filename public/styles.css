@@ -4274,6 +4274,40 @@ body.is-adrift .rail-item[data-tab='global'] {
   color: var(--on-air, #c9424f);
 }
 
+/* The type-it-back box, for the confirmations big enough to want one. Nothing
+   of its own: `.g-field` is already a labelled column and every input in this
+   tool is already mono, which matters here more than anywhere - what goes in
+   this box has to match something exactly. */
+
+/* ------------------------------------------- the same box, standing alone ---
+
+   A confirmation provoked from a PAGE has no dialog to sit inside, so it gets
+   one of its own. It must not look like a second kind of prompt: "this cannot
+   be undone" has to mean the same thing on the Tournament page as it does over
+   the account editor, or the operator learns each one separately.
+
+   So the dialog itself is invisible - no border, no ground, no padding - and
+   `.rl-modal-ask-box` paints the whole of it exactly as it does on a sheet. The
+   backdrop is the platform's, which is what makes this a real modal rather
+   than a div drawn over the page. */
+.rl-modal.rl-modal-solo {
+  width: min(460px, calc(100vw - 32px));
+  border: 0;
+  background: transparent;
+  /* `.rl-modal` hides its overflow so a long form scrolls its body instead of
+     the dialog. There is no body here, so a long consequence would simply be
+     cut off - and the line that gets cut is the last one, which is where "it
+     cannot be undone" sits. */
+  overflow-y: auto;
+}
+
+/* The box caps itself at 420px so a sheet over an 880px-wide dialog does not
+   paint a paragraph the width of the screen. Standing alone it IS the dialog,
+   which is already narrow, so the cap only leaves a transparent margin. */
+.rl-modal-solo .rl-modal-ask-box {
+  max-width: none;
+}
+
 /* ------------------------------------------------- importing a spreadsheet ---
 
    A paste box and a file picker, on the team library panel and inside the team

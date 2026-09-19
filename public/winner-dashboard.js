@@ -34,8 +34,8 @@ import { CSV_TEAM_LIMIT, columnHelp, csvTemplate, readRosterCsv, readTeamCsv } f
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
-import { makeTakeBar } from './take-bar.js';
-import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
+import { askClose, confirmDanger, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import {
   canVerify,
   onVerifyConfig,
@@ -1896,7 +1896,15 @@ els.checker.addEventListener('change', () => {
 });
 
 els.resetBtn.addEventListener('click', async () => {
-  if (!window.confirm('Reset the winner graphic to defaults? Every field will be cleared.')) return;
+  const ok = await confirmDanger({
+    title: 'Reset the winner graphic to defaults?',
+    lines: [
+      'Every field is cleared - both teams, the map rows, the sequence and the look. It cannot be undone.',
+      REVERT_NOTE,
+    ],
+    confirm: 'Reset it',
+  });
+  if (!ok) return;
 
   const response = await fetch(api('/api/winner', EDIT_BUS), {
     method: 'POST',

@@ -583,8 +583,35 @@ try {
   await manage(opRow);
   ok("a new account starts off", (await capButton().textContent()).includes("off"));
 
-  page.once("dialog", (dialog) => dialog.accept());
+  /*
+   * Every question this dialog asks is now asked IN THE DIALOG, and the two
+   * assertions before the press are the reason it had to be a sheet rather
+   * than a second <dialog>: the account editor underneath has to survive, and a
+   * second showModal() would have stranded it. Granting is the cheap one to
+   * prove it on - Delete is asserted below and deliberately not pressed.
+   */
   await capButton().click();
+  /*
+   * Caught rather than thrown, and that is not defensive coding.
+   *
+   * The failure this covers - the sheet never appearing, because a second
+   * showModal() was refused over the dialog already up - would otherwise
+   * surface as a bare `waitForSelector` timeout naming nothing, six seconds
+   * later, which is the exact shape this file already has a note about. Turned
+   * into an answer, it fails as itself. Verified by making confirmDanger always
+   * take the standalone-dialog path.
+   */
+  const asked = await page
+    .waitForSelector(".rl-modal .rl-modal-ask", { timeout: 6000 })
+    .then(() => true)
+    .catch(() => false);
+  ok("granting asks in the program rather than in the browser", asked, "no sheet appeared");
+  ok(
+    "and the sheet is inside the account editor, not a second dialog",
+    asked && (await page.locator("dialog").count()) === 1,
+    String(await page.locator("dialog").count()),
+  );
+  if (asked) await page.locator(".rl-modal-ask button", { hasText: "Grant it" }).click();
   /*
    * The dialog STAYS OPEN and repaints, which is the point of managing an
    * account in one place - granting three permissions should be one visit, not
@@ -617,6 +644,47 @@ try {
     { timeout: 6000 },
   );
   ok("revoking it takes", true);
+
+  /*
+   * DELETING AN ACCOUNT TAKES THE USERNAME TYPED BACK.
+   *
+   * It removes somebody's whole workspace - the same blast radius as deleting a
+   * tournament, which has wanted a typed name for as long as it has existed -
+   * and it sat behind a bare `window.confirm`, the weakest bar in the program
+   * on the widest action in it.
+   *
+   * The assertion that carries the weight is the DISABLED one. A box that
+   * merely appears proves nothing: what makes a typed name safer than a confirm
+   * is that the button cannot be pressed until the name matches, so the
+   * confirmation is visible BEFORE the click instead of being a second dialog
+   * after it.
+   *
+   * It is then CANCELLED, because the rest of this file needs that account -
+   * which is the other half worth asserting anyway, since a way out that is not
+   * really a way out is the failure this whole arrangement exists to avoid.
+   */
+  await page.locator(".rl-modal-foot .btn-danger").click();
+  await page.waitForSelector(".rl-modal-ask", { timeout: 6000 });
+  const killer = page.locator(".rl-modal-ask .rl-modal-ask-danger");
+  ok("deleting an account asks for the username", (await page.locator(".rl-modal-ask input").count()) === 1);
+  ok("and the button is dead until it matches", await killer.isDisabled());
+  await page.fill(".rl-modal-ask input", "operato");
+  ok("a near miss leaves it dead", await killer.isDisabled());
+  await page.fill(".rl-modal-ask input", "operator");
+  ok("the exact name arms it", !(await killer.isDisabled()));
+
+  await page.locator(".rl-modal-ask button", { hasText: "Cancel" }).click();
+  await page.waitForFunction(() => !document.querySelector(".rl-modal-ask"), null, { timeout: 6000 });
+  ok(
+    "backing out leaves the account editor open underneath",
+    (await page.locator(".rl-modal").count()) === 1,
+    String(await page.locator(".rl-modal").count()),
+  );
+  const survived = await page.evaluate(() =>
+    fetch("/api/admin/users").then((r) => r.json()).then((d) => (d.users ?? []).some((u) => u.username === "operator")),
+  );
+  ok("and deletes nobody", survived === true, String(survived));
+
   await shut();
   /*
    * NO DISCARD PROMPT HERE, and the asymmetry with the team editor is

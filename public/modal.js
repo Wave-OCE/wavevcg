@@ -58,6 +58,30 @@
  * the click, is answered by reflex, and cannot put the safe answer under the
  * cursor. Here the safe answer is the one that takes focus.
  *
+ * ## Asking before something that cannot be undone
+ *
+ * `confirmDanger` is the same box asked for a different reason, and the rule it
+ * exists to make true is one line:
+ *
+ *   IRREVERSIBLE IS CONFIRMED IN THE PROGRAM'S OWN DIALOG. Only something
+ *   undone by doing the opposite may use a `window.confirm`.
+ *
+ * The bar had drifted the wrong way round. A production and a stage - the two
+ * SMALLEST deletions here - each took a typed name in a real dialog, while
+ * deleting a whole tournament took a `window.prompt`, deleting an account took
+ * a bare `confirm`, and seven Reset buttons that clear a graphic outright took
+ * one too. Every argument this file already makes about the discard sheet
+ * applies to all three, and applies harder, because these do not lose a draft -
+ * they lose a season, a colleague's workspace, or the look somebody spent the
+ * morning on.
+ *
+ * Over an open dialog it is a SHEET, for the reason the discard prompt is one:
+ * a second `showModal()` takes the focus trap with it and strands the first. On
+ * a page with no dialog up it is a real `<dialog>` wearing the same box. So
+ * "this cannot be undone" looks like ONE thing whether it was provoked from
+ * inside the account editor or from a Reset button on a graphics tab, which is
+ * the whole point of it living here rather than in nine call sites.
+ *
  * ## What it deliberately does NOT do
  *
  * It does not build the body, own a draft, or know what Save means. Those
@@ -72,7 +96,7 @@
  * optional.
  */
 
-import { el } from './fields.js';
+import { el, field } from './fields.js';
 
 /** Is a modal already up? Callers guard on this before building a body. */
 export const modalOpen = () => document.querySelector('dialog.rl-modal') !== null;
@@ -87,6 +111,18 @@ export const modalOpen = () => document.querySelector('dialog.rl-modal') !== nul
  */
 let guard = null;
 let sheet = null;
+
+/**
+ * What to do if the sheet goes away WITHOUT either of its buttons being
+ * pressed - Escape, or a click on the backdrop.
+ *
+ * The discard prompt needs nothing here: dismissing it means "keep editing",
+ * which is simply the sheet no longer being there. `confirmDanger` answers a
+ * PROMISE, and a promise has to be settled however it ended - otherwise a
+ * caller awaiting it waits for ever, and the operator is left looking at a
+ * button that did nothing at all.
+ */
+let sheetCancel = null;
 
 /**
  * Has anything been typed? Snapshot at open, compare later.
@@ -126,7 +162,28 @@ export function askClose(dialog) {
 }
 
 /**
- * The sheet itself.
+ * The box both prompts wear: a question, what it costs, anything the caller
+ * needs between the two, and the pair of buttons.
+ *
+ * One builder rather than two, which is the only reason the discard prompt and
+ * `confirmDanger` look identical. Two boxes differing by a few pixels of
+ * padding read as two different mechanisms, and an operator who has learned
+ * that one of them is serious has learned nothing about the other.
+ */
+function askBox({ title, lines = [], extras = [], danger, safe }) {
+  const box = el('div', 'rl-modal-ask-box');
+  box.append(el('h2', 'rl-modal-ask-title', {}, title));
+  for (const line of lines) box.append(el('p', 'rl-modal-ask-text', {}, line));
+  box.append(...extras);
+
+  const row = el('div', 'rl-modal-ask-row');
+  row.append(danger, safe);
+  box.append(row);
+  return box;
+}
+
+/**
+ * The discard sheet.
  *
  * Keep editing takes focus and is what Escape does, because the two ways of
  * getting this wrong are not comparable: going back to a form you meant to
@@ -134,8 +191,6 @@ export function askClose(dialog) {
  * the roster. The destructive button is the one that has to be aimed at.
  */
 function ask(dialog) {
-  sheet = el('div', 'rl-modal-ask', { role: 'alertdialog', 'aria-label': 'Discard unsaved changes?' });
-
   const keep = el('button', 'btn btn-primary', { type: 'button' }, 'Keep editing');
   keep.addEventListener('click', () => dismiss());
 
@@ -156,21 +211,147 @@ function ask(dialog) {
     dialog.close();
   });
 
-  const box = el('div', 'rl-modal-ask-box');
-  box.append(
-    el('h2', 'rl-modal-ask-title', {}, 'Discard unsaved changes?'),
-    el('p', 'rl-modal-ask-text', {}, 'Nothing here has been saved yet. Closing now throws it away.'),
-    el('div', 'rl-modal-ask-row'),
+  sheet = el('div', 'rl-modal-ask', { role: 'alertdialog', 'aria-label': 'Discard unsaved changes?' });
+  sheet.append(
+    askBox({
+      title: 'Discard unsaved changes?',
+      lines: ['Nothing here has been saved yet. Closing now throws it away.'],
+      danger: discard,
+      safe: keep,
+    }),
   );
-  box.lastElementChild.append(discard, keep);
-  sheet.append(box);
   dialog.append(sheet);
   keep.focus();
 }
 
+/**
+ * Ask before something that cannot be undone. See the rule in the header.
+ *
+ * Resolves TRUE only if the destructive button was actually pressed. Escape,
+ * the backdrop, the safe button and a second question arriving while one is
+ * already up all resolve false - there is no path out of here that leaves the
+ * caller unanswered, which is what lets every call site read as one `if`.
+ *
+ * @param {object}   options
+ * @param {string}   options.title       the question, phrased as one.
+ * @param {string[]} [options.lines]     what it costs. One paragraph each, and
+ *   worth spending: this is the space a `window.confirm` does not have, and the
+ *   reason it is worth leaving one.
+ * @param {string}   [options.confirm]   the destructive button's label. Say
+ *   what it DOES - "Delete for good", "Reset it" - never "OK". A button that
+ *   names its action is the last chance to notice you are on the wrong one.
+ * @param {string}   [options.safe]      the way out. Takes focus.
+ * @param {string}   [options.typed]     require this string typed back before
+ *   the destructive button turns on at all. For anything whose blast radius is
+ *   a whole workspace: a confirmation is answered "yes" by reflex and a name is
+ *   not. The button being DISABLED until it matches is the half that matters -
+ *   it puts the confirmation before the click rather than after it.
+ * @param {string}   [options.typedLabel]
+ * @returns {Promise<boolean>}
+ */
+export function confirmDanger({
+  title,
+  lines = [],
+  confirm: confirmLabel = 'Delete',
+  safe: safeLabel = 'Cancel',
+  typed = null,
+  typedLabel = 'Type the name to confirm',
+} = {}) {
+  return new Promise((resolve) => {
+    const go = el('button', 'btn btn-ghost rl-modal-ask-danger', { type: 'button' }, confirmLabel);
+    const back = el('button', 'btn btn-primary', { type: 'button' }, safeLabel);
+
+    const extras = [];
+    let box = null;
+    if (typed) {
+      const wanted = String(typed).trim();
+      box = el('input', null, { type: 'text', placeholder: typed, 'aria-label': typedLabel });
+      go.disabled = true;
+      box.addEventListener('input', () => {
+        go.disabled = box.value.trim() !== wanted;
+      });
+      extras.push(field(typedLabel, box));
+    }
+
+    const content = askBox({ title, lines, extras, danger: go, safe: back });
+
+    /*
+     * Focus: the safe answer, EXCEPT where there is a box to type in.
+     *
+     * The rule everywhere else here is that the safe answer takes it, so a
+     * reflex keypress cannot destroy anything. A typed gate makes that
+     * impossible on its own - the destructive button is disabled until the name
+     * matches, and nothing in this box is a `<form>`, so Enter does nothing at
+     * all. With the danger gone, the box is the thing the operator came here to
+     * use, and starting anywhere else is a click they have to make for nothing.
+     */
+    const first = () => (box ?? back).focus();
+
+    const host = document.querySelector('dialog.rl-modal');
+    if (host) {
+      // One question at a time, for the same reason there is one dialog at a
+      // time. A caller that manages to ask twice gets "no" for the second
+      // rather than a sheet stacked on a sheet.
+      if (sheet) {
+        resolve(false);
+        return;
+      }
+
+      const settle = (answer) => {
+        // Cleared FIRST: this press is the answer, so the Escape/backdrop hook
+        // that would also say "no" must not fire behind it.
+        sheetCancel = null;
+        dismiss();
+        resolve(answer);
+      };
+      go.addEventListener('click', () => settle(true));
+      back.addEventListener('click', () => settle(false));
+
+      sheet = el('div', 'rl-modal-ask', { role: 'alertdialog', 'aria-label': title });
+      sheet.append(content);
+      sheetCancel = () => resolve(false);
+      host.append(sheet);
+      first();
+      return;
+    }
+
+    /*
+     * Nothing open, so this gets a dialog of its own - wearing the same box,
+     * which is what `.rl-modal-solo` in styles.css exists to arrange.
+     *
+     * `onClose` is the single answer path for all three ways out, which is the
+     * same reason openModal has one teardown: Escape, the backdrop and Cancel
+     * must not be three chances to get the resolve wrong.
+     */
+    let answer = false;
+    const dialog = openModal({
+      className: 'rl-modal-solo',
+      body: content,
+      onClose: () => resolve(answer),
+    });
+    if (!dialog) {
+      // Something else was already up. Answer no rather than acting unasked.
+      resolve(false);
+      return;
+    }
+    go.addEventListener('click', () => {
+      answer = true;
+      dialog.close();
+    });
+    back.addEventListener('click', () => dialog.close());
+    first();
+  });
+}
+
 function dismiss() {
+  // Read and cleared BEFORE it runs. A hook that went on to open another sheet
+  // would otherwise find this one still recorded and tear the new one straight
+  // back down again.
+  const cancelled = sheetCancel;
+  sheetCancel = null;
   sheet?.remove();
   sheet = null;
+  cancelled?.();
 }
 
 /**
@@ -196,7 +377,10 @@ export function openModal({ className = '', body, foot, dirty, onClose } = {}) {
   document.body.append(dialog);
 
   guard = typeof dirty === 'function' ? dirty : null;
+  // Both, together. Clearing the sheet and leaving its cancel hook behind would
+  // leave a dead promise armed to answer on THIS dialog's close.
   sheet = null;
+  sheetCancel = null;
 
   dialog.addEventListener('close', () => {
     guard = null;

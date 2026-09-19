@@ -20,11 +20,12 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 import {
   BRACKET_SCALE_MAX,
   BRACKET_SCALE_MIN,
@@ -365,8 +366,17 @@ if (els.tab) {
   els.back.addEventListener('click', () => post({ action: 'reveal', to: (state.reveal ?? 0) - 1 }));
   els.all.addEventListener('click', () => post({ action: 'reveal', to: state.columns ?? 0 }));
   els.none.addEventListener('click', () => post({ action: 'reveal', to: 0 }));
-  els.reset.addEventListener('click', () => {
-    if (!window.confirm('Reset the bracket graphic? The loaded draw, the winner panel and the logo all go.')) return;
+  els.reset.addEventListener('click', async () => {
+    const ok = await confirmDanger({
+      title: 'Reset the bracket graphic?',
+      lines: [
+        'The loaded draw, the winner panel, the event logo and the look all go. The DRAW itself is safe - this ' +
+          'graphic holds a copy of it, and Load puts it back.',
+        REVERT_NOTE,
+      ],
+      confirm: 'Reset it',
+    });
+    if (!ok) return;
     post({ reset: true }).then(() => {
       styleBuilt = false;
       paint();

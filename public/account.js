@@ -13,7 +13,7 @@
  */
 
 import { el, help, subhead } from './fields.js';
-import { modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
+import { confirmDanger, modalFoot, modalOpen, modalTitle, openModal } from './modal.js';
 import { SETTING_FIELDS } from './settings-schema.js';
 import { CAPABILITY_FIELDS } from './capability-schema.js';
 import { COMPANION_GRAPHICS, companionVariables } from './companion-schema.js';
@@ -836,8 +836,23 @@ function openAccount(account) {
    * did, and `may` is computed from the role as well as the grant, so guessing
    * it here would be a second implementation of `adminImplied`.
    */
-  const act = async (label, patch, confirmText, { closes = false } = {}) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+  const act = async (label, patch, ask, { closes = false } = {}) => {
+    /*
+     * ONE look for every question this dialog asks.
+     *
+     * Delete is the reason it changed: it removes somebody's whole workspace -
+     * the same blast radius as deleting a tournament - and it was behind a
+     * `window.confirm`, the weakest bar in the program, on the widest action in
+     * it. But converting only Delete would have left one dialog asking two
+     * visibly different kinds of question, and an operator who has learned that
+     * the amber box is serious would have learned nothing about the grey one.
+     *
+     * So all four go through the same sheet, and only Delete carries a typed
+     * name. The other three are reversible by doing the opposite - enable them
+     * again, take the permission back, and a Discord account is re-linked by
+     * the person themselves - which is exactly the line modal.js draws.
+     */
+    if (ask && !(await confirmDanger(ask))) return;
     try {
       await post('/api/admin/users', { id: user.id, ...patch });
       const list = await loadAdmin();
@@ -866,7 +881,15 @@ function openAccount(account) {
         act(
           user.disabled ? `${user.username} enabled` : `${user.username} disabled`,
           { action: 'update', disabled: !user.disabled },
-          user.disabled ? null : `Disable ${user.username}? They are signed out immediately and their OBS key stops working.`,
+          user.disabled
+            ? null
+            : {
+                title: `Disable ${user.username}?`,
+                lines: [
+                  'They are signed out immediately and their OBS key stops working. Enable puts all of it back.',
+                ],
+                confirm: 'Disable them',
+              },
         ),
       );
 
@@ -907,7 +930,9 @@ function openAccount(account) {
           act(
             `${user.username} ${held ? 'can no longer' : 'can now'} ${field.label}`,
             { action: 'update', capabilities: { [field.key]: !held } },
-            held ? null : `Let ${user.username} ${field.label}?\n\n${field.help}`,
+            held
+              ? null
+              : { title: `Let ${user.username} ${field.label}?`, lines: [field.help], confirm: 'Grant it' },
           ),
         );
         return button;
@@ -930,7 +955,11 @@ function openAccount(account) {
         act(
           `Discord unlinked from ${user.username}`,
           { action: 'unlink-discord' },
-          `Unlink ${user.username}'s Discord account?\n\nThey are signed out, and they will need their password to get back in.`,
+          {
+            title: `Unlink ${user.username}'s Discord account?`,
+            lines: ['They are signed out, and they will need their password to get back in.'],
+            confirm: 'Unlink it',
+          },
           { closes: true },
         ),
       );
@@ -948,10 +977,29 @@ function openAccount(account) {
            * is the eviction. Saying so here is the whole fix - the button was
            * never going to be able to do it.
            */
-          `Delete ${user.username}?\n\nTheir graphics, presets, teams and player aliases are deleted with them. This cannot be undone.` +
-            (user.discord
-              ? `\n\nThis does NOT stop them signing in again: they still hold the Discord role, and a new empty account would be made for them. Remove the role in Discord, or use Disable.`
-              : ''),
+          {
+            title: `Delete ${user.username}?`,
+            lines: [
+              'Their graphics, presets, teams and player aliases are deleted with them. This cannot be undone.',
+              ...(user.discord
+                ? [
+                    'This does NOT stop them signing in again: they still hold the Discord role, and a new empty ' +
+                      'account would be made for them. Remove the role in Discord, or use Disable.',
+                  ]
+                : []),
+            ],
+            /*
+             * The typed name, which the tournament delete has and this did not
+             * although the two destroy the same amount. It is also the one
+             * press on this dialog that is NOT beside a similar-looking one:
+             * Delete sits alone in the footer's danger position, and the thing
+             * that makes it safe cannot be its position when the row above it
+             * is four buttons that all repaint in place.
+             */
+            typed: user.username,
+            typedLabel: 'Type the username to confirm',
+            confirm: 'Delete the account',
+          },
           { closes: true },
         ),
       );

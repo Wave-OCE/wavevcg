@@ -16,11 +16,12 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 import { VETO_BOARD_LAYOUTS, boardIsStale, revealedCount } from './veto-board-schema.js';
 import { vetoComplete } from './veto-schema.js';
 
@@ -304,8 +305,17 @@ if (els.tab) {
   els.all.addEventListener('click', () => post({ action: 'reveal', all: true }).catch(() => {}));
   els.none.addEventListener('click', () => post({ action: 'reveal', all: false }).catch(() => {}));
 
-  els.reset.addEventListener('click', () => {
-    if (!window.confirm('Reset the veto board? The loaded veto, the logo and the layout all go.')) return;
+  els.reset.addEventListener('click', async () => {
+    const ok = await confirmDanger({
+      title: 'Reset the veto board?',
+      lines: [
+        'The loaded veto, the event logo, the layout and the three colours all go. The VETO itself is safe - this ' +
+          'graphic holds a copy of it, and Load puts it back.',
+        REVERT_NOTE,
+      ],
+      confirm: 'Reset it',
+    });
+    if (!ok) return;
     post({ reset: true });
   });
 

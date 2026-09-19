@@ -19,9 +19,10 @@ import { mediaControl } from './media-field.js';
 import { SIDE_CHOICES, applyTeam } from './teams.js';
 import { mapDisplayName } from './maps.js';
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffPlayers, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 
 /*
  * Which bus this dashboard edits.
@@ -980,7 +981,17 @@ els.checker.addEventListener('change', () => {
 });
 
 els.resetBtn.addEventListener('click', async () => {
-  if (!window.confirm('Reset agent select to defaults? Every field will be cleared. Aliases are kept.')) return;
+  const ok = await confirmDanger({
+    title: 'Reset agent select to defaults?',
+    lines: [
+      'Every field is cleared - both teams and all ten cards. It cannot be undone.',
+      'Aliases are KEPT. They are a library the whole tournament shares rather than part of this graphic, and ' +
+        'Forget unnamed players is what clears those.',
+      REVERT_NOTE,
+    ],
+    confirm: 'Reset it',
+  });
+  if (!ok) return;
 
   const response = await fetch(api('/api/select', EDIT_BUS), {
     method: 'POST',

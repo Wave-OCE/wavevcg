@@ -29,7 +29,7 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
-import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
+import { askClose, confirmDanger, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { TOURNAMENT_FIELDS, tournamentLabel } from './tournament-schema.js';
 import { DEFAULT_BRAND } from './brand.js';
@@ -845,23 +845,39 @@ if (els.pick) {
    * deliberate visit. Then the name has to be typed: a confirm dialog is
    * answered "yes" by reflex, and a name is not.
    *
-   * A prompt rather than a confirm for exactly that reason. The server checks
-   * the typed name again and is what actually enforces it - this one is here so
-   * the refusal happens before the request rather than after.
+   * It was a `window.prompt` for exactly that reason, and that was the right
+   * half of the argument acted on with the wrong control. A prompt does take a
+   * name - but it paints in the browser's chrome rather than in this program,
+   * it cannot put the consequence beside the box where somebody about to type
+   * is actually looking, and it cannot disable anything, so a mistyped name
+   * came back as an error AFTER the request had gone. Every SMALLER deletion
+   * here had already been given a typed field inside a real dialog; the biggest
+   * one was the last left on the old bar.
+   *
+   * `confirmDanger` is that field. The button does not turn on until the name
+   * matches, so the confirmation is visible BEFORE the click. The server checks
+   * the name again and is still what actually enforces this.
    */
   els.delete.addEventListener('click', async () => {
     if (!current) return;
     const label = tournamentLabel(current);
-    const typed = window.prompt(
-      `Delete "${label}" for good?\n\n` +
-        'This removes the tournament AND its whole workspace - every team, alias, preset and graphic. ' +
-        'It cannot be undone, and Export is the only copy you will have.\n\n' +
-        `Type the name to confirm:`,
-    );
-    if (typed === null) return;
+    const ok = await confirmDanger({
+      title: `Delete "${label}" for good?`,
+      lines: [
+        'This removes the tournament AND its whole workspace - every team, alias, preset, veto and schedule, and ' +
+          'the graphics of every production under it.',
+        'It cannot be undone. Export, beside this button, is the only copy you will have.',
+      ],
+      typed: label,
+      typedLabel: 'Type the name to confirm',
+      confirm: 'Delete for good',
+    });
+    if (!ok) return;
 
     try {
-      const payload = await send({ action: 'delete', id: current.id, confirm: typed });
+      // `label` rather than a value read back out of the box: the button does
+      // not turn on until the two are the same string, so they are.
+      const payload = await send({ action: 'delete', id: current.id, confirm: label });
       all = payload.tournaments.map((entry) => ({ ...entry, level: levelOf(entry) }));
       // Whatever is left, or nothing. paint() handles an empty list already -
       // it is the state a fresh install is in.

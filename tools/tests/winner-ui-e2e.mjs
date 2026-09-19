@@ -257,6 +257,103 @@ try {
   ok('the layout help explains the cap', /caps the winner name as a share of the frame/.test(layoutHelp), 'not described');
   ok('and points at the logo size', /after changing the logo size/.test(layoutHelp), 'not described');
 
+  // ---------------------------------------------------- Reset, confirmed ---
+  /*
+   * Seven graphics carry a Reset button and all seven clear the whole thing
+   * with no undo, and all seven asked with a `window.confirm` - which appears
+   * after the click, is answered by reflex, cannot put the safe answer under
+   * the cursor and paints in the browser's chrome rather than in this program.
+   *
+   * This is the one that opens with NOTHING already on screen, so it takes the
+   * other rendering: a real <dialog> wearing the same box the discard sheet
+   * wears. Both renderings matter and they are asserted in different files -
+   * the sheet in ui-e2e, over the account editor; the solo dialog here.
+   *
+   * `bandGap` is the probe because the assertions above left it at 1.4 and its
+   * schema default is 1, so the two answers cannot be confused with each other
+   * and neither is the value a fresh graphic happens to hold.
+   */
+  await page.click('#w-reset');
+  await page.waitForSelector('dialog.rl-modal.rl-modal-solo', { timeout: 6000 });
+  ok('Reset asks in the program rather than in the browser', true);
+  ok(
+    '...wearing the same box the discard prompt wears',
+    (await page.locator('.rl-modal-solo .rl-modal-ask-box').count()) === 1,
+  );
+
+  /*
+   * Measured, not read off the stylesheet. `.rl-modal-solo` strips the dialog's
+   * own border and ground so the box paints the whole thing, and the failure
+   * that arrangement invites is the box landing outside the frame with nothing
+   * failing - exactly the one the discard sheet's own box assertion exists for.
+   */
+  const solo = await page.evaluate(() => {
+    const box = document.querySelector('.rl-modal-solo .rl-modal-ask-box').getBoundingClientRect();
+    return {
+      w: Math.round(box.width),
+      h: Math.round(box.height),
+      top: Math.round(box.top),
+      left: Math.round(box.left),
+      right: Math.round(box.right),
+      bottom: Math.round(box.bottom),
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
+  ok(
+    'and it is on screen, whole',
+    solo.w > 240 && solo.h > 80 && solo.top >= 0 && solo.left >= 0 && solo.right <= solo.vw && solo.bottom <= solo.vh,
+    JSON.stringify(solo),
+  );
+
+  const focused = await page.evaluate(() => document.activeElement?.textContent ?? '');
+  ok('the safe answer takes focus', focused === 'Cancel', focused || '(nothing focused)');
+
+  /*
+   * The button in the DANGER POSITION is painted `--on-air`, compared against
+   * that variable rather than against a literal hex - the point is that they
+   * MATCH, the same way the schedule's Remove match is pinned against the team
+   * editor's Delete.
+   *
+   * Found by POSITION rather than by `.rl-modal-ask-danger`, and that is the
+   * whole question rather than a detail of the query: the bug this guards is
+   * exactly a button sitting where the destructive one goes without the
+   * destructive colour, which is what `.sch-modal-drop` did for months. Asking
+   * for the class would have made deleting the class crash the assertion
+   * instead of failing it - measured, by deleting it.
+   */
+  const paint = await page.evaluate(() => {
+    const [danger, safe] = document.querySelectorAll('.rl-modal-solo .rl-modal-ask-row button');
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--on-air)';
+    document.body.append(probe);
+    const answer = {
+      danger: getComputedStyle(danger).color,
+      safe: getComputedStyle(safe).color,
+      onAir: getComputedStyle(probe).color,
+    };
+    probe.remove();
+    return answer;
+  });
+  ok('the destructive button is painted on-air', paint.danger === paint.onAir, JSON.stringify(paint));
+  ok('and the safe one is not', paint.safe !== paint.onAir, JSON.stringify(paint));
+
+  await page.locator('.rl-modal-solo button', { hasText: 'Cancel' }).click();
+  await page.waitForFunction(() => !document.querySelector('dialog.rl-modal'), null, { timeout: 6000 });
+  await page.waitForTimeout(700);
+  const afterCancel = (await (await fetch(`${BASE}/api/winner?bus=preview&key=${encodeURIComponent(key)}`)).json()).state
+    .style.bandGap;
+  ok('cancelling a Reset writes nothing at all', afterCancel === 1.4, String(afterCancel));
+
+  await page.click('#w-reset');
+  await page.waitForSelector('dialog.rl-modal.rl-modal-solo', { timeout: 6000 });
+  await page.locator('.rl-modal-solo button', { hasText: 'Reset it' }).click();
+  await page.waitForFunction(() => !document.querySelector('dialog.rl-modal'), null, { timeout: 6000 });
+  await page.waitForTimeout(1200);
+  const afterReset = (await (await fetch(`${BASE}/api/winner?bus=preview&key=${encodeURIComponent(key)}`)).json()).state
+    .style.bandGap;
+  ok('and confirming really does reset it', afterReset === 1, String(afterReset));
+
   ok('no page errors', errors.length === 0, errors.join(' | '));
 } catch (error) {
   fail += 1;

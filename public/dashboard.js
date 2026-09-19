@@ -18,8 +18,9 @@ import { applyTeam } from './teams.js';
 import { STATS, STAT_FIELDS, STAT_SLOTS, resultText, statDef } from './stats.js';
 import { ANIM_FIELDS, ANIM_GROUPS, ANIM_TIER_COUNT, inDurationMs } from './animation.js';
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { api, outputUrl, pageUrl, targetKey } from './session.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 
 /*
  * Which bus this dashboard edits.
@@ -834,7 +835,15 @@ els.sortBtn.addEventListener('click', () => {
 });
 
 els.resetBtn.addEventListener('click', async () => {
-  if (!window.confirm('Reset the graphic to defaults? Every field will be cleared.')) return;
+  const ok = await confirmDanger({
+    title: 'Reset the scoreboard to defaults?',
+    lines: [
+      'Every field is cleared - the match, both rosters and the look. It cannot be undone.',
+      REVERT_NOTE,
+    ],
+    confirm: 'Reset it',
+  });
+  if (!ok) return;
 
   const response = await fetch(api('/api/graphic', EDIT_BUS), {
     method: 'POST',

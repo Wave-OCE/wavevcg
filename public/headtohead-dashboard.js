@@ -9,11 +9,12 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -199,8 +200,16 @@ if (els.tab) {
   );
   els.hide.addEventListener('click', () => save({ anim: { ...state.anim, visible: false } }));
   els.swap.addEventListener('click', () => save({ left: state.right, right: state.left }));
-  els.reset.addEventListener('click', () => {
-    if (!window.confirm('Reset the head-to-head? Both teams, the backdrop and the logo all go.')) return;
+  els.reset.addEventListener('click', async () => {
+    const ok = await confirmDanger({
+      title: 'Reset the head-to-head?',
+      lines: [
+        'Both teams, the backdrop, the event logo and the look all go. It cannot be undone.',
+        REVERT_NOTE,
+      ],
+      confirm: 'Reset it',
+    });
+    if (!ok) return;
     post({ reset: true }).then(() => {
       styleBuilt = false;
       paint();

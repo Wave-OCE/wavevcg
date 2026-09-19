@@ -8,11 +8,12 @@
  */
 
 import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
-import { makeTakeBar } from './take-bar.js';
+import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
 import { LINEUP_FORMATS, LINEUP_SLOTS, lineupIsStale } from './lineup-schema.js';
 
 const $ = (id) => document.getElementById(id);
@@ -207,8 +208,16 @@ if (els.tab) {
     save({ anim: { ...state.anim, visible: true, cue: ((state.anim?.cue ?? 0) + 1) % 1_000_000 } }),
   );
   els.hide.addEventListener('click', () => save({ anim: { ...state.anim, visible: false } }));
-  els.reset.addEventListener('click', () => {
-    if (!window.confirm('Reset the lineup graphic? The loaded team, the heading and the logo all go.')) return;
+  els.reset.addEventListener('click', async () => {
+    const ok = await confirmDanger({
+      title: 'Reset the lineup graphic?',
+      lines: [
+        'The loaded team, the heading, the event logo and the look all go. It cannot be undone.',
+        REVERT_NOTE,
+      ],
+      confirm: 'Reset it',
+    });
+    if (!ok) return;
     post({ reset: true }).then(() => {
       styleBuilt = false;
       paint();

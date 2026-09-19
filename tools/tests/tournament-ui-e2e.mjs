@@ -1494,6 +1494,57 @@ try {
    */
   ok('28e. ...and Export is still there, which is the whole point', await page.isVisible('#tou-export'));
 
+  /*
+   * DELETING A TOURNAMENT IS ON THE SAME BAR AS DELETING A STAGE NOW.
+   *
+   * It was a `window.prompt` - the one control that can take a typed name and
+   * can do nothing else with it: no consequence beside the box, no way to
+   * disable anything, and a mistyped name coming back as an error AFTER the
+   * request had gone. Every smaller deletion in this program - a production, a
+   * stage, a match - had been given a typed field inside a real dialog first,
+   * so the biggest one was the last left on the old bar.
+   *
+   * `browserPrompted` is the first assertion rather than a nicety: a prompt and
+   * a dialog both stop the flow, so every assertion below would read the same
+   * against either, and the whole change is WHICH one appears.
+   */
+  const cupName = (await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: jar.join('; ') } })).json())
+    .tournaments.find((entry) => entry.id === cupId).name;
+
+  let browserPrompted = false;
+  const notePrompt = (opened) => {
+    browserPrompted = true;
+    void opened.dismiss();
+  };
+  page.on('dialog', notePrompt);
+  await page.click('#tou-delete');
+  await page.waitForSelector('dialog.rl-modal.rl-modal-solo', { timeout: 6000 });
+  page.off('dialog', notePrompt);
+  ok('28e1. Delete asks in the program, not in a browser prompt', !browserPrompted);
+  ok(
+    '28e2. ...wearing the same box the discard prompt wears',
+    (await page.locator('.rl-modal-solo .rl-modal-ask-box').count()) === 1,
+  );
+
+  const wipe = page.locator('.rl-modal-solo .rl-modal-ask-danger');
+  ok('28e3. the button is dead until the name is typed', await wipe.isDisabled());
+  await page.fill('.rl-modal-solo input', cupName.slice(0, -1));
+  ok('28e4. a near miss leaves it dead', await wipe.isDisabled());
+  await page.fill('.rl-modal-solo input', cupName);
+  ok('28e5. the exact name arms it', !(await wipe.isDisabled()));
+
+  /*
+   * Cancelled, because everything below still needs this tournament - and
+   * because "the way out really is a way out" is the half a typed gate does not
+   * cover on its own. The route's own refusal of a wrong name is asserted in
+   * tournament-e2e, against the server.
+   */
+  await page.locator('.rl-modal-solo button', { hasText: 'Cancel' }).click();
+  await page.waitForFunction(() => !document.querySelector('dialog.rl-modal'), null, { timeout: 6000 });
+  const alive = (await (await fetch(`${BASE}/api/tournaments`, { headers: { Cookie: jar.join('; ') } })).json())
+    .tournaments.some((entry) => entry.id === cupId);
+  ok('28e6. backing out deletes nothing', alive === true, String(alive));
+
   // --- archived is read-only, and says so -----------------------------------
 
   await post('/api/tournaments', { action: 'archive', id: cupId, archived: true });
