@@ -379,6 +379,48 @@ try {
     'a prompt with nothing to discard is a prompt nobody reads',
   );
 
+  /*
+   * THE BACKDROP IS DIFFERENT, and the asymmetry with the assertion above is
+   * the whole point rather than an inconsistency.
+   *
+   * Escape is a key somebody pressed and Cancel is a button somebody aimed at.
+   * The backdrop is neither - it is the entire rest of the screen, it carries
+   * no label, and it gets hit reaching for something behind the dialog. It was
+   * reported as the way people leave a form by accident, and it was the one
+   * exit with nothing at all in front of it.
+   *
+   * So it asks even with nothing typed, and asks a DIFFERENT question: saying
+   * "discard unsaved changes" about a form nobody has touched is a lie, and
+   * that lie is what would teach somebody to dismiss the prompt that is telling
+   * the truth on the dialog holding thirty players.
+   */
+  await page.click('#wed-teams .team-card .mini-btn');
+  await wait(600);
+  await page.mouse.click(5, 5);
+  await wait(400);
+  ok('20m2a2. the backdrop asks even with nothing typed', (await page.$$('.rl-modal-ask')).length === 1);
+  const cleanAsk = await page.evaluate(() => ({
+    title: document.querySelector('.rl-modal-ask-title')?.textContent ?? '',
+    danger: document.querySelector('.rl-modal-ask-row button')?.textContent ?? '',
+    painted: document.querySelector('.rl-modal-ask-row button')?.classList.contains('rl-modal-ask-danger'),
+  }));
+  ok('20m2a3. ...a different question from the discard one', /Close this editor/.test(cleanAsk.title), JSON.stringify(cleanAsk));
+  ok(
+    '20m2a4. ...and its leave button is not painted destructive, because nothing is',
+    cleanAsk.painted === false,
+    JSON.stringify(cleanAsk),
+  );
+
+  await page.click('.rl-modal-ask button:has-text("Keep editing")');
+  await wait(300);
+  ok('20m2a5. keeping it puts the form back', (await page.$$('.rl-modal')).length === 1 && (await page.$$('.rl-modal-ask')).length === 0);
+
+  await page.mouse.click(5, 5);
+  await wait(400);
+  await page.click('.rl-modal-ask button:has-text("Close it")');
+  await wait(400);
+  ok('20m2a6. ...and answering it really does close', (await page.$$('.rl-modal')).length === 0);
+
   await page.click('#wed-teams .team-card .mini-btn');
   await wait(600);
   await page.fill('.rl-modal input[type=text]', 'Never Saved');
@@ -981,24 +1023,41 @@ try {
   ok('26j. both desks now offer Manage', (await page.$$('#tou-desks button:has-text("Manage")')).length === 2);
 
   /*
-   * THE TYPED-BACK NAME, and the half of it worth asserting: the button is dead
-   * until the name matches. A confirm dialog is answered "yes" by reflex and a
-   * name is not, and this takes a whole desk's graphics with it - so the guard
-   * being live BEFORE the click, rather than being a second dialog after it, is
-   * the property that makes it a guard at all.
+   * THE TYPED-BACK NAME, which is a SHEET the button raises rather than a
+   * section of the form.
+   *
+   * It was the latter, and the two halves of one decision were never on screen
+   * together: the box at the bottom of the body, the button it armed in the
+   * footer. What mattered survives and is what is asserted here - the button in
+   * the sheet is dead until the name matches, so the guard is live BEFORE the
+   * press rather than being a dialog after it. A confirm is answered "yes" by
+   * reflex and a name is not, and this takes a whole desk's graphics with it.
    */
   await page.click('#tou-desks .desk-row:nth-of-type(2) button:has-text("Manage")');
   await page.waitForSelector('.rl-modal', { timeout: 6000 });
-  const removeBtn = page.locator('.rl-modal-foot .rl-modal-danger');
-  ok('26k. remove starts disabled', await removeBtn.isDisabled());
-  await page.fill('.rl-modal input[aria-label="Type the name to confirm"]', 'not the name');
+  ok(
+    '26k. the form itself carries no type-it-back box',
+    (await page.$$('.rl-modal-body input[aria-label="Type the name to confirm"]')).length === 0,
+    'the confirmation is still living in the form',
+  );
+
+  await page.click('.rl-modal-foot .rl-modal-danger');
+  await page.waitForSelector('.rl-modal-ask', { timeout: 6000 });
+  const removeBtn = page.locator('.rl-modal-ask .rl-modal-ask-danger');
+  ok('26k2. pressing Remove raises the sheet, over the editor', (await page.$$('.rl-modal')).length === 1);
+  ok('26k3. ...and the remove button starts disabled', await removeBtn.isDisabled());
+  await page.fill('.rl-modal-ask input', 'not the name');
   await wait(200);
   ok('26l. ...and a wrong name does not arm it', await removeBtn.isDisabled());
-  await page.fill('.rl-modal input[aria-label="Type the name to confirm"]', 'Court 2');
+  await page.fill('.rl-modal-ask input', 'Court 2');
   await wait(200);
   ok('26m. ...the exact name arms it', !(await removeBtn.isDisabled()));
 
-  // Cancel, because the desks are wanted for the assertions further down.
+  // Out of the sheet, then out of the editor, because the desks are wanted for
+  // the assertions further down.
+  await page.click('.rl-modal-ask button:has-text("Cancel")');
+  await page.waitForFunction(() => !document.querySelector('.rl-modal-ask'), null, { timeout: 6000 });
+  ok('26m2. backing out of the sheet leaves the editor open', (await page.$$('.rl-modal')).length === 1);
   await page.click('.rl-modal-foot .btn-ghost >> nth=-1');
   await wait(400);
   ok('26n. cancelling leaves both desks alone', (await page.$$('#tou-desks .desk-row')).length === 2);
@@ -1011,6 +1070,18 @@ try {
    * assertion, and the difference surfaces eight seconds later as a timeout
    * naming nothing.
    */
+  /*
+   * The stage editor is tabbed, so reaching a control means opening its tab
+   * first - which is the operator's own path and therefore what this should
+   * drive. A control on a hidden pane is still in the DOM and still bound, so
+   * a `page.evaluate` would read it happily; a CLICK correctly refuses it,
+   * which is how the tabs were caught here in the first place.
+   */
+  const stageTab = async (pane) => {
+    await page.click(`.rl-modal-tabs .card-tab[data-pane="${pane}"]`);
+    await wait(250);
+  };
+
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-schedule"]');
   await wait(600);
   ok('27a. the Schedule panel opens', await page.isVisible('#tou-schedule'));
@@ -1121,38 +1192,114 @@ try {
    * itself would go. It is possible now, behind the bar this program already
    * sets for anything irreversible: the exact name typed back.
    *
-   * The button is DISABLED until it matches, so the confirmation is visible
-   * before the click rather than being a dialog after it - the same shape
-   * removing a production uses. Asserted without actually deleting, because
-   * everything below still needs this stage; the delete itself is pinned
-   * server-side in schedule-e2e.
+   * The button in the SHEET is disabled until it matches, so the confirmation
+   * is visible before the press rather than being a dialog after it - the same
+   * shape removing a production uses. Asserted without actually deleting,
+   * because everything below still needs this stage; the delete itself is
+   * pinned server-side in schedule-e2e.
    */
   await page.click('#sch-body button:has-text("Edit stage")');
   await wait(700);
+
+  /*
+   * THE SHAPE FIRST, for the reason the top of this file gives: a pane
+   * correctly hidden and a pane never wired look identical to every DOM
+   * assertion, and the difference surfaces later as a timeout naming nothing.
+   *
+   * The stage editor is three tabs now - what the stage IS, its groups, and its
+   * matches - because in one column those were four sections deep and the last
+   * of them was the one being opened for.
+   */
+  const tabShape = await page.evaluate(() => {
+    const strip = document.querySelector('.rl-modal-tabs');
+    const buttons = [...(strip?.querySelectorAll('.card-tab') ?? [])];
+    const panes = [...document.querySelectorAll('.rl-modal-pane')];
+    return {
+      tabs: buttons.map((b) => b.dataset.pane),
+      panes: panes.map((p) => p.dataset.pane),
+      shown: panes.filter((p) => !p.hidden).map((p) => p.dataset.pane),
+      selected: buttons.filter((b) => b.getAttribute('aria-selected') === 'true').map((b) => b.dataset.pane),
+      footOutside: Boolean(document.querySelector('.rl-modal > .rl-modal-foot')),
+    };
+  });
+  ok('27g1c. the stage editor is tabbed', tabShape.tabs.length === 3, JSON.stringify(tabShape));
+  ok(
+    '27g1d. ...every tab names a pane and every pane has a tab',
+    JSON.stringify(tabShape.tabs) === JSON.stringify(tabShape.panes),
+    JSON.stringify(tabShape),
+  );
+  ok(
+    '27g1e. ...exactly one is shown, and the strip agrees which',
+    tabShape.shown.length === 1 && JSON.stringify(tabShape.shown) === JSON.stringify(tabShape.selected),
+    JSON.stringify(tabShape),
+  );
+  /*
+   * The footer is a child of the DIALOG, not of a pane. Save means the whole
+   * form rather than the open tab - a dialog that saved per-tab is one where
+   * Cancel stops meaning "nothing happened".
+   */
+  ok('27g1f. ...and the footer sits outside the tabs', tabShape.footOutside === true, JSON.stringify(tabShape));
+
+  /*
+   * A PANE IS NOT REBUILT WHEN IT IS SHOWN AGAIN - the caret rule, at tab scale.
+   *
+   * Asked of the BOX rather than of the pane, and that distinction was found by
+   * breaking it: an earlier version of this marked the pane element and passed
+   * happily against a pane whose children were being replaced on every switch,
+   * because the pane itself survived. What a rebuild actually costs is the
+   * input, so the input is what is marked - both its VALUE, which a rebuild
+   * would blank, and its identity, because a fresh box holding the same text
+   * has still moved the caret out from under whoever was typing.
+   */
+  await page.fill('.rl-modal-pane[data-pane="about"] input[type=text]', 'Kept across tabs');
+  await page.evaluate(() => {
+    document.querySelector('.rl-modal-pane[data-pane="about"] input[type=text]').dataset.mark = 'kept';
+  });
+  await stageTab('groups');
+  await stageTab('about');
+  const survived = await page.evaluate(() => {
+    const box = document.querySelector('.rl-modal-pane[data-pane="about"] input[type=text]');
+    return { value: box?.value ?? '', mark: box?.dataset.mark ?? '' };
+  });
+  ok('27g1g. switching tabs keeps what was typed', survived.value === 'Kept across tabs', JSON.stringify(survived));
+  ok('27g1h. ...in the very same box, so the caret never moved', survived.mark === 'kept', JSON.stringify(survived));
+
+  // Put the name back, or the draft stays dirty and the Escape at the end of
+  // this block would raise the discard prompt it is asserting does NOT appear.
+  await page.fill('.rl-modal-pane[data-pane="about"] input[type=text]', 'Playoff bracket');
+  await wait(200);
+
   const guard = await page.evaluate(() => {
-    const drop = document.querySelector('.rl-modal-danger');
-    const box = document.querySelector('.rl-modal input[aria-label="Type the stage name to confirm"]');
-    return { label: drop?.textContent ?? '', disabled: drop?.disabled, hasBox: Boolean(box) };
+    const drop = document.querySelector('.rl-modal-foot .rl-modal-danger');
+    return {
+      label: drop?.textContent ?? '',
+      disabled: drop?.disabled,
+      boxInForm: Boolean(document.querySelector('.rl-modal-pane input[aria-label="Type the stage name to confirm"]')),
+    };
   });
   ok('27g2. a stage holding matches offers to take them with it', /1 match/.test(guard.label), JSON.stringify(guard));
-  ok('27g3. ...and asks for the name back', guard.hasBox === true, JSON.stringify(guard));
-  ok('27g4. ...with Delete disabled until it matches', guard.disabled === true, JSON.stringify(guard));
+  ok('27g3. ...with no type-it-back box left in the form', guard.boxInForm === false, JSON.stringify(guard));
+  ok('27g4. ...and the button itself is live, because the sheet is the guard', guard.disabled === false, JSON.stringify(guard));
 
-  await page.fill('.rl-modal input[aria-label="Type the stage name to confirm"]', 'Playoff bracke');
-  await wait(200);
-  ok(
-    '27g5. a name that is nearly right does not arm it',
-    await page.evaluate(() => document.querySelector('.rl-modal-danger').disabled === true),
-  );
-  await page.fill('.rl-modal input[aria-label="Type the stage name to confirm"]', 'Playoff bracket');
-  await wait(200);
-  ok(
-    '27g6. ...and the exact name does',
-    await page.evaluate(() => document.querySelector('.rl-modal-danger').disabled === false),
-  );
+  await page.click('.rl-modal-foot .rl-modal-danger');
+  await page.waitForSelector('.rl-modal-ask', { timeout: 6000 });
+  const killStage = page.locator('.rl-modal-ask .rl-modal-ask-danger');
+  ok('27g4b. pressing it raises the sheet over the editor', (await page.$$('.rl-modal')).length === 1);
+  ok('27g4c. ...with the delete dead until the name is typed', await killStage.isDisabled());
 
-  // Out the safe way. Escape rather than Cancel, because the typed name is a
-  // CONFIRMATION rather than work and must not raise the discard prompt.
+  await page.fill('.rl-modal-ask input', 'Playoff bracke');
+  await wait(200);
+  ok('27g5. a name that is nearly right does not arm it', await killStage.isDisabled());
+  await page.fill('.rl-modal-ask input', 'Playoff bracket');
+  await wait(200);
+  ok('27g6. ...and the exact name does', !(await killStage.isDisabled()));
+
+  // Out of the sheet, then out of the editor. Escape rather than Cancel,
+  // because nothing in the FORM was typed - what went into the sheet was a
+  // confirmation, not work, and must not raise the discard prompt.
+  await page.click('.rl-modal-ask button:has-text("Cancel")');
+  await page.waitForFunction(() => !document.querySelector('.rl-modal-ask'), null, { timeout: 6000 });
+  ok('27g6b. backing out of the sheet leaves the editor open', (await page.$$('.rl-modal')).length === 1);
   await page.keyboard.press('Escape');
   await wait(500);
   ok('27g7. leaving after typing only the confirmation does not ask', (await page.$$('.rl-modal')).length === 0);
@@ -1214,6 +1361,7 @@ try {
   await page.fill('.rl-modal input[type=text]', 'Pools');
   await page.selectOption('.rl-modal select[aria-label="Format"]', 'roundrobin');
 
+  await stageTab('groups');
   await page.click('.rl-modal button:has-text("Add group")');
   await wait(250);
   await page.click('.rl-modal button:has-text("Add group")');
@@ -1250,6 +1398,7 @@ try {
 
   await page.click('#sch-body button:has-text("Edit stage")');
   await wait(700);
+  await stageTab('matches');
   await page.selectOption('.rl-modal select[aria-label="Group for the new round"]', 'group-a');
   await page.fill('.rl-modal input[aria-label="Matches in the round"]', '2');
   await page.click('.rl-modal button:has-text("Add round")');
@@ -1306,6 +1455,7 @@ try {
    * The groups box belongs to ONE of them. A number input beside a bracket
    * template is a control that does nothing, on a form somebody reads fast.
    */
+  await stageTab('matches');
   const groupsHidden = async () => page.evaluate(() => document.querySelector('.rl-modal input[aria-label="Groups"]')?.closest('.g-field')?.hidden);
   ok('27r. the groups box is hidden for a bracket template', (await groupsHidden()) === true, String(await groupsHidden()));
   await page.selectOption('.rl-modal select[aria-label="Template"]', 'roundrobin');
@@ -1317,10 +1467,9 @@ try {
    * anyway trains the answer out of somebody for the case that matters.
    */
   const emptyGate = await page.evaluate(() => ({
-    typed: Boolean(document.querySelector('.rl-modal input[aria-label="Type the stage name to replace the matches"]')),
     disabled: [...document.querySelectorAll('.rl-modal button')].find((b) => /Lay this stage out/.test(b.textContent))?.disabled,
   }));
-  ok('27t. an empty stage is laid out with no confirmation', emptyGate.typed === false && emptyGate.disabled === false, JSON.stringify(emptyGate));
+  ok('27t. an empty stage offers to be laid out', emptyGate.disabled === false, JSON.stringify(emptyGate));
 
   /*
    * The team names come from the LIBRARY as it stands rather than from
@@ -1338,43 +1487,57 @@ try {
   page.once('dialog', (d) => d.accept(pickable.slice(0, 2).join(', ')));
   await page.click('.rl-modal button:has-text("Lay this stage out")');
   await wait(1400);
+  ok('27t3. an empty stage really is laid out with no confirmation', (await page.$$('.rl-modal-ask')).length === 0);
   ok('27u. laying it out makes the draw', (await page.$$('#sch-body .sch-fixture')).length >= 1, String((await page.$$('#sch-body .sch-fixture')).length));
 
   /*
-   * And now it holds matches, so doing it again wants the name. The button is
-   * disabled until it matches, so the confirmation is visible BEFORE the click
-   * - the same shape Delete uses, in its own section with its own box, because
-   * two destructive buttons armed by one field is a mis-aim away from the wrong
-   * one.
+   * And now it holds matches, so doing it again wants the name - in a SHEET the
+   * press raises, which is where every typed confirmation in this program now
+   * lives. The teams are asked for first and the name last, deliberately: the
+   * teams are what is being built, and the confirmation should be the final
+   * gate in front of the write rather than a question with another question
+   * after it.
    */
   await page.click('#sch-body button:has-text("Edit stage")');
   await wait(700);
+  await stageTab('matches');
   const fullGate = await page.evaluate(() => {
-    const box = document.querySelector('.rl-modal input[aria-label="Type the stage name to replace the matches"]');
     const button = [...document.querySelectorAll('.rl-modal button')].find((b) => /Replace .* and lay out/.test(b.textContent));
-    return { hasBox: Boolean(box), disabled: button?.disabled, label: button?.textContent ?? '' };
+    return {
+      boxInForm: Boolean(document.querySelector('.rl-modal-pane input[aria-label="Type the stage name to confirm"]')),
+      disabled: button?.disabled,
+      label: button?.textContent ?? '',
+    };
   });
-  ok('27v. a stage with matches asks before being laid out again', fullGate.hasBox === true, JSON.stringify(fullGate));
-  ok('27w. ...saying how many it would replace', /Replace 1 match/.test(fullGate.label), fullGate.label);
-  ok('27x. ...with the button disabled until the name matches', fullGate.disabled === true, JSON.stringify(fullGate));
+  ok('27v. the form carries no type-it-back box', fullGate.boxInForm === false, JSON.stringify(fullGate));
+  ok('27w. ...and the button says how many it would replace', /Replace 1 match/.test(fullGate.label), fullGate.label);
+  ok('27x. ...and is live, because the sheet is the guard', fullGate.disabled === false, JSON.stringify(fullGate));
 
-  await page.fill('.rl-modal input[aria-label="Type the stage name to replace the matches"]', 'Main draw');
+  page.once('dialog', (d) => d.accept(pickable.slice(0, 2).join(', ')));
+  await page.click('.rl-modal button:has-text("Replace 1 match and lay out")');
+  await page.waitForSelector('.rl-modal-ask', { timeout: 6000 });
+  const relay = page.locator('.rl-modal-ask .rl-modal-ask-danger');
+  ok('27x2. a stage with matches asks before being laid out again', await relay.isDisabled());
+  await page.fill('.rl-modal-ask input', 'Main draw');
   await wait(200);
-  ok(
-    '27y. ...and armed once it does',
-    await page.evaluate(() => [...document.querySelectorAll('.rl-modal button')].find((b) => /Replace .* and lay out/.test(b.textContent))?.disabled === false),
-  );
+  ok('27y. ...and is armed once the name matches', !(await relay.isDisabled()));
 
   /*
-   * TWO BOXES, TWO BUTTONS, and they must not be the same one. Delete and
-   * re-layout both destroy results; arming one from the other's field is the
-   * mis-aim this arrangement exists to prevent.
+   * TWO ACTIONS, TWO QUESTIONS, and they must not be the same one. Delete and
+   * re-layout both destroy results, and the mis-aim this arrangement exists to
+   * prevent is arming one from the other's field. As sheets they cannot even be
+   * up at the same time - so what is asserted is that backing out of this one
+   * and pressing Delete asks a DIFFERENT question, named for what it does.
    */
-  ok(
-    '27z. arming the re-layout does NOT arm Delete',
-    await page.evaluate(() => document.querySelector('.rl-modal-danger')?.disabled === true),
-    'the delete button was armed by the wrong field',
-  );
+  await page.click('.rl-modal-ask button:has-text("Cancel")');
+  await page.waitForFunction(() => !document.querySelector('.rl-modal-ask'), null, { timeout: 6000 });
+  await page.click('.rl-modal-foot .rl-modal-danger');
+  await page.waitForSelector('.rl-modal-ask', { timeout: 6000 });
+  const askTitle = await page.textContent('.rl-modal-ask-title');
+  ok('27z. Delete asks its own question, not the re-layout one', /^Delete /.test(askTitle), askTitle);
+  ok('27z2. ...and it starts disarmed, whatever was typed in the other one', await page.locator('.rl-modal-ask .rl-modal-ask-danger').isDisabled());
+  await page.click('.rl-modal-ask button:has-text("Cancel")');
+  await page.waitForFunction(() => !document.querySelector('.rl-modal-ask'), null, { timeout: 6000 });
 
   await page.keyboard.press('Escape');
   await wait(500);

@@ -4169,8 +4169,53 @@ body.is-adrift .rail-item[data-tab='global'] {
 
 /* Sections inside a form modal. The dialog body is already a gap'd column, so
    this only has to separate a heading from what came before it. */
-.rl-modal-body .subhead {
+.rl-modal-body .subhead,
+.rl-modal-pane .subhead {
   margin-top: 6px;
+}
+
+/* ------------------------------------------- a form too long for one scroll ---
+
+   Tabs INSIDE the dialog. The strip reuses `.card-tabs` / `.card-tab` from the
+   graphics editors rather than growing a second look, so an operator does not
+   have to learn two kinds of tab in one program - only the corners and the
+   edges change, because here the strip sits between two fixed bars rather than
+   floating on a page.
+
+   What scrolls is the PANES and nothing else: the title above and the buttons
+   below stay put, so no control an operator needs can end up behind a scroll.
+   The panes are all in the DOM at once and `[hidden]` is what switches them -
+   see the rule at the top of this file that makes that beat `display: flex`. */
+.rl-modal-head {
+  padding: 16px 18px 0;
+}
+
+.rl-modal-tabs {
+  margin: 12px 18px 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: 0;
+}
+
+.rl-modal-panes {
+  /* `min-height: 0` is what lets a flex child actually scroll rather than
+     growing its parent - without it the dialog gets taller than its own
+     max-height and the footer leaves the screen. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rl-modal-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+/* The title bar has its own padding, so the body under a strip must not add a
+   second lot above it. */
+.rl-modal.is-tabbed .rl-modal-head .rl-modal-title {
+  margin-bottom: 0;
 }
 
 /* A row of buttons inside a modal. Wraps rather than growing past the dialog -

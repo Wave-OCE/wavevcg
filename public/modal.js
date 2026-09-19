@@ -58,6 +58,28 @@
  * the click, is answered by reflex, and cannot put the safe answer under the
  * cursor. Here the safe answer is the one that takes focus.
  *
+ * ## The backdrop always asks
+ *
+ * Three exits, and they are not equally deliberate. Cancel is a button somebody
+ * aimed at and Escape is a key somebody pressed; the BACKDROP is neither - it
+ * is the whole rest of the screen, it carries no label, and it is hit by
+ * reaching for something behind the dialog. Reported as the thing people leave
+ * a form by accident, and it was the one exit with nothing in front of it.
+ *
+ * So the backdrop asks EVEN WHEN NOTHING HAS BEEN TYPED, and the other two do
+ * not. That asymmetry is the whole design rather than an inconsistency: the
+ * argument against a prompt with nothing to discard is that it teaches people
+ * to dismiss prompts, and that argument is about the exits somebody MEANT to
+ * take. `20m2a` still pins Escape closing an untouched form in one press.
+ *
+ * It asks a DIFFERENT question when there is nothing to lose, because
+ * "discard unsaved changes?" would be a lie about a form nobody has touched,
+ * and the button is not painted destructive - nothing is being destroyed.
+ *
+ * A dialog that passed no `dirty` is untouched by any of this. It holds no
+ * draft, so there is nothing to ask about from any exit - which is the account
+ * dialog, deliberately, and `ui-e2e` asserts it closes with no prompt.
+ *
  * ## Asking before something that cannot be undone
  *
  * `confirmDanger` is the same box asked for a different reason, and the rule it
@@ -81,6 +103,33 @@
  * "this cannot be undone" looks like ONE thing whether it was provoked from
  * inside the account editor or from a Reset button on a graphics tab, which is
  * the whole point of it living here rather than in nine call sites.
+ *
+ * ## A form too long to read in one scroll
+ *
+ * `tabs` splits the BODY and nothing else. The stage editor is what provoked
+ * it: name, format, series, groups, generation and templates in one column,
+ * with the operator scrolling past four sections to reach the one they opened
+ * it for.
+ *
+ * Three rules, and each of them is a bug this codebase has already had:
+ *
+ *   EVERY PANE IS BUILT ONCE and kept in the DOM. Switching toggles `[hidden]`
+ *   and touches nothing else. Building a pane when its tab is picked would
+ *   replace the box somebody is typing into - the caret rule - and would also
+ *   throw away what they had typed in the pane they just left.
+ *
+ *   THE FOOTER IS OUTSIDE THE TABS, because Save means the whole form and not
+ *   the open tab. A dialog that saved per-tab would be a dialog where Cancel
+ *   stops meaning "nothing happened", which is the promise the whole
+ *   save-once design is built on.
+ *
+ *   `dirty` STILL WATCHES THE WHOLE DRAFT. A guard that only saw the open tab
+ *   would let somebody type a name, move to Groups, press Escape and lose it
+ *   with no prompt.
+ *
+ * The strip reuses `.card-tabs` / `.card-tab` from the graphics editors rather
+ * than growing its own look - an operator should not have to learn two kinds of
+ * tab in one program.
  *
  * ## What it deliberately does NOT do
  *
@@ -151,14 +200,23 @@ export function watchChanges(snapshot) {
  * thing it has to do differently. Everything else about closing is unchanged -
  * a save that worked still calls `dialog.close()`, and should.
  */
-export function askClose(dialog) {
+export function askClose(dialog, { always = false } = {}) {
   if (!dialog) return;
-  if (!guard?.()) {
+
+  // No guard means no draft, which means nothing to ask about however this was
+  // provoked. `always` cannot override that - see the account dialog.
+  if (!guard) {
+    dialog.close();
+    return;
+  }
+
+  const dirty = guard();
+  if (!always && !dirty) {
     dialog.close();
     return;
   }
   if (sheet) return; // already asking; a second Escape must not stack another
-  ask(dialog);
+  ask(dialog, dirty);
 }
 
 /**
@@ -183,14 +241,19 @@ function askBox({ title, lines = [], extras = [], danger, safe }) {
 }
 
 /**
- * The discard sheet.
+ * The discard sheet, and the leave-anyway sheet - one box, two questions.
  *
  * Keep editing takes focus and is what Escape does, because the two ways of
  * getting this wrong are not comparable: going back to a form you meant to
  * leave costs one more click, and discarding a roster you meant to keep costs
  * the roster. The destructive button is the one that has to be aimed at.
+ *
+ * `dirty` false only ever reaches here from the BACKDROP, and it changes both
+ * the words and the paint. Saying "discard unsaved changes" about a form nobody
+ * has touched is a lie, and painting the leave button `--on-air` when nothing
+ * is being destroyed spends the one colour that means something.
  */
-function ask(dialog) {
+function ask(dialog, dirty = true) {
   const keep = el('button', 'btn btn-primary', { type: 'button' }, 'Keep editing');
   keep.addEventListener('click', () => dismiss());
 
@@ -204,18 +267,28 @@ function ask(dialog) {
    * the right where Keep editing had been on every wider screen. Caught by a
    * screenshot at 400px, which is the only thing that would have.
    */
-  const discard = el('button', 'btn btn-ghost rl-modal-ask-danger', { type: 'button' }, 'Discard changes');
+  const discard = el(
+    'button',
+    `btn btn-ghost${dirty ? ' rl-modal-ask-danger' : ''}`,
+    { type: 'button' },
+    dirty ? 'Discard changes' : 'Close it',
+  );
   discard.addEventListener('click', () => {
     dismiss();
     // Past the guard deliberately: this IS the answer to the guard's question.
     dialog.close();
   });
 
-  sheet = el('div', 'rl-modal-ask', { role: 'alertdialog', 'aria-label': 'Discard unsaved changes?' });
+  const title = dirty ? 'Discard unsaved changes?' : 'Close this editor?';
+  sheet = el('div', 'rl-modal-ask', { role: 'alertdialog', 'aria-label': title });
   sheet.append(
     askBox({
-      title: 'Discard unsaved changes?',
-      lines: ['Nothing here has been saved yet. Closing now throws it away.'],
+      title,
+      lines: [
+        dirty
+          ? 'Nothing here has been saved yet. Closing now throws it away.'
+          : 'You clicked outside the editor. Nothing has been changed, so nothing will be lost.',
+      ],
       danger: discard,
       safe: keep,
     }),
@@ -355,12 +428,58 @@ function dismiss() {
 }
 
 /**
+ * The tab strip and its panes, built once.
+ *
+ * Returns the two elements to insert; the caller's `tabs` array is not touched,
+ * because a helper that wrote back onto what it was handed would make the
+ * second call with the same array behave differently from the first.
+ */
+function tabParts(tabs) {
+  const strip = el('nav', 'card-tabs rl-modal-tabs', { role: 'tablist', 'aria-label': 'Sections' });
+  const panes = el('div', 'rl-modal-panes');
+
+  const built = tabs.map((tab) => {
+    const button = el(
+      'button',
+      'card-tab',
+      { type: 'button', role: 'tab', 'data-pane': tab.id, 'aria-selected': 'false' },
+      tab.label,
+    );
+    const pane = el('div', 'rl-modal-pane', { 'data-pane': tab.id, role: 'tabpanel' });
+    pane.append(tab.body);
+    strip.append(button);
+    panes.append(pane);
+    return { id: tab.id, button, pane };
+  });
+
+  const show = (id) => {
+    for (const entry of built) {
+      const on = entry.id === id;
+      // `hidden` only. styles.css enforces `[hidden] { display: none
+      // !important }` globally, which is what makes that safe on a pane that
+      // sets its own display - the trap the veto board's logo bar fell into.
+      entry.pane.hidden = !on;
+      entry.button.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+  };
+  for (const entry of built) entry.button.addEventListener('click', () => show(entry.id));
+  show(built[0].id);
+
+  return [strip, panes];
+}
+
+/**
  * Put a dialog on screen.
  *
  * @param {object}      options
  * @param {string}      [options.className]  extra classes on the dialog itself,
  *   for a panel that wants its own width or its own footer rules.
- * @param {Element}     options.body         built by the caller, whole.
+ * @param {Element}     [options.body]       built by the caller, whole. Use
+ *   this OR `tabs`, never both - a body beside a tab strip is a section of the
+ *   form that belongs to no tab, which is the thing tabs exist to remove.
+ * @param {Element}     [options.head]       stays above the strip and never
+ *   scrolls: the title, and anything that names what is being edited.
+ * @param {{id: string, label: string, body: Element}[]} [options.tabs]
  * @param {Element}     [options.foot]       the button row, likewise.
  * @param {() => boolean} [options.dirty]    is there unsaved work in here? See
  *   the note above - given one, Escape, the backdrop and `askClose` ask before
@@ -369,11 +488,25 @@ function dismiss() {
  * @param {() => void}  [options.onClose]    run once, after it is removed.
  * @returns {HTMLDialogElement|null} null if one was already open.
  */
-export function openModal({ className = '', body, foot, dirty, onClose } = {}) {
+export function openModal({ className = '', body, head, tabs, foot, dirty, onClose } = {}) {
   if (modalOpen()) return null;
 
-  const dialog = el('dialog', `rl-modal${className ? ` ${className}` : ''}`);
-  dialog.append(...[body, foot].filter(Boolean));
+  const tabbed = Array.isArray(tabs) && tabs.length > 0;
+  const dialog = el('dialog', `rl-modal${tabbed ? ' is-tabbed' : ''}${className ? ` ${className}` : ''}`);
+
+  const parts = [];
+  if (head) {
+    // Wrapped here rather than by every caller, so the padding above a strip
+    // cannot end up different on two dialogs.
+    const bar = el('div', 'rl-modal-head');
+    bar.append(head);
+    parts.push(bar);
+  }
+  if (tabbed) parts.push(...tabParts(tabs));
+  if (body) parts.push(body);
+  if (foot) parts.push(foot);
+
+  dialog.append(...parts);
   document.body.append(dialog);
 
   guard = typeof dirty === 'function' ? dirty : null;
@@ -407,7 +540,8 @@ export function openModal({ className = '', body, foot, dirty, onClose } = {}) {
     // dialog while it is up came from the backdrop outside it. Same answer.
     if (event.target !== dialog) return;
     if (sheet) dismiss();
-    else askClose(dialog);
+    // `always`: this is the exit nobody aims at. See the header.
+    else askClose(dialog, { always: true });
   });
 
   dialog.showModal();

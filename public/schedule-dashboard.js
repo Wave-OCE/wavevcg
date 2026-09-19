@@ -40,7 +40,7 @@
 
 import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
-import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
+import { askClose, confirmDanger, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
@@ -245,7 +245,6 @@ if (host) {
 
     const draft = { ...stage };
     let dialog = null;
-    const body = el('div', 'rl-modal-body');
     const held = fixturesIn(stage.id).length;
 
     const name = el('input', null, { type: 'text', maxlength: 80, 'aria-label': 'Stage name' });
@@ -345,11 +344,12 @@ if (host) {
      * this is the press.
      *
      * It REPLACES, so it takes the same bar as deleting the stage once there is
-     * anything to lose - the exact name typed back. Its own box rather than
-     * sharing Delete's: two destructive buttons armed by one field is a mis-aim
-     * away from the wrong one, which is the reason the two are at opposite ends
-     * of the footer in the first place. Different section, different label,
-     * different button.
+     * anything to lose - the exact name typed back. That bar is now a SHEET
+     * this button raises rather than a box sitting in the form: a confirmation
+     * belongs to the press it guards, and two typed boxes living in one body
+     * was a mis-aim away from arming the wrong one. It stays in its own section
+     * beside the template picker rather than moving to the footer - this is a
+     * constructive press with a destructive consequence, not a Delete.
      */
     const templatePick = el('select', null, { 'aria-label': 'Template' });
     for (const entry of STAGE_TEMPLATES) {
@@ -366,15 +366,6 @@ if (host) {
       held ? `Replace ${held} match${held === 1 ? '' : 'es'} and lay out` : 'Lay this stage out',
     );
 
-    let layTyped = null;
-    if (held) {
-      layTyped = el('input', null, { type: 'text', placeholder: stage.name, 'aria-label': 'Type the stage name to replace the matches' });
-      lay.disabled = true;
-      layTyped.addEventListener('input', () => {
-        lay.disabled = layTyped.value.trim() !== String(stage.name ?? '').trim();
-      });
-    }
-
     const syncTemplate = () => {
       const entry = STAGE_TEMPLATES.find((e) => e.key === templatePick.value);
       templateHelp.textContent = entry?.help ?? '';
@@ -385,9 +376,34 @@ if (host) {
     templatePick.addEventListener('change', syncTemplate);
     syncTemplate();
 
-    lay.addEventListener('click', () => {
+    lay.addEventListener('click', async () => {
+      /*
+       * Teams FIRST, then the confirmation, and that order is deliberate: the
+       * teams are what is being built and the typed name is the last gate in
+       * front of the write. Asked the other way round, an operator confirms a
+       * replacement and is then asked a question they can still back out of,
+       * which makes the confirmation mean less than it says.
+       */
       const teams = askForTeams(stage, templatePick.value);
       if (!teams) return;
+
+      // An EMPTY stage has nothing to replace, so it asks nothing - the same
+      // rule Delete follows two sections down.
+      if (held) {
+        const ok = await confirmDanger({
+          title: `Replace ${held} match${held === 1 ? '' : 'es'} in "${stage.name}"?`,
+          lines: [
+            'Laying the stage out again builds it from scratch, so every match in it now goes - results included. ' +
+              'That cannot be undone.',
+            'The draw you are about to build is wired: every winner carries forward on its own.',
+          ],
+          typed: stage.name,
+          typedLabel: 'Type the stage name to confirm',
+          confirm: 'Replace and lay out',
+        });
+        if (!ok) return;
+      }
+
       act(
         {
           action: 'template.apply',
@@ -395,7 +411,9 @@ if (host) {
           template: templatePick.value,
           teams,
           groups: Number.parseInt(templateGroups.value, 10) || 1,
-          confirm: layTyped ? layTyped.value.trim() : undefined,
+          // The sheet above does not let a wrong name through, so this is the
+          // name. The server checks it again and is what actually enforces it.
+          confirm: held ? stage.name : undefined,
         },
         () => {
           toast(`Laid "${stage.name}" out`);
@@ -420,13 +438,16 @@ if (host) {
      * Removing it, and the bar rises with what it would take.
      *
      * An EMPTY stage is one press: there is nothing to lose, and asking anyway
-     * would train the answer out of somebody for the case below. A stage
+     * would train the answer out of somebody for the case that matters. A stage
      * holding matches wants its name typed back - the bar a production and a
      * tournament both set, because this deletes results nobody can get back.
      *
-     * The button stays disabled until the typed name matches, so the
-     * confirmation is visible BEFORE the click rather than being a dialog
-     * after it. Same shape as removing a production.
+     * The typed box is a SHEET this button raises, not a section in the form.
+     * It used to be the latter, which put the confirmation for a press at the
+     * bottom of a scroll and the press itself in the footer - so the two halves
+     * of one decision were never on screen together. The sheet is still visible
+     * BEFORE the write, which was the property worth keeping: the button in it
+     * stays dead until the name matches.
      */
     const drop = el(
       'button',
@@ -434,18 +455,23 @@ if (host) {
       { type: 'button' },
       held ? `Delete stage and ${held} match${held === 1 ? '' : 'es'}` : 'Delete stage',
     );
-    let typed = null;
 
-    if (held) {
-      typed = el('input', null, { type: 'text', placeholder: stage.name, 'aria-label': 'Type the stage name to confirm' });
-      drop.disabled = true;
-      typed.addEventListener('input', () => {
-        drop.disabled = typed.value.trim() !== String(stage.name ?? '').trim();
-      });
-    }
-
-    drop.addEventListener('click', () => {
-      act({ action: 'stage.remove', id: stage.id, confirm: typed ? typed.value.trim() : undefined }, () => {
+    drop.addEventListener('click', async () => {
+      if (held) {
+        const ok = await confirmDanger({
+          title: `Delete "${stage.name}" and ${held} match${held === 1 ? '' : 'es'}?`,
+          lines: [
+            'The stage goes and every match in it goes with it, results included. It cannot be undone.',
+            'Any match elsewhere that was fed by one of these keeps whoever had already reached it - the edge is ' +
+              'cleared, not the team.',
+          ],
+          typed: stage.name,
+          typedLabel: 'Type the stage name to confirm',
+          confirm: 'Delete the stage',
+        });
+        if (!ok) return;
+      }
+      act({ action: 'stage.remove', id: stage.id, confirm: held ? stage.name : undefined }, () => {
         openStage = doc.stages[0]?.id ?? '';
         toast(held ? `Deleted "${stage.name}" and ${held} match${held === 1 ? '' : 'es'}` : `Deleted "${stage.name}"`);
         dialog?.close();
@@ -559,14 +585,34 @@ if (host) {
     };
     paintGroups();
 
-    body.append(
-      modalTitle(stage.name || 'Stage', `${held} match${held === 1 ? '' : 'es'}`),
+    /*
+     * THREE TABS, because this is one record with three jobs.
+     *
+     * What the stage IS (its name, its format, how long a series runs) is
+     * something an operator sets once and comes back to rarely. Groups is a
+     * list they build at the start of a season. Matches is where they live on
+     * the morning of a show. In one column those were four sections deep and
+     * the last of them was the one being opened for.
+     *
+     * Every pane is built ONCE - see modal.js. `paintGroups()` still replaces
+     * the children of `groupList`, which is inside a pane rather than being
+     * one, so switching tabs cannot disturb it.
+     *
+     * Delete stays in the FOOTER rather than becoming a fourth tab. It is not a
+     * section of the form, it is an action on the record, and a tab called
+     * Delete is one mis-click from a pane nobody meant to open.
+     */
+    const aboutPane = el('div');
+    aboutPane.append(
       field('Name', name),
       help('What this phase of the competition is called. It names the strip, the bracket graphic and the table.'),
       grid(2, [field('Format', kind), field('Default series', best)]),
       kindHelp,
       help('The series length a NEW match in this stage starts at. Not a rule - a grand final in a Bo3 bracket is allowed to be a Bo5.'),
-      el('div', 'subhead', {}, 'Groups'),
+    );
+
+    const groupPane = el('div');
+    groupPane.append(
       help(
         'Split this stage into pools, each with its own table, shown together. Sixteen teams in four groups is ' +
           'four round robins of six matches instead of one of a hundred and twenty. Removing a group leaves its ' +
@@ -574,7 +620,10 @@ if (host) {
           'saves this whole form first, because the group has to exist before it can be laid out.',
       ),
       groupList,
-      el('div', 'subhead', {}, 'Matches'),
+    );
+
+    const matchPane = el('div');
+    matchPane.append(
       help(
         'Generate lays the stage out from the team library in one press, and ADDS to whatever is already here. ' +
           'Add round makes a round of empty matches after the last one - which is how a bracket grows past its ' +
@@ -590,23 +639,22 @@ if (host) {
       ),
       grid(2, [field('Template', templatePick), templateGroupsField]),
       templateHelp,
-      ...(layTyped ? [field('Type the name to replace them', layTyped)] : []),
       stageRow([lay]),
-      el('div', 'subhead', {}, 'Delete'),
-      help(
-        held
-          ? 'This removes the stage AND every match in it, results included. That cannot be undone, so type the name to confirm.'
-          : 'Nothing is in this stage yet, so there is nothing to lose.',
-      ),
-      ...(typed ? [field('Type the name to confirm', typed)] : []),
     );
 
     // Snapshotted after the form is built, so nothing the form does to the
-    // draft on the way up reads as the operator's work - see modal.js.
+    // draft on the way up reads as the operator's work - see modal.js. It
+    // watches the WHOLE draft, not the open tab: a name typed on one pane and
+    // abandoned from another still has to be worth asking about.
     const dirty = watchChanges(() => JSON.stringify(draft));
 
     dialog = openModal({
-      body,
+      head: modalTitle(stage.name || 'Stage', `${held} match${held === 1 ? '' : 'es'}`),
+      tabs: [
+        { id: 'about', label: 'Stage', body: aboutPane },
+        { id: 'groups', label: 'Groups', body: groupPane },
+        { id: 'matches', label: 'Matches', body: matchPane },
+      ],
       dirty,
       foot: modalFoot({ danger: drop, cancel, confirm: save }),
       onClose: () => paint(),

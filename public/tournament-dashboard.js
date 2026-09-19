@@ -327,21 +327,33 @@ if (els.pick) {
 
     let drop = null;
     if (mayRemove) {
-      const typed = el('input', null, { type: 'text', placeholder: desk.name, 'aria-label': 'Type the name to confirm' });
+      /*
+       * The typed name is a SHEET this button raises, not a section in the
+       * form. It was the latter, which put half of one decision at the bottom
+       * of the body and the other half in the footer - never on screen
+       * together. What mattered about it survives: the button in the sheet is
+       * dead until the name matches, so the confirmation is still visible
+       * BEFORE the write rather than being a dialog after it.
+       */
       drop = el('button', 'btn btn-ghost rl-modal-danger', { type: 'button' }, 'Remove this production');
-      drop.disabled = true;
-      // The button turns on only when the name matches, so the confirmation is
-      // visible BEFORE the click rather than being a second dialog after it.
-      typed.addEventListener('input', () => {
-        drop.disabled = typed.value.trim() !== desk.name;
-      });
       drop.addEventListener('click', async () => {
+        const ok = await confirmDanger({
+          title: `Remove "${desk.name}"?`,
+          lines: [
+            'Its graphics, its OBS URLs and its stream deck key all go, and that cannot be undone.',
+            'The teams, the schedule and the player names stay - they belong to the tournament, not to this desk.',
+          ],
+          typed: desk.name,
+          typedLabel: 'Type the name to confirm',
+          confirm: 'Remove the production',
+        });
+        if (!ok) return;
         try {
           const payload = await send({
             action: 'production.remove',
             id: current.id,
             productionId: desk.id,
-            confirm: typed.value.trim(),
+            confirm: desk.name,
           });
           current = payload.tournament;
           await refreshAccount();
@@ -352,15 +364,6 @@ if (els.pick) {
           toast(error.message);
         }
       });
-
-      body.append(
-        subhead('Remove'),
-        help(
-          'Its graphics, its OBS URLs and its stream deck key all go, and that cannot be undone. The teams, the ' +
-            'schedule and the player names stay - they belong to the tournament, not to this desk.',
-        ),
-        field('Type the name to confirm', typed),
-      );
     }
 
     body.prepend(
@@ -369,12 +372,13 @@ if (els.pick) {
     );
 
     /*
-     * The name only, and deliberately not the type-it-back box below it.
+     * The name is the only thing in here that is WORK.
      *
-     * That box is a CONFIRMATION, not work: half a production name typed into
-     * it is nothing anybody wants kept, and asking about it would put a prompt
-     * in front of the operator who thought better of removing a desk - which is
-     * the one moment they should be able to leave fastest.
+     * This used to have to say "and deliberately not the type-it-back box
+     * below it", because that box lived in the body and half a production name
+     * typed into a confirmation is nothing anybody wants kept. The box is a
+     * sheet now, so there is nothing left in the body that is not the draft -
+     * which is the tidier version of the same argument.
      */
     const dirty = watchChanges(() => name.value);
 
