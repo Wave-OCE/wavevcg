@@ -87,6 +87,22 @@ const swatch = (label) =>
 
 const POOL = ['Ascent', 'Bind', 'Haven', 'Split', 'Lotus', 'Sunset', 'Icebox'];
 
+/*
+ * A logo the page can actually DECODE, and a TALL one.
+ *
+ * `/media/cru.png` is enough to assert that a src reaches the element, and
+ * useless for measuring where the mark sits: nothing serves it out of a
+ * throwaway STATE_DIR, so the broken-image guard hides it and every box
+ * measures zero. It is deliberately taller than it is wide, because a square
+ * mark is centred by accident in a box that is not centring anything.
+ *
+ * Short on purpose too - the board's `side()` sanitiser slices a logo at 500
+ * characters, and a chatty data URI arrives truncated and fails to decode.
+ */
+const LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="420"><rect width="300" height="420" fill="#8a2030"/><circle cx="150" cy="150" r="110" fill="#fff"/></svg>',
+)}`;
+
 const ban = (map, who, short) => ({ kind: 'ban', map, by: who, byShort: short });
 const pick = (map, who, short) => ({
   kind: 'pick',
@@ -464,6 +480,169 @@ try {
   );
   ok('39. a revealed ban is struck through', crosses.filter((c) => c.revealed).every((c) => c.ink > 0.5), JSON.stringify(crosses));
   ok('40. ...and one nobody has taken is NOT', crosses.filter((c) => !c.revealed).every((c) => c.ink === 0), JSON.stringify(crosses));
+
+  // =========================== the lower third shows its maps too ===========
+  /*
+   * It had no map image AT ALL. Stage 21 gave the full-screen layout its
+   * splashes and stopped there, so the same board said two different amounts
+   * depending on which way it was laid out - and the lower third is the one an
+   * operator actually has up WHILE a veto is happening.
+   */
+  await put({ ...board(bo3, [true, true, true, true, false, false, false]), layout: 'lower' });
+  await wait(1200);
+
+  const cells = await page.evaluate(() => {
+    const painted = (img) => Boolean(img) && !img.hidden && Boolean(img.getAttribute('src'));
+    return [...document.querySelectorAll('.cell')].map((cell) => {
+      const art = cell.querySelector('.cell-art');
+      return {
+        revealed: cell.classList.contains('is-revealed'),
+        ban: cell.classList.contains('is-ban'),
+        art: painted(art),
+        filter: art ? getComputedStyle(art).filter : '(missing)',
+        scrim: Number(getComputedStyle(cell.querySelector('.cell-scrim')).opacity),
+      };
+    });
+  });
+
+  eq('41. a revealed cell carries the map it is naming', cells.filter((c) => c.revealed && c.art).length, 4);
+  /*
+   * The half that matters more, and the same rule the full-screen box follows:
+   * an unrevealed cell carries no art at all rather than art behind an opacity.
+   * This page is opened with the session key, so the answer must not be sitting
+   * in its DOM - the same reasoning as never painting a veto token.
+   */
+  eq('42. ...and an unrevealed one gives nothing away', cells.filter((c) => !c.revealed && c.art).length, 0);
+  /*
+   * A BAN AND A PICK MUST NOT LOOK ALIKE. Gone-versus-playing is the whole
+   * distinction this board draws, and at a glance on a stream a full-colour
+   * splash reads as "this one is on" whatever the ring around it says.
+   */
+  ok(
+    '43. a banned map\'s art is drained',
+    cells.filter((c) => c.revealed && c.ban).every((c) => c.filter !== 'none'),
+    JSON.stringify(cells.filter((c) => c.ban)),
+  );
+  ok(
+    '44. ...and a picked one\'s is not',
+    cells.filter((c) => c.revealed && !c.ban).every((c) => c.filter === 'none'),
+    JSON.stringify(cells.filter((c) => !c.ban)),
+  );
+  /*
+   * The scrim is legibility, not decoration: it must arrive WITH the art, or a
+   * cell with no art wears a dark wash for no reason - which is exactly what
+   * the full-screen panel's scrim note already records.
+   */
+  ok(
+    '45. the legibility scrim comes up only where there is art',
+    cells.every((c) => (c.art ? c.scrim === 1 : c.scrim === 0)),
+    JSON.stringify(cells.map((c) => [c.art, c.scrim])),
+  );
+
+  // ==================== the team mark is centred, and gets out of the way ====
+  /*
+   * MEASURED, because this is the class of fault no state assertion sees: the
+   * mark was an <img> styled as though it were a wrapper around one, so
+   * `.full-ban-team img` matched nothing and the cap and fit were applied to
+   * nothing. What was left was an absolutely positioned replaced element with
+   * `width: auto`, which takes its own intrinsic width and ignores `right` once
+   * `left` is set - so it sat against the LEFT edge of its tile with the
+   * padding pushing it further in. Every box reported exactly the size it had
+   * asked for; only looking at it showed anything was wrong.
+   */
+  const marked = {
+    ...board(bo3, [true, false, false, false, false, false, false]),
+    layout: 'full',
+    left: { name: 'Crusaders', shortName: 'CRU', logo: LOGO },
+    right: { name: 'Jail Time', shortName: 'JAIL', logo: LOGO },
+  };
+  await put(marked);
+  await wait(1200);
+
+  const placed = await page.evaluate(() =>
+    [...document.querySelectorAll('.full-ban')]
+      .map((node) => {
+        const mark = node.querySelector('.full-ban-team');
+        if (!mark || mark.hidden || !mark.getAttribute('src')) return null;
+        const tile = node.getBoundingClientRect();
+        const box = mark.getBoundingClientRect();
+        return {
+          revealed: node.classList.contains('is-revealed'),
+          offCentre: Math.round(box.left + box.width / 2 - (tile.left + tile.width / 2)),
+          width: Math.round(box.width),
+          tile: Math.round(tile.width),
+          opacity: Number(getComputedStyle(mark).opacity),
+        };
+      })
+      .filter(Boolean),
+  );
+
+  ok('46. the mark is painted at all', placed.length === 4, JSON.stringify(placed));
+  ok('47. ...centred in the box it sits behind', placed.every((m) => Math.abs(m.offCentre) <= 1), JSON.stringify(placed));
+  ok('48. ...and never wider than it', placed.every((m) => m.width <= m.tile), JSON.stringify(placed));
+
+  /*
+   * AND IT GETS OUT OF THE WAY. The mark answers "who is acting here", which is
+   * the most useful thing an empty box has to say and the least useful thing a
+   * filled one does - once the map is revealed the art is the subject and the
+   * line below it already names the team. Two images competing for the same two
+   * seconds is what it was doing before.
+   */
+  ok(
+    '49. an unrevealed box wears its team mark',
+    placed.filter((m) => !m.revealed).every((m) => m.opacity > 0),
+    JSON.stringify(placed),
+  );
+  ok(
+    '50. ...and a revealed one has put it away for the map',
+    placed.filter((m) => m.revealed).every((m) => m.opacity === 0),
+    JSON.stringify(placed),
+  );
+
+  // ================================= the operator's own size handle =========
+  /*
+   * ON `.board`, NEVER ON `#stage`.
+   *
+   * `fitStage` owns `#stage`'s transform and rewrites it on every resize, so a
+   * second scale written there is wiped by the next one - the trap the
+   * bracket's `drawScale` already walked into. Asserted as BOTH halves: the
+   * board moved, and the stage did not. Reading only the board would stay green
+   * against an implementation that wrote to the stage as well.
+   */
+  await put({ ...marked, boardScale: 1.35 });
+  await wait(900);
+  const sized = await page.evaluate(() => ({
+    board: getComputedStyle(document.getElementById('board')).transform,
+    origin: getComputedStyle(document.getElementById('board')).transformOrigin,
+    stage: getComputedStyle(document.getElementById('stage')).transform,
+  }));
+  eq('51. the board takes the size the operator set', sized.board, 'matrix(1.35, 0, 0, 1.35, 0, 0)');
+  eq('52. ...and the fit to the OBS canvas is left alone', sized.stage, 'matrix(1, 0, 0, 1, 0, 0)');
+  eq('53. ...growing about the middle of the frame on the full-screen layout', sized.origin, '960px 540px');
+
+  /*
+   * The lower third is hung off the bottom edge and belongs there, so it grows
+   * UPWARD rather than walking up the screen as it gets bigger.
+   */
+  await put({ ...marked, layout: 'lower', boardScale: 1.35 });
+  await wait(900);
+  const lowerOrigin = await page.evaluate(() => getComputedStyle(document.getElementById('board')).transformOrigin);
+  eq('54. ...and off the bottom edge on the lower third', lowerOrigin, '960px 1080px');
+
+  /*
+   * A `scale`, not a `ratio`. `ratio()` caps at 1, so a multiplier run through
+   * it would silently clamp every enlargement to "no change" while the slider
+   * claimed otherwise - and the range has to hold at the top as well as the
+   * bottom, or an operator's typo reaches air as a board six times too big.
+   */
+  await put({ ...marked, boardScale: 9 });
+  await wait(700);
+  const clamped = await (await fetch(`${BASE}/api/veto-board?session=${tournamentId}`, { headers: { Cookie: cookie } })).json();
+  eq('55. a size past the top of the range is clamped, not obeyed', clamped.state.boardScale, 1.6);
+  await put({ ...marked, boardScale: 1.2 });
+  await wait(700);
+  const kept = await (await fetch(`${BASE}/api/veto-board?session=${tournamentId}`, { headers: { Cookie: cookie } })).json();
+  eq('56. ...and a size ABOVE 1 is kept, which a ratio would have thrown away', kept.state.boardScale, 1.2);
 
   ok('26. no page errors', errors.length === 0, errors.join(' | '));
 } catch (error) {

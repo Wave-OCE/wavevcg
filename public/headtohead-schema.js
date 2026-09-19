@@ -29,6 +29,29 @@ const whole = (value, min, max, fallback = min) => {
   return Math.min(max, Math.max(min, number));
 };
 
+/*
+ * How far the type and the crests may be scaled.
+ *
+ * ONE range for both, because they are the same kind of control and two would
+ * be two numbers to keep in step for no gain an operator can see. 0.5 at the
+ * bottom is a half-size crest, which is the case this exists for - a wordmark
+ * that fills its box while a shield floats in the middle of one. 1.6 at the
+ * top is where a name plate stops fitting inside the half it is welded to.
+ *
+ * A `scale` and NOT a `ratio`: `ratio()` caps at 1 because everything it
+ * guards is a proportion, and a multiplier run through it would silently clamp
+ * every enlargement to "no change" while the slider claimed otherwise.
+ */
+export const H2H_SCALE_MIN = 0.5;
+export const H2H_SCALE_MAX = 1.6;
+export const H2H_SCALE_STEP = 0.05;
+
+const scale = (value, fallback, min = H2H_SCALE_MIN, max = H2H_SCALE_MAX) => {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed * 100) / 100));
+};
+
 const side = (input) => {
   const source = input && typeof input === 'object' ? input : {};
   return {
@@ -69,6 +92,28 @@ export const DEFAULT_HEADTOHEAD = {
   // colour of its own would otherwise wear the fallback red, which on a
   // head-to-head reads as a side rather than as a brand.
   tint: false,
+
+  /*
+   * ----------------------------------------------------------------- size --
+   *
+   * This graphic had no style fields at all beyond its colours: the three type
+   * sizes were literals in `headtohead.css`, so a show whose org names are
+   * long - or whose crests are wordmarks rather than shields - had no answer
+   * but to edit a stylesheet.
+   *
+   * TWO controls, because they are two different problems. `textScale` moves
+   * the name plate, the divider and the heading TOGETHER: they were chosen in
+   * proportion to each other and three separate numbers would let that drift,
+   * which is the argument the winner's `bandGap` already makes. `logoScale` is
+   * about the artwork a team supplied, and a wordmark and a shield want
+   * opposite corrections at the same type size.
+   *
+   * 1 is exactly what the sizes have always been, so an upgrade changes
+   * nothing on air. The lineup wants the same pair next; it is done here in a
+   * way the lineup can copy.
+   */
+  textScale: 1,
+  logoScale: 1,
   anim: { visible: false, cue: 0 },
 };
 
@@ -97,6 +142,8 @@ export function sanitiseHeadToHead(input, fallback = DEFAULT_HEADTOHEAD) {
     accent: brandHex(source.accent ?? base.accent, ''),
     styleBackdrop: text(source.styleBackdrop ?? base.styleBackdrop, 500),
     tint: typeof source.tint === 'boolean' ? source.tint : (base.tint ?? false),
+    textScale: scale(source.textScale ?? base.textScale, base.textScale ?? 1),
+    logoScale: scale(source.logoScale ?? base.logoScale, base.logoScale ?? 1),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
       cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),

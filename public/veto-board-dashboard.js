@@ -22,7 +22,14 @@ import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
-import { VETO_BOARD_LAYOUTS, boardIsStale, revealedCount } from './veto-board-schema.js';
+import {
+  VETO_BOARD_LAYOUTS,
+  VETO_BOARD_SCALE_MAX,
+  VETO_BOARD_SCALE_MIN,
+  VETO_BOARD_SCALE_STEP,
+  boardIsStale,
+  revealedCount,
+} from './veto-board-schema.js';
 import { vetoComplete } from './veto-schema.js';
 
 const $ = (id) => document.getElementById(id);
@@ -146,7 +153,12 @@ if (els.tab) {
    */
   const styleFields = makeFields(
     () => state ?? {},
-    () => save({ accent: state?.accent ?? '', highlight: state?.highlight ?? '', banColour: state?.banColour ?? '' }),
+    // `set` has already written into the live state, and `save` posts the whole
+    // of it - so an empty patch is the whole patch. Naming three keys here was
+    // right while only the colours were bound and became a trap the moment
+    // anything else was: a field whose key was not on that list would move the
+    // control, move the state, and never reach the server.
+    () => save({}),
   );
 
   let brand = { ...DEFAULT_BRAND };
@@ -157,37 +169,48 @@ if (els.tab) {
     styleFields.syncFields();
   });
 
+  /*
+   * BUILT ONCE, THEN SYNCED - the rule the bracket's style panel already
+   * follows, and a slider is what forced it here.
+   *
+   * `paint()` rebuilt this whole panel on every save, and a save fires on every
+   * frame of a slider drag: the handle under the cursor would be replaced by a
+   * fresh one and the drag would end a few pixels in. Binding through
+   * `makeFields` means `syncFields` moves the controls instead, and it
+   * deliberately skips whichever one is being interacted with. It is the caret
+   * rule again, met by SHAPE - the panel simply stops being rebuilt.
+   */
+  let styleBuilt = false;
+  let layoutHelp = null;
+
   function stylePanel() {
     const host = els.style;
-
-    const layout = el('select', null, { 'aria-label': 'Layout' });
-    for (const entry of VETO_BOARD_LAYOUTS) {
-      layout.append(el('option', null, { value: entry.key, selected: entry.key === state.layout ? 'selected' : null }, entry.label));
-    }
-    layout.addEventListener('change', () => save({ layout: layout.value }));
-
-    const sides = el('input', null, { type: 'checkbox' });
-    sides.checked = state.showSides !== false;
-    sides.addEventListener('change', () => save({ showSides: sides.checked }));
-    const sidesLine = el('label', 'checkline');
-    sidesLine.append(sides, el('span', null, {}, 'Show who starts on which side'));
-
-    const art = el('input', null, { type: 'checkbox' });
-    art.checked = state.showTeamArt !== false;
-    art.addEventListener('change', () => save({ showTeamArt: art.checked }));
-    const artLine = el('label', 'checkline');
-    artLine.append(art, el('span', null, {}, 'Show each team mark behind their boxes'));
+    layoutHelp = help('');
 
     host.replaceChildren(
       title('Look'),
-      grid(null, [field('Layout', layout)]),
-      help(VETO_BOARD_LAYOUTS.find((entry) => entry.key === state.layout)?.help ?? ''),
-      sidesLine,
-      artLine,
+      styleFields.choiceField('Layout', 'layout', VETO_BOARD_LAYOUTS),
+      layoutHelp,
+      styleFields.checkField('Show who starts on which side', 'showSides'),
+      styleFields.checkField('Show each team mark behind their boxes', 'showTeamArt'),
       help(
         'Their logo behind every box they banned or picked, large and faint - or their tricode when they have no ' +
           'logo. It is there to make WHO did what readable at a glance on a stream, which the words alone are too ' +
-          'small to do. A revealed map paints over it.',
+          'small to do. A revealed map paints over it and the mark gets out of its way.',
+      ),
+      subhead('Size'),
+      styleFields.rangeField('Board size', 'boardScale', {
+        min: VETO_BOARD_SCALE_MIN,
+        max: VETO_BOARD_SCALE_MAX,
+        step: VETO_BOARD_SCALE_STEP,
+        // A percentage, because 100% reads as "the size it was" far more
+        // directly than 1.00 does - and this slider has a default worth getting
+        // back to rather than a taste to be dialled in.
+        readout: (value) => `${Math.round(value * 100)}%`,
+      }),
+      help(
+        'On top of the fit to the OBS canvas, which happens whatever this says. The lower third grows upward off ' +
+          'the bottom edge so it stays where it was hung; the full-screen board grows about the middle of the frame.',
       ),
       subhead('Colours'),
       help(
@@ -281,7 +304,18 @@ if (els.tab) {
 
     loadPanel();
     revealPanel();
-    stylePanel();
+    if (!styleBuilt) {
+      stylePanel();
+      styleBuilt = true;
+    } else {
+      styleFields.syncFields();
+    }
+    // Derived text rather than a control, so it is not something `syncFields`
+    // can carry - and it has to follow, or picking the other layout leaves the
+    // sentence describing the one you just left.
+    if (layoutHelp) {
+      layoutHelp.textContent = VETO_BOARD_LAYOUTS.find((entry) => entry.key === state.layout)?.help ?? '';
+    }
   }
 
   // -------------------------------------------------------------- transport ---

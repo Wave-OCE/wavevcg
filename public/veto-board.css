@@ -82,12 +82,41 @@ body {
   transform-origin: top left;
 }
 
+/*
+ * The board, and the operator's own size handle on it.
+ *
+ * The scale is HERE and not on #stage, which fitStage() rewrites on every
+ * resize - a second transform written there is wiped by the next one. Same
+ * arrangement the bracket's `drawScale` arrived at, for the same reason.
+ *
+ * It is deliberately NOT transitioned. Dragging a slider is an edit, and an
+ * edit that animates on air is the cue-counter mistake wearing a different
+ * hat: the graphic should move when the operator presses something, not when
+ * they adjust something.
+ */
 .board {
   position: absolute;
   inset: 0;
   opacity: 0;
+  transform: scale(var(--board-scale, 1));
   /* Fast, eased-out, symmetrical. Nothing bounces. */
   transition: opacity 340ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/*
+ * A different anchor per layout, because the two are hung off different edges.
+ *
+ * The lower third lives 96px off the bottom of the frame and belongs there, so
+ * it grows UPWARD off a fixed bottom edge; scaling it about the centre would
+ * walk it up the screen as it got bigger. The full-screen board is the whole
+ * frame and scales about the middle of it.
+ */
+.board.is-lower {
+  transform-origin: 50% 100%;
+}
+
+.board.is-full {
+  transform-origin: 50% 50%;
 }
 
 .board.is-on {
@@ -159,7 +188,79 @@ body {
   background: var(--panel-2);
 }
 
+/*
+ * The map's own art, behind the name.
+ *
+ * The lower third had none: stage 21 gave the full-screen layout its splashes
+ * and stopped there, so the same board said two different amounts depending on
+ * which way it was laid out. A recognisable image lands on a stream before a
+ * word does, which is the argument on either layout.
+ *
+ * Resolved at paint time from the catalogue and given no `src` at all while
+ * the box is unrevealed - never `hidden`, because an element arriving from
+ * `display: none` has no previous computed style to transition FROM and the
+ * art would snap while the name beside it faded. See setArt.
+ */
+.cell-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1.08);
+  transition:
+    opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.cell.is-revealed .cell-art {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/*
+ * A BANNED map's art is drained and dim, and a picked one's is not.
+ *
+ * The distinction the whole board exists to draw is gone-versus-playing, and
+ * at a glance on a stream a full-colour splash reads as "this one is on".
+ * The full-screen ban tile already does exactly this; one cell serves both
+ * kinds down here, so the filter is keyed off `.is-ban` rather than baked into
+ * the element.
+ */
+.cell.is-ban .cell-art {
+  filter: grayscale(1) brightness(0.42);
+}
+
+.cell.is-ban.is-revealed .cell-art {
+  opacity: 0.6;
+}
+
+/*
+ * Legibility, not decoration. It fades in WITH the art, so a box with no art -
+ * unrevealed, or a splash that failed to load - is the flat panel it always
+ * was rather than a panel wearing a dark wash for no reason.
+ *
+ * `[src]` rather than `:not([hidden])` for the reason the full-screen scrim
+ * gives: the art is no longer hidden when a box is unrevealed, it simply has
+ * no source, so "is there art here" is a question about the ATTRIBUTE.
+ */
+.cell-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 10, 14, 0.2) 0%, rgba(8, 10, 14, 0.72) 100%);
+  opacity: 0;
+  transition: opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.cell.is-revealed .cell-art[src]:not([hidden]) ~ .cell-scrim {
+  opacity: 1;
+}
+
 .cell-map {
+  /* Above the art and the scrim, both absolutely positioned - a position of
+     its own is what puts it there without a z-index race. */
+  position: relative;
   font-weight: 800;
   font-size: 34px;
   letter-spacing: 0.04em;
@@ -216,7 +317,7 @@ body {
 /* A banned map is greyed and struck by a ring, not deleted - the audience is
    being told what is GONE, so it has to still be readable. */
 .cell.is-ban .cell-map {
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.45);
 }
 
 /* A revealed pick gets a quiet edge, so a picked map reads differently from a
@@ -471,33 +572,74 @@ body {
  * the most useful thing they have. The two never fight because the art fades in
  * over the top on reveal.
  */
+/*
+ * The two marks share their placement and their fade and NOTHING else, because
+ * one is an <img> and the other is a <span> - see the note on the logo below
+ * for what treating them as one box cost.
+ */
 .full-ban-team,
 .full-ban-tri {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   opacity: 0.16;
   pointer-events: none;
+  /* Declared in the resting state as well as the revealed one, or the mark
+     would fade out on reveal and SNAP back on un-reveal - the same asymmetry
+     the cross's rotation note below records. */
+  transition: opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
+/*
+ * THE MARK IS THE <img> ITSELF, not a wrapper around one - and the old rule
+ * was written as though it were a wrapper, which is what put it off centre.
+ *
+ * `.full-ban-team img` matched nothing at all, so the cap and the fit were
+ * never applied to anything. What was left was an absolutely positioned
+ * replaced element with `width: auto`, and such a box takes its own intrinsic
+ * width and then IGNORES `right` because `left` is already set - so `inset: 0`
+ * never centred it. It sat against the left edge of its tile with
+ * `padding: 18px` pushing it further in, and the taller the logo the more
+ * obviously wrong it looked.
+ *
+ * An explicit width and height make the box the whole tile; `box-sizing:
+ * border-box` at the top of this file puts the padding inside that; and
+ * `object-fit: contain` centres the artwork in what is left. Found by looking
+ * at a screenshot, like the last two layout faults on this page - every box
+ * measured had reported exactly what it was asked for.
+ */
 .full-ban-team {
+  width: 100%;
+  height: 100%;
   padding: 18px;
-}
-
-.full-ban-team img,
-.full-ban-team {
-  max-width: 100%;
-  max-height: 100%;
   object-fit: contain;
 }
 
 .full-ban-tri {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 64px;
   font-weight: 900;
   letter-spacing: 0.06em;
   color: var(--ink);
+}
+
+/*
+ * AND IT GOES AS THE MAP ARRIVES.
+ *
+ * The mark answers "who is acting here", which is the most useful thing an
+ * empty box has to say and the least useful thing a filled one does: once the
+ * map is revealed the art is the subject and the words below it already name
+ * the team. Leaving the logo at 0.16 under a 0.55 splash put two images in one
+ * tile competing for the same two seconds.
+ *
+ * Eased and timed with the art, so the reveal reads as ONE motion rather than
+ * as a picture arriving on top of a logo that stayed.
+ */
+.full-ban.is-revealed .full-ban-team,
+.full-ban.is-revealed .full-ban-tri {
+  opacity: 0;
+  transition: opacity 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 /*

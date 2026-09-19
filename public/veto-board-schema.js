@@ -117,6 +117,31 @@ const whole = (value, min, max, fallback = min) => {
   return Math.min(max, Math.max(min, number));
 };
 
+/*
+ * How far the board may be scaled, and why it is a `scale` and not a `ratio`.
+ *
+ * `ratio()` caps at 1 because everything it guards is a proportion - an
+ * opacity, a dim. A multiplier is not one, and running one through it would
+ * silently clamp every enlargement to "no change" while the slider claimed
+ * otherwise. Two decimals, because the slider steps in twentieths and a float
+ * arriving as 1.0500000000000002 should not be stored that way.
+ *
+ * 0.6 at the bottom is the bracket's floor, chosen there as the operator's own
+ * handle on a draw that is already too big. 1.6 at the top is the point past
+ * which a full-screen board designed for a 1920x1080 frame runs off it - which
+ * is allowed, because that is a broadcast-design call and not this file's, but
+ * a slider that goes much further is one whose useful range is a sliver.
+ */
+export const VETO_BOARD_SCALE_MIN = 0.6;
+export const VETO_BOARD_SCALE_MAX = 1.6;
+export const VETO_BOARD_SCALE_STEP = 0.05;
+
+const scale = (value, fallback, min = VETO_BOARD_SCALE_MIN, max = VETO_BOARD_SCALE_MAX) => {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed * 100) / 100));
+};
+
 /** The most steps a board can hold. A VALORANT pool is seven; nine is headroom. */
 export const VETO_BOARD_ROWS = 9;
 
@@ -179,6 +204,22 @@ export const DEFAULT_VETO_BOARD = {
    * what this was asked for, and it is one switch away.
    */
   showTeamArt: true,
+
+  /*
+   * The operator's own size handle, over both layouts.
+   *
+   * `fitStage` already writes one `scale()` onto `#stage` to fit the browser
+   * source to whatever canvas OBS gives it, and that one is rewritten on every
+   * resize - so this must NEVER go there. It is multiplied into a transform on
+   * `.board` INSTEAD, which is the arrangement the bracket's `drawScale`
+   * arrived at for the same reason.
+   *
+   * 1 is exactly the size the board has always been, so an upgrade changes
+   * nothing on air. What it is FOR is the two things only a real show answers:
+   * a lower third that sits too tall under a scoreboard, and a full-screen
+   * board on a stream whose safe area is not the whole frame.
+   */
+  boardScale: 1,
   anim: { visible: false, cue: 0 },
 };
 
@@ -244,6 +285,7 @@ export function sanitiseVetoBoard(input, fallback = DEFAULT_VETO_BOARD) {
     highlight: brandHex(source.highlight ?? base.highlight, ''),
     banColour: brandHex(source.banColour ?? base.banColour, base.banColour ?? '') || DEFAULT_VETO_BOARD.banColour,
     showTeamArt: typeof source.showTeamArt === 'boolean' ? source.showTeamArt : (base.showTeamArt ?? true),
+    boardScale: scale(source.boardScale ?? base.boardScale, base.boardScale ?? 1),
     anim: {
       visible: typeof source.anim?.visible === 'boolean' ? source.anim.visible : (base.anim?.visible ?? false),
       cue: whole(source.anim?.cue ?? base.anim?.cue, 0, 1_000_000, 0),

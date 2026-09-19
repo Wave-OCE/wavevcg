@@ -15,6 +15,7 @@ import { onState } from './live.js';
 import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { api, outputUrl, targetKey } from './session.js';
 import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
+import { H2H_SCALE_MAX, H2H_SCALE_MIN, H2H_SCALE_STEP } from './headtohead-schema.js';
 
 const $ = (id) => document.getElementById(id);
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
@@ -147,6 +148,29 @@ if (els.tab) {
       help('The divider is the word between them - a grand final is not the same word as a group stage.'),
       tintLine,
       help('Off by default: a team with no colour of its own would wear the fallback red, which here reads as a SIDE rather than as a brand.'),
+      subhead('Size'),
+      grid(2, [
+        h2hFields.rangeField('Type size', 'textScale', {
+          min: H2H_SCALE_MIN,
+          max: H2H_SCALE_MAX,
+          step: H2H_SCALE_STEP,
+          // A percentage, because 100% reads as "the size it was" far more
+          // directly than 1.00 does - and both of these have a default worth
+          // getting back to rather than a taste to be dialled in.
+          readout: (value) => `${Math.round(value * 100)}%`,
+        }),
+        h2hFields.rangeField('Crest size', 'logoScale', {
+          min: H2H_SCALE_MIN,
+          max: H2H_SCALE_MAX,
+          step: H2H_SCALE_STEP,
+          readout: (value) => `${Math.round(value * 100)}%`,
+        }),
+      ]),
+      help(
+        'Type size moves the name plate, the divider and the heading together - they were drawn in proportion to ' +
+          'each other. Crest size is for the artwork a team supplied: a shield fills its box and a wordmark floats ' +
+          'in the middle of one, and no single size is right for both.',
+      ),
       subhead('Colour'),
       h2hFields.brandField('Accent', 'accent', { inherited: () => brand.accent }),
       help('The divider and the two rules either side of it. Blank follows the tournament.'),
@@ -174,7 +198,12 @@ if (els.tab) {
   // once, so the swatch can follow the tournament without a repaint.
   const h2hFields = makeFields(
     () => state ?? {},
-    () => save({ accent: state?.accent ?? '' }),
+    // `set` has already written into the live state and `save` posts the whole
+    // of it, so an empty patch is the whole patch. Naming one key here was
+    // right while the accent was the only bound control and became a trap the
+    // moment it was not: a field whose key was missing from that list would
+    // move the control, move the state, and never reach the server.
+    () => save({}),
   );
 
   let brand = { ...DEFAULT_BRAND };

@@ -144,7 +144,22 @@ function lowerCell() {
   const head = el('div', 'cell-head');
   head.append(el('span', 'who'), el('span', 'what'));
   const body = el('div', 'cell-body');
-  body.append(el('div', 'cell-map'), el('div', 'cell-wait'));
+  /*
+   * The art first, so it sits under the scrim and the type in PAINT ORDER
+   * rather than needing a z-index to say the same thing - the arrangement the
+   * full-screen tile already uses.
+   *
+   * The lower third had no map image at all: it got the name and the
+   * full-screen layout got the art, which is the half of stage 21 that was
+   * never done. A splash with a cross through it lands before a word does,
+   * which is the whole argument for having it on either layout.
+   */
+  body.append(
+    el('img', 'cell-art', { alt: '' }),
+    el('div', 'cell-scrim'),
+    el('div', 'cell-map'),
+    el('div', 'cell-wait'),
+  );
   cell.append(head, body, el('div', 'cell-foot'));
   return cell;
 }
@@ -167,6 +182,18 @@ function paintLower(state) {
     cell.querySelector('.who').textContent = words.who;
     cell.querySelector('.what').textContent = words.what;
     cell.querySelector('.cell-map').textContent = (row.map || '').toUpperCase();
+    /*
+     * Resolved at PAINT TIME from the catalogue, never frozen into the
+     * snapshot - the same call the full-screen tile makes, and for the reason
+     * in the header: what the snapshot must freeze is the COMPETITION, and a
+     * map's splash is a catalogue asset like an agent portrait.
+     *
+     * An UNREVEALED box carries no art at all rather than art behind an
+     * opacity, because this page is opened with the session key and the answer
+     * must not be sitting in its DOM. `setArt` is also what keeps `hidden` off
+     * it - see the note there.
+     */
+    setArt(cell.querySelector('.cell-art'), shown ? mapArt(row.map) : '');
     cell.querySelector('.cell-foot').textContent = shown && state.showSides ? sideWords(row) : '';
     cell.classList.toggle('is-ban', row.kind === 'ban');
 
@@ -359,6 +386,18 @@ function render(state) {
   board.style.setProperty('--accent', pick(state.accent, paint, 'accent'));
   board.style.setProperty('--highlight', pick(state.highlight, paint, 'highlight'));
   board.style.setProperty('--ban', state.banColour || '');
+
+  /*
+   * The operator's size handle, on `.board` and NEVER on `#stage`.
+   *
+   * `fitStage` owns `#stage`'s transform and rewrites it on every resize, so a
+   * second scale written there would be wiped by the next one - the trap the
+   * bracket's `drawScale` already walked into and solved by putting its own
+   * factor on an inner element. Written as a custom property rather than as a
+   * transform here, so the stylesheet keeps the per-layout origin beside the
+   * rule that uses it.
+   */
+  board.style.setProperty('--board-scale', String(state.boardScale ?? 1));
 
   const layout = VETO_BOARD_LAYOUT_KEYS.includes(state.layout) ? state.layout : 'lower';
   board.classList.toggle('is-lower', layout === 'lower');

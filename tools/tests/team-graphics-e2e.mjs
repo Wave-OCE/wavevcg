@@ -7,7 +7,17 @@
  * own settings survive a Load that only means "now show the other team".
  *
  * Verified by deliberate breaks; each is named in the commit.
+ *
+ * It is mostly a ROUTE suite and it opens a browser for exactly one thing: the
+ * head-to-head's two size handles. Everything else here is a question about
+ * state, and a question about state is cheaper and clearer without a Chromium
+ * in it - but "does the type actually get bigger" and "does the crest's box
+ * still clear the name plate when it does" cannot be asked of a payload at
+ * all, and those are the two that regress silently.
  */
+
+const playwright = await import(new URL('../../node_modules/playwright/index.js', import.meta.url).href);
+const chromium = playwright.chromium ?? playwright.default.chromium;
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -52,6 +62,18 @@ const server = spawn(process.execPath, ['server.js'], {
 let log = '';
 server.stdout.on('data', (c) => (log += c));
 server.stderr.on('data', (c) => (log += c));
+
+/*
+ * A crest the page can actually DECODE, and a WORDMARK rather than a shield -
+ * wide and short is the shape that shows whether a box is doing anything, and
+ * a square one is centred by accident whatever the box does.
+ *
+ * Short on purpose: a team's logo is sliced at 500 characters on the way in, so
+ * a chatty data URI arrives truncated and the broken-image guard hides it.
+ */
+const LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="90"><rect width="400" height="90" fill="#8a2030"/><circle cx="45" cy="45" r="30" fill="#fff"/></svg>',
+)}`;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 for (let i = 0; i < 80; i += 1) {
@@ -339,6 +361,136 @@ try {
     JSON.stringify([h2hTint.body.state.left.colour, h2hTint.body.state.right.colour]),
     JSON.stringify([r.state.left.colour, r.state.right.colour]),
   );
+
+  // ======================= the head-to-head's two size handles ============
+  /*
+   * This graphic had no style fields at all beyond its colours: its three type
+   * sizes were literals in `headtohead.css`, so a show whose org names are long
+   * - or whose crests are wordmarks rather than shields - had no answer but to
+   * edit a stylesheet.
+   *
+   * THE STATE HALF FIRST, and the assertion that matters is 32b: `ratio()`
+   * caps at 1 because everything it guards is a proportion, and a multiplier
+   * run through one would clamp every enlargement to "no change" while the
+   * slider went on claiming otherwise. A default-sized graphic passes every
+   * other assertion here either way.
+   */
+  r = await get('/api/headtohead', '&bus=preview');
+  eq('32 the head to head starts at the size it always was', r.state.textScale, 1);
+  eq('32a ...and so do its crests', r.state.logoScale, 1);
+
+  const bigger = await post('/api/headtohead', { state: { ...r.state, textScale: 1.4, logoScale: 1.25 } }, '&bus=preview');
+  eq('32b a size ABOVE 1 is kept, which a ratio would have thrown away', bigger.body.state.textScale, 1.4);
+  eq('32c ...on either handle', bigger.body.state.logoScale, 1.25);
+
+  const silly = await post('/api/headtohead', { state: { ...r.state, textScale: 9, logoScale: -3 } }, '&bus=preview');
+  eq('32d a size past the top of the range is clamped, not obeyed', silly.body.state.textScale, 1.6);
+  eq('32e ...and one below the bottom too', silly.body.state.logoScale, 0.5);
+
+  const notANumber = await post('/api/headtohead', { state: { ...r.state, textScale: 'enormous' } }, '&bus=preview');
+  eq('32f junk falls back rather than landing as NaN on a live graphic', notANumber.body.state.textScale, 1);
+
+  /*
+   * AND THE RENDERED HALF, which is the only place two of these can be asked.
+   *
+   * `clear` is the gap between the bottom of the crest's box and the top of the
+   * name plate. The plate's height scales with its type, so the crest's box has
+   * to follow it or turning the type up walks the plate into the crest above -
+   * the layout moving because a SETTING changed. Measured at three sizes: the
+   * gap is the same number at all three or the two are not tied together.
+   */
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+
+    const dress = (textScale, logoScale) =>
+      fetch(at('/api/headtohead', '&bus=program'), {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({
+          state: {
+            ...r.state,
+            left: { ...r.state.left, teamName: 'Crusaders Esports', logo: LOGO },
+            right: { ...r.state.right, teamName: 'Jail Time Gaming', logo: LOGO },
+            divider: 'VS',
+            heading: 'Grand final',
+            textScale,
+            logoScale,
+            anim: { visible: true, cue: 1 },
+          },
+        }),
+      });
+
+    const measure = () =>
+      page.evaluate(() => {
+        const px = (node, prop) => Math.round(Number.parseFloat(getComputedStyle(node)[prop]) * 10) / 10;
+        const plate = document.querySelector('.half-plate');
+        const logoBox = document.querySelector('.half-logo');
+        const crest = logoBox?.querySelector('img');
+        const half = document.querySelector('.half');
+        return {
+          plate: px(plate, 'fontSize'),
+          divider: px(document.querySelector('.divider'), 'fontSize'),
+          heading: px(document.querySelector('.heading'), 'fontSize'),
+          crest: crest ? Math.round(crest.getBoundingClientRect().width) : 0,
+          clear: Math.round(plate.getBoundingClientRect().top - logoBox.getBoundingClientRect().bottom),
+          insideHalf: crest ? crest.getBoundingClientRect().right <= half.getBoundingClientRect().right + 1 : false,
+          // fitStage owns this one and rewrites it on every resize, so a size
+          // handle written there would be wiped by the next resize.
+          stage: getComputedStyle(document.getElementById('stage')).transform,
+        };
+      });
+
+    await dress(1, 1);
+    await page.goto(`${BASE}/headtohead.html?key=${encodeURIComponent(key)}&session=${tournamentId}`);
+    await page.waitForSelector('.half-plate', { timeout: 8000 });
+    await wait(900);
+    const at100 = await measure();
+
+    await dress(1.4, 1.4);
+    await wait(900);
+    const at140 = await measure();
+
+    await dress(0.7, 0.6);
+    await wait(900);
+    const at70 = await measure();
+
+    /*
+     * 1 is exactly what the sizes were before any of this existed, so an
+     * upgrade changes nothing on air. Asserted against the literals the
+     * stylesheet used to carry rather than against "whatever it renders now",
+     * which would pass at any size.
+     */
+    eq('33 at 100% the type is exactly the size it always was', JSON.stringify([at100.plate, at100.divider, at100.heading]), JSON.stringify([36, 56, 20]));
+    ok(
+      '33a turning it up moves all three together',
+      at140.plate > at100.plate && at140.divider > at100.divider && at140.heading > at100.heading,
+      JSON.stringify([at100, at140]),
+    );
+    ok(
+      '33b ...and turning it down moves all three back',
+      at70.plate < at100.plate && at70.divider < at100.divider && at70.heading < at100.heading,
+      JSON.stringify([at70, at100]),
+    );
+    /*
+     * THE ONE THAT CANNOT BE ASKED OF A PAYLOAD. The plate grows with its type;
+     * if the crest's box does not follow, the plate climbs into the crest and
+     * the graphic overlaps itself at a setting the operator chose deliberately.
+     */
+    ok(
+      '33c the crest still clears the name plate at every size',
+      at140.clear === at100.clear && at70.clear === at100.clear,
+      JSON.stringify({ at70: at70.clear, at100: at100.clear, at140: at140.clear }),
+    );
+    ok('33d the crest itself scales', at140.crest > at100.crest && at70.crest < at100.crest, JSON.stringify([at70.crest, at100.crest, at140.crest]));
+    ok('33e ...and stays inside the half it belongs to', at100.insideHalf && at140.insideHalf, JSON.stringify([at100.insideHalf, at140.insideHalf]));
+    eq('33f the fit to the OBS canvas is left alone by both handles', at140.stage, 'matrix(1, 0, 0, 1, 0, 0)');
+    ok('33g the page raised nothing', pageErrors.length === 0, pageErrors.join(' | '));
+  } finally {
+    await browser.close().catch(() => {});
+  }
 
   ok('31 no session key reached the log', !log.includes(key), 'KEY LEAKED');
 } catch (error) {

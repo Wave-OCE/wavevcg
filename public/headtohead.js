@@ -111,6 +111,17 @@ function render(state) {
    * halves read as one block instead of two.
    */
   stage.style.setProperty('--vs', pick(state.accent, brand(), 'accent'));
+  /*
+   * The two size handles. On `#stage` beside the colour rather than on a
+   * transform here, so the stylesheet decides WHAT each one multiplies - the
+   * plate's height and the crest's box both follow the type, and neither of
+   * those facts belongs in a renderer.
+   *
+   * Never a transform on `#stage` itself: `fitStage` owns that one and
+   * rewrites it on every resize.
+   */
+  stage.style.setProperty('--text-scale', String(state.textScale ?? 1));
+  stage.style.setProperty('--logo-scale', String(state.logoScale ?? 1));
 
   paintHalf('left', state.left ?? {}, state);
   paintHalf('right', state.right ?? {}, state);
