@@ -1170,6 +1170,88 @@ try {
   ok('27j. ...with a node for the fixture', (await page.$$('.sch-node')).length === 1, String((await page.$$('.sch-node')).length));
   ok('27k. ...and no standings table', (await page.$$('#sch-body .sch-table')).length === 0);
 
+  // ============================================ groups inside a stage =======
+  /*
+   * What a group IS, and one table per group, are asserted in schedule-model
+   * with no browser at all. What is here is the part only a page can answer:
+   * that a grouped stage READS as groups - the list sectioned by group, the
+   * tables stacked under their own names - because a grouped draw laid out
+   * round-first interleaves every pool and an operator cannot tell it apart.
+   *
+   * On a stage of its OWN, built and left behind, so nothing above it moves.
+   */
+  await page.click('#sch-body button:has-text("Add stage")');
+  await wait(900);
+  await page.fill('.rl-modal input[type=text]', 'Pools');
+  await page.selectOption('.rl-modal select[aria-label="Format"]', 'roundrobin');
+
+  await page.click('.rl-modal button:has-text("Add group")');
+  await wait(250);
+  await page.click('.rl-modal button:has-text("Add group")');
+  await wait(250);
+  const groupBoxes = await page.$$('.rl-modal .sch-group-row input');
+  ok('27l. groups are added inside the stage editor', groupBoxes.length === 2, String(groupBoxes.length));
+  ok(
+    '27m. ...named for you, so four groups is four clicks',
+    (await groupBoxes[0].inputValue()) === 'Group A' && (await groupBoxes[1].inputValue()) === 'Group B',
+    `${await groupBoxes[0].inputValue()} / ${await groupBoxes[1].inputValue()}`,
+  );
+
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1000);
+
+  // Two rounds in one group and one in the other, so "the round after the last
+  // one" is a different number in each - which is the property that makes a
+  // round belong to its pool rather than to the stage.
+  /*
+   * TWO STAGES, and the second did not replace the first.
+   *
+   * Every stage made from the dashboard begins life as "New stage", so every
+   * one of them slugs to the same id - and `stage.save` replaces on a matching
+   * id. The first stage was simply gone, with its matches orphaned behind it
+   * and nothing said. Found here, by adding a second one and looking for the
+   * first. It was always possible for two stages sharing a name; Add creating
+   * the record before asking for one made it certain.
+   */
+  const stagesNow = await page.evaluate(async () => (await (await fetch('/api/schedule')).json()).schedule.stages);
+  ok('27m2. a second stage does not replace the first', stagesNow.length === 2, JSON.stringify(stagesNow.map((e) => [e.id, e.name])));
+  ok('27m3. ...and they have ids of their own', new Set(stagesNow.map((e) => e.id)).size === 2, JSON.stringify(stagesNow.map((e) => e.id)));
+  const poolsId = stagesNow.find((entry) => entry.name === 'Pools')?.id ?? '';
+  ok('27m4. the new stage saved with its groups', (stagesNow.find((e) => e.id === poolsId)?.groups ?? []).length === 2, JSON.stringify(stagesNow.find((e) => e.id === poolsId)?.groups));
+
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await page.selectOption('.rl-modal select[aria-label="Group for the new round"]', 'group-a');
+  await page.fill('.rl-modal input[aria-label="Matches in the round"]', '2');
+  await page.click('.rl-modal button:has-text("Add round")');
+  await wait(1000);
+
+  ok('27n. a round of matches can be added by hand', (await page.$$('#sch-body .sch-fixture')).length >= 2, String((await page.$$('#sch-body .sch-fixture')).length));
+  ok(
+    '27o. ...and the list says which group they are in',
+    (await page.$$eval('#sch-body .sch-group-head', (nodes) => nodes.map((n) => n.textContent))).includes('Group A'),
+    JSON.stringify(await page.$$eval('#sch-body .sch-group-head', (nodes) => nodes.map((n) => n.textContent))),
+  );
+  ok(
+    '27p. ...with a heading for every group, not only the ones holding matches',
+    (await page.$$('#sch-body .sch-group-head')).length >= 2,
+    String((await page.$$('#sch-body .sch-group-head')).length),
+  );
+
+  /*
+   * BACK TO THE BRACKET STAGE, because everything below this reads one.
+   *
+   * Adding a stage SELECTS it - which is right for an operator and a trap for a
+   * suite: the assertions after this looked for a bracket node and found a
+   * round-robin table, then timed out thirty seconds later naming a selector
+   * rather than the cause. The same lesson the settings groups taught, written
+   * down in CLAUDE.md: a test that walks through every state has to say which
+   * one it leaves.
+   */
+  await page.click('#sch-body .sch-stage:has-text("Playoff bracket")');
+  await wait(800);
+  ok('27p2. the bracket stage is showing again', await page.isVisible('#sch-body .sch-bracket'), 'left on the wrong stage');
+
   /*
    * THE CARET RULE, asserted as the shape rather than by typing.
    *

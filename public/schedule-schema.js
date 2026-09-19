@@ -241,6 +241,15 @@ export const emptyFixture = () => ({
   slot: 0,
   order: 0,
   bracket: 'upper',
+  /*
+   * Which group of its stage this match belongs to, or blank.
+   *
+   * Blank is the ordinary state: a bracket has no groups, and so does a pool
+   * nobody has split. An id that names no group on the stage is treated as
+   * blank by everything that reads it rather than being refused - a group can
+   * be removed, and the document must not become unloadable because of it.
+   */
+  group: '',
   bestOf: 3,
   startsAt: '',
   note: '',
@@ -267,6 +276,7 @@ export function sanitiseFixture(input) {
     slot: whole(source.slot, 999),
     order: whole(source.order, 9999),
     bracket: oneOf(source.bracket, BRACKET_HALVES, 'upper'),
+    group: text(source.group, 60),
     bestOf,
     startsAt: dateText(source.startsAt),
     note: text(source.note, 200),
@@ -366,6 +376,15 @@ export function fixtureLabel(fixture) {
 
 // ----------------------------------------------------------------- stages ---
 
+/**
+ * How many groups one stage may hold.
+ *
+ * Sixteen is more than any real draw and small enough that a page of tables is
+ * still a page. The cap exists so a hand-edited file cannot ask the dashboard
+ * to paint four hundred standings tables.
+ */
+export const MAX_GROUPS = 16;
+
 export const emptyStage = () => ({
   id: '',
   externalId: '',
@@ -373,6 +392,23 @@ export const emptyStage = () => ({
   kind: 'bracket',
   order: 0,
   bestOf: 3,
+  /*
+   * GROUPS ARE A DIVISION INSIDE ONE STAGE, not stages of their own.
+   *
+   * "Group stage" is one phase of a competition and reads as one thing on a
+   * strip; four separate stages called Group A to Group D is four entries
+   * before the playoffs even appear, and an eight-group event is unusable. One
+   * standings table per group, shown together, is what an operator is looking
+   * at when they open this.
+   *
+   * Empty is the ordinary state and means "one pool" - every bracket has no
+   * groups, and so does a round robin that nobody has split.
+   *
+   * `{ id, name }` rather than bare names, and for the reason stages carry an
+   * id: renaming "Group A" to "Alpha" must not orphan the matches in it. The
+   * id is slugged from the name at creation and never moves again.
+   */
+  groups: [],
 });
 
 export function sanitiseStage(input) {
@@ -389,7 +425,83 @@ export function sanitiseStage(input) {
     // The default a new fixture in this stage takes. Not a constraint - a
     // grand final in a Bo3 bracket is a Bo5 and the record must allow it.
     bestOf: oneOf(whole(source.bestOf, MAX_MAPS), BEST_OF_CHOICES, 3),
+    groups: sanitiseGroups(source.groups),
   };
+}
+
+/**
+ * The groups on a stage, cleaned.
+ *
+ * A group with no name is not a group - it cannot be picked out of a list and
+ * it cannot be labelled on a table, which is the same rule a nameless team and
+ * a nameless stage both get. Ids are deduplicated because two groups resolving
+ * to one slug would put both their matches in one table and lose half the draw
+ * with nothing failing.
+ */
+export function sanitiseGroups(input) {
+  const rows = Array.isArray(input) ? input : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const row of rows) {
+    const source = row && typeof row === 'object' ? row : { name: row };
+    const name = text(source.name, 60);
+    if (!name) continue;
+    const id = text(source.id, 60) || teamSlug(name);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+    if (out.length >= MAX_GROUPS) break;
+  }
+  return out;
+}
+
+/** Does this stage divide into groups? Blank and one group both read as no. */
+export const stageHasGroups = (stage) => (stage?.groups?.length ?? 0) > 1;
+
+/**
+ * Every table a stage wants to show, in the order it wants them.
+ *
+ * ONE ENTRY when the stage has no groups, so a caller never has to ask which
+ * shape it is dealing with - the page renders a list either way, and the
+ * ungrouped case is a list of one. That is the whole reason this exists rather
+ * than the page branching on `stageHasGroups`: two rendering paths for one
+ * table is how the grouped one ends up missing whatever the ungrouped one
+ * gains next.
+ *
+ * A LEFTOVER BUCKET comes last, and only when something is actually in it.
+ * Splitting an existing pool into groups leaves every match ungrouped until
+ * somebody assigns them, and those matches have to be visible - a table that
+ * silently omitted them would read as teams having been dropped from the draw.
+ * It is named rather than blank for the same reason.
+ *
+ * @returns {{id: string, name: string, table: object[]}[]}
+ */
+export function stageTables(schedule, stage) {
+  if (!stage) return [];
+  const groups = stage.groups ?? [];
+  if (!groups.length) return [{ id: '', name: '', table: standings(schedule, stage.id) }];
+
+  const known = new Set(groups.map((group) => group.id));
+  const loose = (schedule.fixtures ?? []).some(
+    (fixture) => fixture.stageId === stage.id && !known.has(fixture.group ?? ''),
+  );
+
+  const tables = groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    table: standings(schedule, stage.id, group.id),
+  }));
+
+  /*
+   * Asked for by id `''` rather than by "not in any group", which matters: a
+   * match whose group was REMOVED keeps the dead id, and it has to land
+   * somewhere an operator can see it. `standings` filters on an exact match, so
+   * this bucket catches only the genuinely unassigned - the orphans are swept
+   * up by the stage save instead, which is where the removal happened.
+   */
+  if (loose) tables.push({ id: '', name: 'Not in a group', table: standings(schedule, stage.id, '') });
+  return tables;
 }
 
 /** Does this stage want a table? Both pool kinds do; a bracket does not. */
@@ -633,8 +745,23 @@ export function sanitiseSchedule(input, { strict = false } = {}) {
  * Within a shared rank the order is alphabetical - arbitrary on purpose, so
  * that it does not read as a placing.
  */
-export function standings(schedule, stageId) {
+/**
+ * One table, for a stage or for one group of one.
+ *
+ * @param {object} schedule
+ * @param {string} stageId
+ * @param {string} [groupId] only matches in this group; omit for all of them
+ */
+export function standings(schedule, stageId, groupId) {
   const rows = new Map();
+  /*
+   * `undefined` means every match in the stage; a STRING means exactly that
+   * group. The two are deliberately different from each other and from `''`,
+   * which means the ungrouped ones - a stage part-way through being split has
+   * matches that belong to no group yet, and they are a real bucket rather
+   * than an error.
+   */
+  const wanted = (fixture) => groupId === undefined || (fixture.group ?? '') === groupId;
 
   const seat = (slot) => {
     const key = slot.teamId || slot.name;
@@ -670,12 +797,14 @@ export function standings(schedule, stageId) {
    */
   for (const fixture of schedule.fixtures) {
     if (stageId && fixture.stageId !== stageId) continue;
+    if (!wanted(fixture)) continue;
     seat(fixture.left);
     seat(fixture.right);
   }
 
   for (const fixture of schedule.fixtures) {
     if (stageId && fixture.stageId !== stageId) continue;
+    if (!wanted(fixture)) continue;
     const won = fixtureWinner(fixture);
     // A void fixture and a half-played one both contribute nothing. A table
     // that counted a match in progress would move under a live audience.

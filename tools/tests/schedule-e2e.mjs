@@ -184,6 +184,139 @@ try {
   ok('10h. an empty stage goes with no confirmation', r.status === 200, r.text.slice(0, 160));
   ok('10i. ...and is really gone', !(await boss(here('/api/schedule'))).json.schedule.stages.some((e) => e.id === 'empty'));
 
+
+  // =============================================== groups inside a stage =====
+  /*
+   * A group is a DIVISION INSIDE ONE STAGE. The model half - what a group is,
+   * and one table per group - is in schedule-model, with no server and no port.
+   * What is here is the half only the route can answer: that generation can be
+   * pointed at ONE group, which is the entire reason groups are worth having,
+   * and that removing one does not lose the matches that were in it.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { name: 'Pools', kind: 'roundrobin', bestOf: 3, groups: [{ name: 'Group A' }, { name: 'Group B' }] },
+  }));
+  const pools = (await boss(here('/api/schedule'))).json.schedule.stages.find((e) => e.id === 'pools');
+  ok('g1. a stage saves with its groups', pools?.groups?.length === 2, JSON.stringify(pools?.groups));
+  ok('g2. ...ids slugged from the names', pools.groups.map((g) => g.id).join(',') === 'group-a,group-b', JSON.stringify(pools.groups));
+
+  /*
+   * SIXTEEN TEAMS IN FOUR POOLS IS FOUR ROUND ROBINS OF SIX rather than one of
+   * a hundred and twenty. Generating into a group is what makes that true, so
+   * it is the assertion the whole feature rests on.
+   */
+  const four = ['Alpha', 'Bravo', 'Charlie', 'Delta'].map((name) => ({ name }));
+  r = await boss(here('/api/schedule'), json({ action: 'generate', stageId: 'pools', group: 'group-a', teams: four }));
+  ok('g3. a group can be laid out on its own', r.status === 200, r.text.slice(0, 160));
+
+  let inPools = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'pools');
+  ok('g4. ...producing a round robin of four', inPools.length === 6, String(inPools.length));
+  ok('g5. ...every match stamped with the group', inPools.every((f) => f.group === 'group-a'), JSON.stringify(inPools.map((f) => f.group)));
+
+  r = await boss(here('/api/schedule'), json({ action: 'generate', stageId: 'pools', group: 'group-b', teams: [{ name: 'Echo' }, { name: 'Foxtrot' }] }));
+  ok('g6. a second group lays out beside the first', r.status === 200, r.text.slice(0, 160));
+  inPools = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'pools');
+  ok('g7. ...adding to the stage', inPools.length === 7, String(inPools.length));
+  ok('g8. ...without touching the other group', inPools.filter((f) => f.group === 'group-a').length === 6, String(inPools.filter((f) => f.group === 'group-a').length));
+
+  /*
+   * A group id nobody has is REFUSED rather than written. A typo would produce
+   * a pool of matches in a table no operator can see, which is the exact
+   * failure the sweep below exists to prevent from the other direction.
+   */
+  r = await boss(here('/api/schedule'), json({ action: 'generate', stageId: 'pools', group: 'group-z', teams: four }));
+  ok('g9. generating into a group that does not exist is refused', r.status === 400, r.text.slice(0, 160));
+  ok('g10. ...and says which groups there are', /Group A/.test(r.json?.error?.hint ?? ''), JSON.stringify(r.json?.error));
+
+  /*
+   * REMOVING A GROUP DOES NOT REMOVE ITS MATCHES. Nothing breaks if the
+   * reference is left dangling - an unknown group reads as ungrouped - but the
+   * match then belongs to no table an operator can see and no group they can
+   * pick, which reads as matches having vanished from the draw. Clearing it in
+   * the same write puts them in the visible leftover bucket.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'pools', name: 'Pools', kind: 'roundrobin', bestOf: 3, groups: [{ id: 'group-a', name: 'Group A' }] },
+  }));
+  const afterDrop = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'pools');
+  ok('g11. removing a group keeps its matches', afterDrop.length === 7, String(afterDrop.length));
+  ok('g12. ...and un-groups them rather than leaving a dead pointer', afterDrop.filter((f) => f.group === 'group-b').length === 0, JSON.stringify(afterDrop.map((f) => f.group)));
+  ok('g13. ...while the group that stayed is untouched', afterDrop.filter((f) => f.group === 'group-a').length === 6, String(afterDrop.filter((f) => f.group === 'group-a').length));
+
+  // Renaming a group keeps its id, so its matches stay in it. That is the whole
+  // reason a group is `{ id, name }` rather than a bare name.
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'pools', name: 'Pools', kind: 'roundrobin', bestOf: 3, groups: [{ id: 'group-a', name: 'Alpha Pool' }] },
+  }));
+  const renamed = (await boss(here('/api/schedule'))).json.schedule;
+  ok('g14. renaming a group keeps its matches in it', renamed.fixtures.filter((f) => f.group === 'group-a').length === 6, 'matches were orphaned by a rename');
+  ok('g15. ...under the new name', renamed.stages.find((e) => e.id === 'pools').groups[0].name === 'Alpha Pool');
+
+
+  // ==================================================== a round at a time =====
+  /*
+   * You could not make one. "Add fixture" adds a single match at the LAST round
+   * number that already exists, so a bracket could never grow past round one
+   * from the dashboard: the only way to a semi-final was to generate the whole
+   * stage from the team library and accept the draw, or hand-edit
+   * schedule.json.
+   */
+  await boss(here('/api/schedule'), json({ action: 'stage.save', stage: { name: 'Knockout', kind: 'bracket', bestOf: 3 } }));
+
+  r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'knockout', count: 4 }));
+  ok('r1. a round can be added', r.status === 200, r.text.slice(0, 160));
+  let ko = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'knockout');
+  ok('r2. ...with the matches asked for', ko.length === 4, String(ko.length));
+  ok('r3. ...all in round one, because there was nothing before it', ko.every((f) => f.round === 1), JSON.stringify(ko.map((f) => f.round)));
+  ok('r4. ...in slots 0 upwards, which is what the bracket draws from', ko.map((f) => f.slot).sort().join(',') === '0,1,2,3', JSON.stringify(ko.map((f) => f.slot)));
+  ok('r5. ...and EMPTY, because who plays in it is decided by the round before', ko.every((f) => !f.left.name && !f.right.name), JSON.stringify(ko.map((f) => [f.left.name, f.right.name])));
+  ok('r6. ...taking the stage default series', ko.every((f) => f.bestOf === 3), JSON.stringify(ko.map((f) => f.bestOf)));
+
+  /*
+   * THE NUMBER IS DERIVED, not asked for. An operator adding a round means "the
+   * one after this", and a number they have to work out is a number they can
+   * get wrong - a match at round 7 of a 3-round bracket draws a column of empty
+   * space and reads as a bug in the layout.
+   */
+  await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'knockout', count: 2 }));
+  await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'knockout', count: 1 }));
+  ko = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'knockout');
+  ok('r7. the next round follows the last one', ko.filter((f) => f.round === 2).length === 2, JSON.stringify(ko.map((f) => f.round)));
+  ok('r8. ...and the one after that', ko.filter((f) => f.round === 3).length === 1, JSON.stringify(ko.map((f) => f.round)));
+  ok('r9. ...building a 4-2-1 bracket from nothing', ko.length === 7, String(ko.length));
+
+  /*
+   * PER GROUP, because a round belongs to a pool. Counting the stage as a whole
+   * would put Group B's first round at round two just because Group A already
+   * had one, and the two pools would never line up again.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { name: 'Twin pools', kind: 'roundrobin', bestOf: 3, groups: [{ name: 'Left pool' }, { name: 'Right pool' }] },
+  }));
+  await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'twin-pools', group: 'left-pool', count: 2 }));
+  await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'twin-pools', group: 'left-pool', count: 2 }));
+  await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'twin-pools', group: 'right-pool', count: 2 }));
+  const twin = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'twin-pools');
+  ok('r10. a round counts within its own group', twin.filter((f) => f.group === 'left-pool' && f.round === 2).length === 2, JSON.stringify(twin.map((f) => [f.group, f.round])));
+  ok(
+    "r11. ...so the other pool's first round is still round one",
+    twin.filter((f) => f.group === 'right-pool').every((f) => f.round === 1),
+    JSON.stringify(twin.filter((f) => f.group === 'right-pool').map((f) => f.round)),
+  );
+
+  r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'knockout', count: 0 }));
+  ok('r12. a round of nothing is refused', r.status === 400, r.text.slice(0, 120));
+  r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'knockout', count: 999 }));
+  ok('r13. ...and so is an absurd one', r.status === 400, r.text.slice(0, 120));
+  r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'nope', count: 2 }));
+  ok('r14. a stage that does not exist is refused', r.status === 400, r.text.slice(0, 120));
+  r = await boss(here('/api/schedule'), json({ action: 'round.add', stageId: 'twin-pools', group: 'nope', count: 2 }));
+  ok('r15. ...and so is a group that does not', r.status === 400, r.text.slice(0, 120));
+
   // ---------------------------------------------------------- the results ---
 
   const first = (await boss(here('/api/schedule'))).json.schedule.fixtures[0];
@@ -248,8 +381,18 @@ try {
   r = await boss(there('/api/schedule'));
   ok('25. the other tournament has its own, empty schedule', r.json.schedule.fixtures.length === 0, String(r.json.schedule?.fixtures?.length));
 
+  /*
+   * Compared against what is LIVE rather than against a literal.
+   *
+   * It used to assert 7, which is a count that moves every time an assertion
+   * above it adds a fixture - and when it did, the failure said "the export
+   * carries the schedule" about an export that was carrying the schedule
+   * perfectly well. The `> 0` is the half that stops it passing vacuously when
+   * both sides are empty.
+   */
+  const liveCount = (await boss(here('/api/schedule'))).json.schedule.fixtures.length;
   r = await boss('/api/tournaments', json({ action: 'export', id: cup.id }));
-  ok('26. the export carries the schedule', r.json.export?.schedule?.fixtures?.length === 7, String(r.json.export?.schedule?.fixtures?.length));
+  ok('26. the export carries the schedule', liveCount > 0 && r.json.export?.schedule?.fixtures?.length === liveCount, `${r.json.export?.schedule?.fixtures?.length} exported vs ${liveCount} live`);
 
   const before = (await boss(here('/api/schedule'))).json.schedule;
 

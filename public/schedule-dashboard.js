@@ -44,6 +44,7 @@ import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } f
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
+  MAX_GROUPS,
   BRACKET_HALVES,
   STAGE_KINDS,
   emptyMapRow,
@@ -54,7 +55,9 @@ import {
   bracketLayout,
   mapsNeeded,
   slotLabel,
+  stageHasGroups,
   stageHasTable,
+  stageTables,
   standings,
 } from './schedule-schema.js';
 
@@ -271,6 +274,43 @@ if (host) {
      * and the matches that came back would quietly be for the stage as it was.
      * One press that does both is the only version with no surprise in it.
      */
+    /*
+     * A round of empty matches, after the last one.
+     *
+     * The round NUMBER is the server's to work out - the next one after the
+     * highest already there. An operator adding a round means "the one after
+     * this", and a number they have to type is a number they can get wrong: a
+     * match at round 7 of a 3-round bracket draws a column of empty space and
+     * reads as a bug in the layout.
+     *
+     * It does NOT save the draft first, unlike Generate. Adding a round touches
+     * no stage field, so there is nothing for an unsaved name or format to make
+     * wrong - and quietly committing a half-typed rename because somebody
+     * pressed a different button would be the surprise this avoids everywhere
+     * else.
+     */
+    const roundCount = el('input', null, { type: 'number', min: '1', max: '64', value: '2', 'aria-label': 'Matches in the round' });
+
+    let roundGroup = null;
+    if ((stage.groups?.length ?? 0) > 0) {
+      roundGroup = el('select', null, { 'aria-label': 'Group for the new round' });
+      roundGroup.append(el('option', null, { value: '' }, '- not in a group -'));
+      for (const group of stage.groups) roundGroup.append(el('option', null, { value: group.id }, group.name));
+    }
+
+    const addRound = el('button', 'btn btn-small', { type: 'button' }, 'Add round');
+    addRound.addEventListener('click', () => {
+      const count = Number.parseInt(roundCount.value, 10);
+      if (!Number.isInteger(count) || count < 1) {
+        toast('A round needs at least one match.');
+        return;
+      }
+      act({ action: 'round.add', stageId: stage.id, group: roundGroup ? roundGroup.value : '', count }, () => {
+        toast(`Added a round of ${count} match${count === 1 ? '' : 'es'}`);
+        dialog?.close();
+      });
+    });
+
     const gen = el('button', 'btn btn-small', { type: 'button' }, 'Save and generate matches');
     gen.addEventListener('click', () => {
       if (!String(draft.name ?? '').trim()) {
@@ -319,6 +359,97 @@ if (host) {
       });
     });
 
+    /*
+     * The groups, edited in place inside the draft.
+     *
+     * A list of boxes rather than a count, because a group has a NAME an
+     * audience reads - "Group A" and "Alpha Pool" are both real - and a count
+     * would make the page invent them. The id is minted from the first name and
+     * never moves again, so renaming a group does not orphan its matches.
+     *
+     * Its own repainting block, and it has to be: adding a group adds a text
+     * input, so rebuilding the whole dialog would take the caret out of the one
+     * somebody is typing in. Only this list is replaced, and only when a group
+     * is added or removed - typing a name writes straight into the draft and
+     * touches no DOM at all.
+     */
+    const groupList = el('div', 'sch-groups');
+
+    const paintGroups = () => {
+      const rows = (draft.groups ?? []).map((group, index) => {
+        const row = el('div', 'sch-group-row');
+        const box = el('input', null, {
+          type: 'text',
+          maxlength: 60,
+          'aria-label': `Group ${index + 1} name`,
+          placeholder: `Group ${String.fromCharCode(65 + index)}`,
+        });
+        box.value = group.name ?? '';
+        box.addEventListener('input', () => {
+          group.name = box.value;
+        });
+
+        const inIt = fixturesIn(stage.id).filter((fixture) => (fixture.group ?? '') === group.id).length;
+        const count = el('span', 'sch-label', {}, `${inIt} match${inIt === 1 ? '' : 'es'}`);
+
+        /*
+         * Generating into ONE group, which is the whole reason a stage has
+         * them. Saves the stage first for the reason the stage-level button
+         * does: laying out reads the stage as the SERVER has it, and a group
+         * that has only been typed does not exist there yet.
+         */
+        const gen = el('button', 'btn btn-small', { type: 'button', title: 'Lay this group out from the team library' }, 'Generate');
+        gen.addEventListener('click', () => {
+          if (!String(box.value ?? '').trim()) {
+            toast('Name the group first.');
+            return;
+          }
+          act({ action: 'stage.save', stage: draft }, () => {
+            const saved = stageOf(draft.id);
+            // Matched by POSITION, because the id of a group that has just been
+            // added is minted by the server from its name - the draft's copy is
+            // still blank at this point.
+            const fresh = saved?.groups?.[index];
+            dialog?.close();
+            if (saved && fresh) generate(saved, fresh);
+          });
+        });
+
+        const drop = el('button', 'btn btn-small btn-ghost', { type: 'button', title: 'Remove this group' }, '×');
+        drop.addEventListener('click', () => {
+          draft.groups.splice(index, 1);
+          paintGroups();
+        });
+
+        row.append(box, count, gen, drop);
+        return row;
+      });
+
+      const add = el('button', 'btn btn-small', { type: 'button' }, 'Add group');
+      add.disabled = (draft.groups?.length ?? 0) >= MAX_GROUPS;
+      add.addEventListener('click', () => {
+        const next = draft.groups?.length ?? 0;
+        draft.groups = [...(draft.groups ?? []), { id: '', name: `Group ${String.fromCharCode(65 + next)}` }];
+        paintGroups();
+        // Into the box that just appeared, so adding four groups is four
+        // clicks rather than eight.
+        groupList.querySelector('.sch-group-row:last-of-type input')?.focus();
+      });
+
+      groupList.replaceChildren(
+        ...rows,
+        ...[
+          rows.length
+            ? null
+            : el('p', 'field-help', {}, 'No groups. Every match in this stage shares one table, which is what most stages want.'),
+          add,
+          // .filter(Boolean) - replaceChildren STRINGIFIES what it is handed,
+          // so a conditional resolving to null paints the word "null".
+        ].filter(Boolean),
+      );
+    };
+    paintGroups();
+
     body.append(
       modalTitle(stage.name || 'Stage', `${held} match${held === 1 ? '' : 'es'}`),
       field('Name', name),
@@ -326,9 +457,21 @@ if (host) {
       grid(2, [field('Format', kind), field('Default series', best)]),
       kindHelp,
       help('The series length a NEW match in this stage starts at. Not a rule - a grand final in a Bo3 bracket is allowed to be a Bo5.'),
+      el('div', 'subhead', {}, 'Groups'),
+      help(
+        'Split this stage into pools, each with its own table, shown together. Sixteen teams in four groups is ' +
+          'four round robins of six matches instead of one of a hundred and twenty. Removing a group leaves its ' +
+          'matches in the stage - they move to "Not in a group" rather than being deleted.',
+      ),
+      groupList,
       el('div', 'subhead', {}, 'Matches'),
-      help('Lays the stage out from the team library in one press. It ADDS to whatever is already here rather than replacing it.'),
+      help(
+        'Generate lays the stage out from the team library in one press, and ADDS to whatever is already here. ' +
+          'Add round makes a round of empty matches after the last one - which is how a bracket grows past its ' +
+          'first round without generating the whole thing.',
+      ),
       stageRow([gen]),
+      stageRow([field('Matches in the round', roundCount), ...(roundGroup ? [field('In', roundGroup)] : []), addRound]),
       el('div', 'subhead', {}, 'Delete'),
       help(
         held
@@ -365,15 +508,27 @@ if (host) {
    * removes the fixtures and sees how many they are removing. The server
    * enforces the same thing.
    */
-  function generate(stage) {
+  /**
+   * Lay a stage - or ONE GROUP of it - out from the team library.
+   *
+   * The group is what makes groups worth having: sixteen teams in four pools is
+   * four round robins of six matches rather than one of a hundred and twenty,
+   * and that only happens if generation can be pointed at a pool. Blank means
+   * the stage as a whole, which is what a bracket and an unsplit round robin
+   * both want.
+   */
+  function generate(stage, group = null) {
     if (library.length < 2) {
       toast('Add at least two teams to the library first.');
       return;
     }
-    const existing = fixturesIn(stage.id).length;
+    const where = group ? `${stage.name} - ${group.name}` : stage.name;
+    const existing = group
+      ? fixturesIn(stage.id).filter((fixture) => (fixture.group ?? '') === group.id).length
+      : fixturesIn(stage.id).length;
     const note = existing ? `\n\nThis ADDS to the ${existing} already here - it does not replace them.` : '';
     const picked = window.prompt(
-      `Which teams are in "${stage.name}"?\n\nComma-separated, from the library:\n${library.map(teamLabel).join(', ')}${note}`,
+      `Which teams are in "${where}"?\n\nComma-separated, from the library:\n${library.map(teamLabel).join(', ')}${note}`,
       library.map(teamLabel).join(', '),
     );
     if (picked === null) return;
@@ -389,7 +544,7 @@ if (host) {
       toast('Could not match at least two teams to the library.');
       return;
     }
-    act({ action: 'generate', stageId: stage.id, teams: wanted.map(asSlot) });
+    act({ action: 'generate', stageId: stage.id, group: group?.id ?? '', teams: wanted.map(asSlot) });
   }
 
   /** A library team as a fixture slot: the fields copied, never the id resolved later. */
@@ -411,13 +566,30 @@ if (host) {
       list.append(el('p', 'field-help', {}, 'No fixtures in this stage yet. Generate them, or add one below.'));
     }
 
-    let lastRound = null;
-    for (const fixture of rows) {
-      if (fixture.round !== lastRound) {
-        lastRound = fixture.round;
-        list.append(el('h3', 'sch-round', {}, roundName(stage, fixture)));
+    /*
+     * BY GROUP FIRST, then by round.
+     *
+     * A grouped stage laid out round-first interleaves every pool - "Round 1"
+     * holding Crusaders v Hillside and Northwood v Ironhold with nothing to say
+     * which group either is in - and an operator reading down it cannot tell
+     * the draw apart at all. Two pools playing their first round is two rounds
+     * one, not one round of eight.
+     *
+     * Ungrouped stages are a list of ONE bucket, so the loop below is the same
+     * code for both - the same reason `stageTables` answers with a list of one
+     * rather than making the caller branch.
+     */
+    for (const bucket of listBuckets(stage, rows)) {
+      if (bucket.name) list.append(el('h3', 'sch-group-head', {}, bucket.name));
+
+      let lastRound = null;
+      for (const fixture of bucket.rows) {
+        if (fixture.round !== lastRound) {
+          lastRound = fixture.round;
+          list.append(el('h3', 'sch-round', {}, roundName(stage, fixture)));
+        }
+        list.append(fixtureRow(fixture));
       }
-      list.append(fixtureRow(fixture));
     }
 
     const add = el('button', 'btn btn-small', { type: 'button' }, 'Add fixture');
@@ -430,6 +602,34 @@ if (host) {
     list.append(add);
 
     return list;
+  }
+
+  /**
+   * The fixture list's sections: one per group, or one for the whole stage.
+   *
+   * Mirrors `stageTables` deliberately - same order, same leftover bucket, same
+   * "a list of one when there are no groups". The list and the tables under it
+   * reading in different orders would be two answers to "what is in this
+   * stage", and an operator checking one against the other is exactly who would
+   * find that out.
+   */
+  function listBuckets(stage, rows) {
+    const groups = stage.groups ?? [];
+    if (!groups.length) return [{ id: '', name: '', rows }];
+
+    const known = new Set(groups.map((group) => group.id));
+    const buckets = groups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      rows: rows.filter((fixture) => (fixture.group ?? '') === group.id),
+    }));
+
+    // Anything whose group was removed, or which was never assigned one. It has
+    // to be visible: a list that silently omitted them would read as matches
+    // having been deleted.
+    const loose = rows.filter((fixture) => !known.has(fixture.group ?? ''));
+    if (loose.length) buckets.push({ id: '', name: 'Not in a group', rows: loose });
+    return buckets;
   }
 
   /** `Round 2`, or `Lower round 2` where a stage uses both halves of a bracket. */
@@ -573,6 +773,15 @@ if (host) {
       heading,
       grid(2, [field('Left team', modalSide(draft, 'left')), field('Right team', modalSide(draft, 'right'))]),
       grid(2, [field('Series', seriesPicker(draft, paintMaps)), field('Result', resultPicker(draft))]),
+      /*
+       * Which group this match is in, and ONLY when the stage has any.
+       *
+       * A select that offers one choice is a control an operator has to read
+       * and then ignore, on the dialog they open ninety seconds before a match.
+       * Most stages have no groups at all, so most of the time this is not
+       * there.
+       */
+      ...(stageHasGroups(stageOf(fixture.stageId)) ? [field('Group', groupPicker(draft))] : []),
       el('div', 'subhead', {}, 'Maps'),
       maps,
     );
@@ -635,6 +844,29 @@ if (host) {
     });
 
     paint();
+  }
+
+  /**
+   * Which group of its stage this match belongs to.
+   *
+   * "Not in a group" is a real answer and is offered first: splitting an
+   * existing pool leaves every match ungrouped until somebody assigns them, and
+   * an operator part-way through that has to be able to see and keep that
+   * state rather than being forced to pick one.
+   */
+  function groupPicker(draft) {
+    const stage = stageOf(draft.stageId);
+    const pick = el('select', null, { 'aria-label': 'Group' });
+    pick.append(el('option', null, { value: '' }, '- not in a group -'));
+    for (const group of stage?.groups ?? []) {
+      pick.append(
+        el('option', null, { value: group.id, selected: group.id === (draft.group ?? '') ? 'selected' : null }, group.name),
+      );
+    }
+    pick.addEventListener('change', () => {
+      draft.group = pick.value;
+    });
+    return pick;
   }
 
   /** A team picker, writing into the draft rather than to the server. */
@@ -908,8 +1140,26 @@ if (host) {
     return card;
   }
 
-  function table(stage) {
-    const rows = standings(doc, stage.id);
+  /**
+   * Every table this stage wants, which is one when it has no groups.
+   *
+   * The list comes from `stageTables` rather than from a branch here, so the
+   * grouped and ungrouped cases render through the SAME code - two paths for
+   * one table is how the grouped one ends up missing whatever the ungrouped one
+   * gains next.
+   */
+  function tables(stage) {
+    const box = el('div', 'sch-tables');
+    for (const entry of stageTables(doc, stage)) {
+      // The heading only when there is more than one thing to tell apart. A
+      // lone table under the word "Standings" does not also need a subtitle.
+      if (entry.name) box.append(el('div', 'subhead', {}, entry.name));
+      box.append(table(stage, entry.table));
+    }
+    return box;
+  }
+
+  function table(stage, rows = standings(doc, stage.id)) {
     const box = el('div', 'sch-table-wrap');
     if (!rows.length) {
       box.append(el('p', 'field-help', {}, 'Nothing has been played in this stage yet.'));
@@ -976,7 +1226,7 @@ if (host) {
         stage && !stageHasTable(stage) ? bracket(stage) : null,
         stage ? fixtureList(stage) : el('p', 'field-help', {}, 'Add a stage to start building the schedule.'),
         stage && stageHasTable(stage) ? title('Standings') : null,
-        stage && stageHasTable(stage) ? table(stage) : null,
+        stage && stageHasTable(stage) ? tables(stage) : null,
         // .filter(Boolean), because replaceChildren STRINGIFIES what it is
         // handed - a conditional resolving to null appends the text "null" to
         // the page, which every DOM assertion happily passes over. It happened

@@ -3776,6 +3776,50 @@ label.is-off {
   font-variant-numeric: tabular-nums;
 }
 
+/* The group a run of matches belongs to, above its rounds. Louder than a round
+   heading, because a group contains rounds rather than sitting beside them -
+   the hierarchy has to be readable at a glance or the list reads as one long
+   run of matches with odd repeated headings. */
+.sch-group-head {
+  margin: 18px 0 2px;
+  font-family: var(--font-label, inherit);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 13px;
+  color: var(--accent, #6db7e8);
+}
+
+.sch-group-head:first-child {
+  margin-top: 6px;
+}
+
+/* One table per group, stacked. The gap is what keeps two tables from reading
+   as one long one when the heading between them is a single short word. */
+.sch-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The group editor, inside the stage modal. A name, what is in it, and the two
+   presses that act on it. */
+.sch-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.sch-group-row {
+  display: grid;
+  /* The name takes the space and the rest are fixed, so four groups line up
+     into columns however long their names are. */
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+
 .sch-table-wrap {
   overflow-x: auto;
   margin-top: 8px;

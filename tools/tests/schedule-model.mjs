@@ -29,8 +29,25 @@ const {
   sanitiseFixture,
   sanitiseSchedule,
   sanitiseStage,
+  sanitiseGroups,
+  stageTables,
   standings,
 } = schema;
+
+/** A finished match in a group, for the group tables at the end of this file. */
+const played = (id, group, left, right, leftMaps, rightMaps) =>
+  sanitiseFixture({
+    id,
+    stageId: 'group-stage',
+    group,
+    bestOf: 3,
+    left: { name: left },
+    right: { name: right },
+    maps: [
+      ...Array.from({ length: leftMaps }, () => ({ name: 'Ascent', left: 13, right: 5 })),
+      ...Array.from({ length: rightMaps }, () => ({ name: 'Bind', left: 5, right: 13 })),
+    ],
+  });
 
 let passed = 0;
 const failures = [];
@@ -574,6 +591,94 @@ const maps = (...rows) => rows.map(([left, right]) => ({ name: 'Ascent', left, r
   eq('47 an empty stage draws nothing', empty.nodes.length, 0);
   eq('47b ...and has no size', `${empty.columns}x${empty.rows}`, '0x0');
   eq('48 a stage id nobody has draws nothing either', bracketLayout(single, 'nope').nodes.length, 0);
+}
+
+
+// ================================================= groups inside a stage =====
+/*
+ * A group is a DIVISION INSIDE ONE STAGE, not a stage of its own.
+ *
+ * "Group stage" is one phase of a competition and reads as one thing on a
+ * strip; four separate stages called Group A to Group D is four entries before
+ * the playoffs appear, and an eight-group event is unusable. One table per
+ * group, shown together.
+ *
+ * Here rather than in a browser suite for the reason the bracket layout is: it
+ * is a pure function from a document to tables, with no DOM in it.
+ */
+{
+  const stage = sanitiseStage({ name: 'Group stage', kind: 'roundrobin', groups: ['Group A', 'Group B'] });
+  eq('g1 a stage can carry groups', stage.groups.length, 2);
+  eq('g2 ...with ids slugged from their names', stage.groups.map((g) => g.id).join(','), 'group-a,group-b');
+  ok('g3 ...and a stage with none is the ordinary case', sanitiseStage({ name: 'Playoffs' }).groups.length === 0);
+
+  /*
+   * A group with no name is not a group - it cannot be picked out of a list or
+   * labelled on a table, the same rule a nameless team and a nameless stage get.
+   * And two groups resolving to ONE id would put both their matches in one
+   * table and lose half the draw with nothing failing.
+   */
+  const messy = sanitiseGroups(['Group A', { name: '' }, 'Group A', { name: 'Group B' }]);
+  eq('g4 a nameless group is dropped', messy.length, 2);
+  eq('g5 ...and a duplicate id with it', messy.map((g) => g.id).join(','), 'group-a,group-b');
+
+  const renamed = sanitiseGroups([{ id: 'group-a', name: 'Alpha Pool' }]);
+  eq('g6 renaming a group keeps its id, so its matches are not orphaned', renamed[0].id, 'group-a');
+
+  // ---------------------------------------------------------- the tables ---
+
+  const doc = {
+    version: 1,
+    stages: [stage],
+    fixtures: [
+      played('a1', 'group-a', 'Alpha', 'Bravo', 2, 0),
+      played('a2', 'group-a', 'Alpha', 'Charlie', 2, 1),
+      played('b1', 'group-b', 'Delta', 'Echo', 2, 0),
+    ],
+  };
+
+  const tables = stageTables(doc, stage);
+  eq('g7 one table per group', tables.length, 2);
+  eq('g8 ...named', tables.map((t) => t.name).join(','), 'Group A,Group B');
+  eq('g9 ...holding only their own teams', tables[0].table.map((r) => r.name).sort().join(','), 'Alpha,Bravo,Charlie');
+  eq('g10 ...and not each other\'s', tables[1].table.map((r) => r.name).sort().join(','), 'Delta,Echo');
+  eq('g11 a group is ranked on its own', tables[0].table[0].name, 'Alpha');
+  eq('g12 ...and so is the other one', tables[1].table[0].name, 'Delta');
+
+  /*
+   * A STAGE WITH NO GROUPS STILL ANSWERS WITH A LIST - of one.
+   *
+   * That is the whole reason this function exists rather than the page
+   * branching on whether there are groups: two rendering paths for one table is
+   * how the grouped one ends up missing whatever the ungrouped one gains next.
+   */
+  const flat = sanitiseStage({ name: 'Playoffs', kind: 'roundrobin' });
+  const one = stageTables({ ...doc, stages: [flat], fixtures: doc.fixtures.map((f) => ({ ...f, stageId: flat.id })) }, flat);
+  eq('g13 a stage with no groups answers with one table', one.length, 1);
+  eq('g14 ...unnamed, because there is nothing to tell apart', one[0].name, '');
+  eq('g15 ...holding everybody', one[0].table.length, 5);
+
+  /*
+   * AN UNGROUPED MATCH IS VISIBLE. Splitting an existing pool leaves every
+   * match ungrouped until somebody assigns them, and a table that silently
+   * omitted them would read as teams having been dropped from the draw.
+   */
+  const partly = {
+    ...doc,
+    fixtures: [...doc.fixtures, played('loose', '', 'Foxtrot', 'Golf', 2, 0)],
+  };
+  const withLeftovers = stageTables(partly, stage);
+  eq('g16 matches in no group get a bucket of their own', withLeftovers.length, 3);
+  eq('g17 ...named so it is obvious what it is', withLeftovers[2].name, 'Not in a group');
+  eq('g18 ...holding them', withLeftovers[2].table.map((r) => r.name).sort().join(','), 'Foxtrot,Golf');
+  ok('g19 ...and it is absent when nothing is in it', stageTables(doc, stage).length === 2);
+
+  /*
+   * Asking for the stage as a WHOLE still counts every group together, which is
+   * what a grouped stage's overall standings are - and is what `standings` with
+   * no group argument has always meant.
+   */
+  eq('g20 the stage as a whole still counts everybody', standings(doc, stage.id).length, 5);
 }
 
 rmSync(DIR, { recursive: true, force: true });

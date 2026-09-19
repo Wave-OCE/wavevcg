@@ -2151,19 +2151,60 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
         schedule.apply((draft) => {
           const wanted = sanitiseStage(body?.stage ?? {});
           if (!wanted.id) throw badRequest('A stage needs a name.');
+
+          /*
+           * A NEW stage gets an id nobody else has, even when its name is taken.
+           *
+           * The id is slugged from the name, so two stages called "Group A" -
+           * or, far more commonly, two created one after the other before
+           * either is renamed - resolve to one id, and the save REPLACES rather
+           * than adds. The first stage is simply gone, with its matches
+           * orphaned behind it and nothing said.
+           *
+           * It was always possible and became certain the day Add started
+           * creating the record before asking for a name: every stage made from
+           * the dashboard begins life as the same slug. Found by a suite adding
+           * a second stage and watching the first disappear.
+           *
+           * Only when the caller sent NO id: an update names the stage it
+           * means, and must keep meaning it. That is also what lets a rename
+           * work without moving anything.
+           */
+          if (!String(body?.stage?.id ?? '').trim()) {
+            const taken = new Set(draft.stages.map((entry) => entry.id));
+            if (taken.has(wanted.id)) {
+              const base = wanted.id;
+              let n = 2;
+              while (taken.has(`${base}-${n}`)) n += 1;
+              wanted.id = `${base}-${n}`;
+            }
+          }
+
           const at = draft.stages.findIndex((entry) => entry.id === wanted.id);
           if (at === -1) draft.stages.push(wanted);
           else draft.stages[at] = wanted;
+
+          /*
+           * A group that went takes its matches' pointer with it.
+           *
+           * Nothing breaks if it does not - an unknown group reads as
+           * ungrouped everywhere - but the match then belongs to no table an
+           * operator can see and no group they can pick, which reads as matches
+           * having vanished from the draw. Clearing the reference in the same
+           * write puts them in the visible "Not in a group" bucket, where they
+           * can be reassigned.
+           *
+           * Here rather than in the sanitiser, because only this write knows
+           * what the groups USED to be.
+           */
+          const known = new Set(wanted.groups.map((group) => group.id));
+          for (const fixture of draft.fixtures) {
+            if (fixture.stageId !== wanted.id) continue;
+            if (fixture.group && !known.has(fixture.group)) fixture.group = '';
+          }
         }),
       );
 
-    /*
-     * Refused while fixtures sit in it, rather than cascading.
-     *
-     * A cascade here deletes matches that have been played, from a button
-     * labelled "remove stage". Naming the count makes the operator see the
-     * consequence, and moving the fixtures out first is one more click.
-     */
     /*
      * Removing a stage, and the matches in it.
      *
@@ -2243,6 +2284,60 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
       }
       return result;
     }
+
+    /*
+     * A ROUND of empty matches, in one press.
+     *
+     * You could not make one. "Add fixture" adds a single match at the LAST
+     * round number that already exists, so a bracket could never grow past
+     * round one from the dashboard at all - the only way to a semi-final was to
+     * generate the whole stage from the team library and accept what it drew,
+     * or to hand-edit schedule.json. That is the gap this closes.
+     *
+     * The round number is DERIVED rather than asked for: the next one after the
+     * highest already there, per group. An operator adding a round means "the
+     * one after this", and a number they have to work out is a number they can
+     * get wrong - a fixture at round 7 of a 3-round bracket draws a column of
+     * empty space and looks like a bug in the layout.
+     *
+     * Empty slots rather than teams. Who plays in round two is decided by round
+     * one, and a round that arrived pre-filled would be asserting a result.
+     */
+    case 'round.add':
+      return out(
+        schedule.apply((draft) => {
+          const stage = draft.stages.find((entry) => entry.id === String(body?.stageId ?? ''));
+          if (!stage) throw badRequest('No such stage.');
+
+          const group = String(body?.group ?? '');
+          if (group && !stage.groups.some((entry) => entry.id === group)) {
+            throw badRequest('No such group on that stage.');
+          }
+
+          const count = Number.parseInt(body?.count, 10);
+          if (!Number.isInteger(count) || count < 1 || count > 64) {
+            throw badRequest('A round is between 1 and 64 matches.', 'Sixty-four is a round of a 128-team draw.');
+          }
+
+          const here = draft.fixtures.filter(
+            (entry) => entry.stageId === stage.id && (entry.group ?? '') === group,
+          );
+          const round = here.reduce((top, entry) => Math.max(top, entry.round ?? 0), 0) + 1;
+
+          for (let slot = 0; slot < count; slot += 1) {
+            draft.fixtures.push(
+              sanitiseFixture({
+                id: schedule.mintId(),
+                stageId: stage.id,
+                group,
+                round,
+                slot,
+                bestOf: stage.bestOf,
+              }),
+            );
+          }
+        }),
+      );
 
     case 'fixture.save':
       return out(
@@ -2333,6 +2428,26 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
           const seats = (Array.isArray(body?.teams) ? body.teams : []).map(sanitiseSlot).filter(slotFilled);
           if (seats.length < 2) throw badRequest('Pick at least two teams.');
 
+          /*
+           * WHICH GROUP this lay-out belongs to, and why generating into one is
+           * the whole point of having them.
+           *
+           * Splitting sixteen teams into four groups is what turns a round
+           * robin of a hundred and twenty matches into four of six - that is
+           * the reason an operator asks for groups at all. So generation takes
+           * a group, lays out only the teams handed to it, and stamps every
+           * match it makes with that id.
+           *
+           * An id that names no group on this stage is refused rather than
+           * quietly written: a typo would produce a pool of matches in a table
+           * nobody can see, which is exactly the failure the sweep above exists
+           * to prevent somewhere else.
+           */
+          const group = String(body?.group ?? '');
+          if (group && !stage.groups.some((entry) => entry.id === group)) {
+            throw badRequest('No such group on that stage.', `"${stage.name}" has ${stage.groups.length ? stage.groups.map((g) => g.name).join(', ') : 'no groups'}.`);
+          }
+
           const made = [];
           if (stage.kind === 'bracket') {
             /*
@@ -2347,6 +2462,7 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
                 sanitiseFixture({
                   id: schedule.mintId(),
                   stageId: stage.id,
+                  group,
                   round: 1,
                   slot: i,
                   bestOf: stage.bestOf,
@@ -2363,6 +2479,7 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
                   sanitiseFixture({
                     id: schedule.mintId(),
                     stageId: stage.id,
+                    group,
                     round: round + 1,
                     slot,
                     bestOf: stage.bestOf,
@@ -2381,7 +2498,7 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
       throw new ProviderError(
         400,
         'Unknown schedule action.',
-        'One of: stage.save, stage.remove, fixture.save, fixture.remove, result, move, generate.',
+        'One of: stage.save, stage.remove, round.add, fixture.save, fixture.remove, result, move, generate.',
       );
   }
 }
