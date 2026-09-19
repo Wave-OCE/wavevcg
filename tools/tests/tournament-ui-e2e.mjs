@@ -1387,10 +1387,12 @@ try {
   /*
    * --- the bracket, and the match editor ------------------------------------
    *
-   * The stage added above is a round robin by default, so it draws a table.
-   * Switching it to a bracket is what puts a drawing on the page, and doing it
-   * through the FORM is the operator's own path rather than a fixture posted
-   * behind the page's back.
+   * The stage added above is already a bracket - Add posts `kind: 'bracket'` -
+   * so what this proves is that a bracket stage DRAWS one, not that the switch
+   * works. Setting the format through the FORM is still the operator's own
+   * path rather than a fixture posted behind the page's back. (The switch
+   * itself is exercised in the wiring block at the end of this section, which
+   * moves a stage both ways and reads the page after each.)
    *
    * The format select lives in the stage editor now, not on the page - see
    * 27d4, which is the assertion that keeps it there.
@@ -1697,6 +1699,376 @@ try {
   await wait(500);
   ok('27w. escape closes the editor', (await page.$$('.sch-modal')).length === 0);
   ok('27w2. ...without asking, because nothing was typed', (await page.$$('.rl-modal-ask')).length === 0);
+
+  /*
+   * ======================== WIRING A BRACKET BY HAND =======================
+   *
+   * Nothing in this program could SET `fixture.left.source` before this. The
+   * team picker could only ever CLEAR an edge and `sourceLabel` could only ever
+   * display one, so every edge in every schedule here was written by `generate`
+   * or by a template - and a hand-built bracket had no flow between rounds at
+   * all. The moment an operator needed a draw no template covers, their route
+   * to a bracket that works was to edit `schedule.json` by hand.
+   *
+   * On a stage of its OWN, built here and left behind, for the reason the
+   * groups block gives: this one files a result and pins a team, and every
+   * assertion above that reads `fixtures[0]` or a running tally would read
+   * whatever this left in the stage it borrowed.
+   */
+  /*
+   * The team library the page is holding was EMPTIED by 27q, which dispatches
+   * `teams-changed` carrying nothing in order to provoke a repaint behind the
+   * modal. Put it back through the page's own mechanism - the schedule
+   * dashboard listens rather than fetching, so one event is the whole of it -
+   * because this block has to put two real teams into a match.
+   */
+  await page.evaluate(async () => {
+    const payload = await (await fetch('/api/teams')).json();
+    window.dispatchEvent(new CustomEvent('teams-changed', { detail: payload.teams ?? [] }));
+  });
+  await wait(500);
+
+  await addStage('manual');
+  await page.fill('.rl-modal input[type=text]', 'Wiring');
+  await page.selectOption('.rl-modal select[aria-label="Format"]', 'roundrobin');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1000);
+
+  await page.click('#sch-body button:has-text("Add match")');
+  await wait(900);
+  await page.evaluate(() => document.querySelectorAll('#sch-body .sch-fixture')[0].querySelector('button').click());
+  await page.waitForSelector('.sch-modal', { timeout: 6000 });
+  await wait(500);
+  /*
+   * THE NEGATIVE FIRST, and on a stage that really is a table.
+   *
+   * Nobody advances out of a pool, so a Fed by picker there is two more selects
+   * to read and ignore on the dialog an operator opens ninety seconds before a
+   * match - the same rule that keeps the group picker off a stage with no
+   * groups. Asserting it before anything is wired is what stops the positive
+   * below from passing on a control that is simply always there.
+   */
+  const feedOnTable = (await page.$$('.sch-feed')).length;
+  await page.keyboard.press('Escape');
+  await wait(400);
+  ok('27x1. a stage whose draw does not flow offers no wiring', feedOnTable === 0, String(feedOnTable));
+
+  // Make it a bracket, and give it somewhere for a winner to go.
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await stageTab('about');
+  await page.selectOption('.rl-modal select[aria-label="Format"]', 'bracket');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1000);
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await stageTab('matches');
+  await page.fill('.rl-modal input[aria-label="Matches in the round"]', '1');
+  // Add round closes the editor itself once the write lands.
+  await page.click('.rl-modal button:has-text("Add round")');
+  await wait(1200);
+
+  const wiringStage = await page.evaluate(async () => {
+    const doc = (await (await fetch('/api/schedule')).json()).schedule;
+    const stage = doc.stages.find((entry) => entry.name === 'Wiring');
+    return { kind: stage?.kind, fixtures: doc.fixtures.filter((f) => f.stageId === stage?.id) };
+  });
+  ok('27x2. a round can be added to a bracket by hand', wiringStage.fixtures.length === 2 && wiringStage.fixtures.some((f) => f.round === 2), JSON.stringify(wiringStage.fixtures.map((f) => [f.round, f.slot])));
+  ok(
+    '27x3. ...and it arrives wired to nothing at all, which is the hole',
+    wiringStage.fixtures.every((f) => !f.left?.source && !f.right?.source),
+    JSON.stringify(wiringStage.fixtures.map((f) => [f.left?.source, f.right?.source])),
+  );
+
+  const feederId = wiringStage.fixtures.find((f) => f.round === 1).id;
+  const fedId = wiringStage.fixtures.find((f) => f.round === 2).id;
+
+  /** Open the nth match row of the stage on screen - sorted round, then slot. */
+  const openMatchRow = async (index) => {
+    await page.evaluate((i) => {
+      document.querySelectorAll('#sch-body .sch-fixture')[i].querySelector('button').click();
+    }, index);
+    await page.waitForSelector('.sch-modal', { timeout: 6000 });
+    await wait(500);
+  };
+
+  await openMatchRow(1);
+
+  const wiring = await page.evaluate(() => {
+    const feeds = [...document.querySelectorAll('.sch-feed')];
+    const takes = feeds.map((f) => f.querySelector('select'));
+    const froms = feeds.map((f) => [...f.querySelectorAll('select')][1]);
+    const dialog = document.querySelector('.sch-modal').getBoundingClientRect();
+    return {
+      rows: feeds.length,
+      takeDead: takes.map((t) => t.disabled),
+      // Everything the picker offers apart from its own blank option.
+      offered: froms[0] ? [...froms[0].querySelectorAll('option')].filter((o) => o.value).map((o) => o.textContent) : [],
+      values: froms[0] ? [...froms[0].querySelectorAll('option')].map((o) => o.value) : [],
+      takeWords: takes[0] ? [...takes[0].querySelectorAll('option')].map((o) => o.textContent) : [],
+      inside: froms.every((f) => f.getBoundingClientRect().right <= dialog.right + 1),
+      // "Winner of Quarter-final 2" is one sentence, so at a width with room
+      // for it the two controls sit on one line. Asked as well as containment
+      // because a row that WRAPS is inside the dialog too - a deliberate break
+      // put the take back to the page-wide `width: 100%` and containment alone
+      // stayed green while the pair stacked.
+      sameRow: feeds.every((f) => {
+        const [a, b] = f.querySelectorAll('select');
+        const left = a.getBoundingClientRect();
+        const right = b.getBoundingClientRect();
+        return Math.abs(left.top - right.top) < 2 && left.right <= right.left + 1;
+      }),
+    };
+  });
+
+  ok('27x4. a bracket match offers a Fed by picker per side', wiring.rows === 2, JSON.stringify(wiring));
+  ok(
+    '27x5. ...dead until a match is named, because "loser of nothing" is not a state',
+    JSON.stringify(wiring.takeDead) === '[true,true]',
+    JSON.stringify(wiring.takeDead),
+  );
+  ok(
+    '27x6. ...offering loser as well as winner, which is what a lower bracket is made of',
+    JSON.stringify(wiring.takeWords) === '["Winner of","Loser of"]',
+    JSON.stringify(wiring.takeWords),
+  );
+  ok(
+    '27x7. ...and never offering the match itself',
+    !wiring.values.includes(fedId) && wiring.values.includes(feederId),
+    JSON.stringify(wiring),
+  );
+  ok(
+    '27x8. ...with the pair fitting inside the dialog it lives in',
+    wiring.inside === true,
+    'the match select was pushed out through the side of the dialog',
+  );
+  ok(
+    '27x8a. ...and reading as one row, because it is one sentence',
+    wiring.sameRow === true,
+    'the take and the match select are not side by side at desk width',
+  );
+
+  /*
+   * A TEAM ON THE SLOT FIRST, so there is something for the edge to take away.
+   *
+   * Without this 27x11 is vacuous, and a deliberate break proved it: an empty
+   * slot stays empty whether or not wiring clears the copy under it, so the
+   * assertion passed happily against code that left a hand-picked name sitting
+   * beneath "Winner of round 1".
+   */
+  const pinnedFirst = await page.evaluate(() => {
+    const team = document.querySelector('.sch-modal-body .field-grid.cols-2 select');
+    const real = [...team.options].find((o) => o.value && o.value !== '__keep');
+    if (!real) return null;
+    team.value = real.value;
+    team.dispatchEvent(new Event('change', { bubbles: true }));
+    return { name: real.textContent, value: team.value };
+  });
+  ok('27x8b. a slot takes a team by hand before anything is wired', pinnedFirst !== null && pinnedFirst.value !== '', JSON.stringify(pinnedFirst));
+
+  /*
+   * Both sides from the SAME match on purpose - one taking the winner and one
+   * the loser. A draw nobody would build, and the only shape in which the take
+   * can be proved to mean anything: with both sides on "winner" an edge that
+   * ignored the take entirely would carry the same team twice and look right.
+   */
+  await page.evaluate((id) => {
+    const feeds = [...document.querySelectorAll('.sch-feed')];
+    for (const feed of feeds) {
+      const from = feed.querySelectorAll('select')[1];
+      from.value = id;
+      from.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const take = feeds[1].querySelector('select');
+    take.value = 'loser';
+    take.dispatchEvent(new Event('change', { bubbles: true }));
+  }, feederId);
+  await wait(300);
+
+  const wired = await page.evaluate(() => {
+    const feed = [...document.querySelectorAll('.sch-feed')][0];
+    const team = document.querySelector('.sch-modal-body .field-grid.cols-2 select');
+    return {
+      takeDead: feed.querySelector('select').disabled,
+      blank: team.options[0].textContent,
+      teamValue: team.value,
+    };
+  });
+  ok('27x9. picking a match arms the take', wired.takeDead === false, JSON.stringify(wired));
+  ok('27x10. ...and the team picker says where that side comes from now', /Winner of/.test(wired.blank), JSON.stringify(wired));
+  /*
+   * NAMED BY ITS PLACE IN THE DRAW, not by the word "Fixture".
+   *
+   * `fixtureLabel` falls back to "Fixture" for a match with nobody in it yet,
+   * which on the unwired bracket this control exists to build is every match -
+   * so the blank option read "Winner of Fixture" and said nothing at all.
+   * Caught in a break's failure detail rather than by an assertion.
+   */
+  ok('27x10a. ...by where that match sits in the draw', /Winner of Round 1, match 1/.test(wired.blank), JSON.stringify(wired));
+  /*
+   * The copied team goes when the edge arrives, because under an edge the copy
+   * is DERIVED and `propagate` owns it. A hand-picked name left sitting in a
+   * slot that reads "Winner of round 1" is two answers to one question with
+   * nothing on screen to choose between them.
+   */
+  ok('27x11. ...with no team of its own left pinned under it', wired.teamValue === '', JSON.stringify(wired));
+
+  await page.click('.sch-modal-foot button:has-text("Save")');
+  await wait(1100);
+
+  const savedEdges = await page.evaluate(async (id) => {
+    const f = (await (await fetch('/api/schedule')).json()).schedule.fixtures.find((entry) => entry.id === id);
+    return { left: f?.left?.source ?? null, right: f?.right?.source ?? null, leftName: f?.left?.name ?? null };
+  }, fedId);
+  ok(
+    '27x12. Save carries both edges to the server',
+    savedEdges.left?.fixtureId === feederId && savedEdges.right?.fixtureId === feederId,
+    JSON.stringify(savedEdges),
+  );
+  ok(
+    '27x13. ...each with the take it was given, not one take for both',
+    savedEdges.left?.take === 'winner' && savedEdges.right?.take === 'loser',
+    JSON.stringify(savedEdges),
+  );
+  /*
+   * The server half of 27x11, and it is worth both: the form could clear the
+   * box while the draft kept the name, or the draft could be right while the
+   * box still showed the team. Under an edge the copy is propagate's, so until
+   * the feeder is decided there must be nobody in there at all.
+   */
+  ok(
+    '27x13b. ...and the slot it wired carries no team of its own any more',
+    savedEdges.leftName === '',
+    JSON.stringify([pinnedFirst?.name, savedEdges.leftName]),
+  );
+
+  /*
+   * AND THE DRAW ACTUALLY FLOWS.
+   *
+   * This is what the whole control is for: an edge that is written but never
+   * carries anybody is a bracket that still does not work. Both teams and the
+   * result go in through the match editor - the operator's own path, and the
+   * one that leaves the page holding a current document for what follows.
+   */
+  await openMatchRow(0);
+  const feeder = await page.evaluate(() => {
+    const [left, right] = document.querySelectorAll('.sch-modal-body .field-grid.cols-2 select');
+    const teams = [...left.options].filter((o) => o.value && o.value !== '__keep');
+    if (teams.length < 2) return null;
+    left.value = teams[0].value;
+    left.dispatchEvent(new Event('change', { bubbles: true }));
+    right.value = teams[1].value;
+    right.dispatchEvent(new Event('change', { bubbles: true }));
+    return { left: teams[0].textContent, right: teams[1].textContent };
+  });
+  ok('27x14. the feeder can be given two teams from the library', feeder !== null, 'the team library held fewer than two teams');
+
+  await page.fill('.sch-modal input[aria-label="Map 1 name"]', 'Ascent');
+  await page.fill('.sch-modal input[aria-label="Map 1 left score"]', '13');
+  await page.fill('.sch-modal input[aria-label="Map 1 right score"]', '4');
+  await page.fill('.sch-modal input[aria-label="Map 2 name"]', 'Bind');
+  await page.fill('.sch-modal input[aria-label="Map 2 left score"]', '13');
+  await page.fill('.sch-modal input[aria-label="Map 2 right score"]', '9');
+  await page.click('.sch-modal-foot button:has-text("Save")');
+  await wait(1300);
+
+  const flowed = await page.evaluate(async (id) => {
+    const f = (await (await fetch('/api/schedule')).json()).schedule.fixtures.find((entry) => entry.id === id);
+    return { left: f?.left ?? null, right: f?.right ?? null };
+  }, fedId);
+  ok('27x15. a result on the feeder carries the winner into the slot wired to it', flowed.left?.name === feeder?.left, JSON.stringify([flowed.left?.name, feeder?.left]));
+  ok('27x16. ...and the LOSER into the slot that asked for the loser', flowed.right?.name === feeder?.right, JSON.stringify([flowed.right?.name, feeder?.right]));
+  ok(
+    '27x17. ...with both edges still there, so a corrected result re-propagates',
+    Boolean(flowed.left?.source) && Boolean(flowed.right?.source),
+    JSON.stringify([flowed.left?.source, flowed.right?.source]),
+  );
+
+  /*
+   * A STAGE THAT HIDES THE ROW STILL SHOWS AN EDGE THAT EXISTS.
+   *
+   * 27x1 keeps the picker off a round robin, and that rule has to have this
+   * exception: an edge already on a slot is always editable, whatever kind of
+   * stage it now sits in. A control that hides the thing it edits is how an
+   * edge nobody can see carries a team into a match nobody expected - and the
+   * only way back would be schedule.json again, which is the hole this closes.
+   */
+  await page.click('#sch-body button:has-text("Edit stage")');
+  await wait(700);
+  await stageTab('about');
+  await page.selectOption('.rl-modal select[aria-label="Format"]', 'roundrobin');
+  await page.click('.rl-modal-foot .btn-primary');
+  await wait(1200);
+  await openMatchRow(1);
+  const kept = await page.evaluate(() => {
+    const feeds = [...document.querySelectorAll('.sch-feed')];
+    return { rows: feeds.length, take: feeds[1] ? feeds[1].querySelector('select').value : '' };
+  });
+  ok('27x18. an edge that already exists is shown whatever the stage kind', kept.rows === 2, JSON.stringify(kept));
+  ok('27x19. ...reading back the way it was written, loser and not winner', kept.take === 'loser', JSON.stringify(kept));
+
+  /*
+   * PICKING A TEAM CUTS THE LINK, and it has to be explicit: the sanitiser
+   * deliberately arbitrates neither, because an earlier version that cleared
+   * the edge as soon as a teamId appeared beside it made every edge fire once
+   * and then die silently - propagation writes exactly such a teamId.
+   */
+  const pinned = await page.evaluate(() => {
+    const team = document.querySelector('.sch-modal-body .field-grid.cols-2 select');
+    const real = [...team.options].find((o) => o.value && o.value !== '__keep');
+    if (real) {
+      team.value = real.value;
+      team.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const feed = [...document.querySelectorAll('.sch-feed')][0];
+    return {
+      had: Boolean(real),
+      from: feed.querySelectorAll('select')[1].value,
+      takeDead: feed.querySelector('select').disabled,
+    };
+  });
+  ok('27x20. picking a team by hand clears the edge in the form', pinned.had && pinned.from === '', JSON.stringify(pinned));
+  ok('27x21. ...and the take goes dead with it', pinned.takeDead === true, JSON.stringify(pinned));
+
+  await page.click('.sch-modal-foot button:has-text("Save")');
+  await wait(1200);
+  const pinnedOnServer = await page.evaluate(
+    async (id) => (await (await fetch('/api/schedule')).json()).schedule.fixtures.find((f) => f.id === id)?.left ?? null,
+    fedId,
+  );
+  ok('27x22. ...and the server agrees the slot is pinned now', pinnedOnServer !== null && !pinnedOnServer.source, JSON.stringify(pinnedOnServer?.source));
+
+  /*
+   * A LOOP IS REFUSED, and the browser does not reimplement the check.
+   *
+   * `apply` validates acyclicity on the way in and refuses the whole write, so
+   * the honest implementation is to let the write be refused and put the
+   * message in front of the operator - which `act` does. A second
+   * implementation in the browser would be one refactor from disagreeing with
+   * that one, and the way it would disagree is by ALLOWING something, because
+   * the browser only ever sees the draft it is holding.
+   */
+  const loop = await page.evaluate(async (ids) => {
+    const doc = (await (await fetch('/api/schedule')).json()).schedule;
+    const feederNow = doc.fixtures.find((f) => f.id === ids.from);
+    const response = await fetch('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'fixture.save',
+        fixture: { ...feederNow, left: { ...feederNow.left, source: { fixtureId: ids.to, take: 'winner' } } },
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    return { status: response.status, message: payload?.error?.message ?? '' };
+  }, { from: feederId, to: fedId });
+  ok('27x23. a loop is refused rather than written', loop.status === 400, JSON.stringify(loop));
+  ok('27x24. ...and says what is wrong in words an operator can act on', /loop/i.test(loop.message), JSON.stringify(loop));
+
+  // And leave the bracket stage showing, for the rule this file learnt twice:
+  // a test that walks through every state has to say which one it leaves.
+  await page.click('#sch-body .sch-stage:has-text("Playoff bracket")');
+  await wait(800);
 
   // Back to Settings, or the assertions below type into a hidden card. A
   // remembered sub-tab is not restored by returning to the section.

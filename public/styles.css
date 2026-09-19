@@ -3619,6 +3619,39 @@ label.is-off {
   color: var(--text-faint, #7d8894);
 }
 
+/* Where a side comes from: two questions on one row, because "Winner of
+   Quarter-final 2" is one sentence. The take sizes to its own words and the
+   match select takes the rest - a match name is the long half, and it is the
+   half an operator is reading. */
+.sch-feed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* `width: 100%` is what .g-field select gives every other select on this page,
+   and inside a flex row it resolves flex-basis: auto to the whole container -
+   so the take took the full column and shoved the match select out through the
+   side of the dialog. Found by looking at it; every box measured was the size
+   it asked for. */
+.sch-feed select {
+  width: auto;
+}
+
+.sch-feed select:first-child {
+  flex: 0 0 auto;
+}
+
+/* A basis rather than 0, so the pair WRAPS instead of squeezing: two columns
+   of a 368px dialog leave the match select 60px, which is three letters of a
+   name an operator is picking a match by. Given its own line it gets the
+   column. */
+.sch-feed select:last-child {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
 .sch-maps {
   display: flex;
   flex-direction: column;

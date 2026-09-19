@@ -46,6 +46,7 @@ import {
   BEST_OF_CHOICES,
   MAX_GROUPS,
   BRACKET_HALVES,
+  EDGE_TAKES,
   STAGE_KINDS,
   STAGE_TEMPLATES,
   emptyMapRow,
@@ -54,6 +55,7 @@ import {
   fixtureStatus,
   fixtureWinner,
   bracketLayout,
+  mapRowPlayed,
   mapsNeeded,
   slotLabel,
   stageHasGroups,
@@ -1060,9 +1062,24 @@ if (host) {
     return wrap;
   }
 
+  /**
+   * What to call a match in a sentence about it.
+   *
+   * `fixtureLabel` answers "Fixture" for a match with nobody in it yet, which
+   * on the unwired bracket the Fed by picker exists to help build is EVERY
+   * match in it - so "Winner of Fixture" told an operator nothing at all.
+   * Where there are no teams to name it by, say where it sits in the draw.
+   */
+  const matchName = (fixture) => {
+    const left = slotLabel(fixture.left);
+    const right = slotLabel(fixture.right);
+    if (left && right) return fixtureLabel(fixture);
+    return `${roundName(stageOf(fixture.stageId) ?? {}, fixture)}, match ${(fixture.slot ?? 0) + 1}`;
+  };
+
   const sourceLabel = (source) => {
     const from = doc.fixtures.find((entry) => entry.id === source.fixtureId);
-    return from ? `${source.take === 'loser' ? 'Loser' : 'Winner'} of ${fixtureLabel(from)}` : 'a match that is gone';
+    return from ? `${source.take === 'loser' ? 'Loser' : 'Winner'} of ${matchName(from)}` : 'a match that is gone';
   };
 
   // ------------------------------------------------------------- the modal ---
@@ -1132,9 +1149,31 @@ if (host) {
     const heading = el('h2', 'sch-modal-title', {}, fixtureLabel(fixture));
     heading.append(el('span', 'sch-modal-sub', {}, roundName(stageOf(fixture.stageId) ?? {}, fixture)));
 
+    const sides = { left: sideFields(draft, 'left'), right: sideFields(draft, 'right') };
+
+    /*
+     * The wiring row, and only where a draw actually flows.
+     *
+     * A round robin and a group have no edges - everybody plays everybody, and
+     * nobody advances into anything - so offering a Fed by picker there is two
+     * more selects to read and ignore on the dialog an operator opens ninety
+     * seconds before a match. Same rule as the group picker below it.
+     *
+     * An edge that already EXISTS is always shown, whatever the stage kind:
+     * a control that hides the thing it edits is how an edge nobody can see
+     * carries a team into a match nobody expected.
+     */
+    const flows = !stageHasTable(stageOf(fixture.stageId)) || Boolean(draft.left.source) || Boolean(draft.right.source);
+
     form.append(
       heading,
-      grid(2, [field('Left team', modalSide(draft, 'left')), field('Right team', modalSide(draft, 'right'))]),
+      grid(2, [sides.left.team, sides.right.team]),
+      ...(flows
+        ? [
+            grid(2, [sides.left.feed, sides.right.feed]),
+            help('A wired side fills itself in when that match is decided. Picking a team instead pins this one and cuts the link.'),
+          ]
+        : []),
       grid(2, [field('Series', seriesPicker(draft, paintMaps)), field('Result', resultPicker(draft))]),
       /*
        * Which group this match is in, and ONLY when the stage has any.
@@ -1232,18 +1271,65 @@ if (host) {
     return pick;
   }
 
-  /** A team picker, writing into the draft rather than to the server. */
-  function modalSide(draft, which) {
-    const slot = draft[which];
-    const pick = el('select', null, { 'aria-label': `${which} team` });
-    pick.append(el('option', null, { value: '' }, slot.source ? `← ${sourceLabel(slot.source)}` : '- nobody yet -'));
-    for (const team of library) {
+  /** How an edge reads, next to the match it points at. */
+  const TAKE_LABEL = { winner: 'Winner of', loser: 'Loser of' };
+
+  /**
+   * One match, as an option in the Fed by picker.
+   *
+   * The PLACE comes first and is always there, because `fixtureLabel` answers
+   * "Fixture" for a match with nobody in it yet - which on the bracket this
+   * control exists to wire is every match in it. Two unwired quarter-finals
+   * have to be told apart by something.
+   */
+  const feedLabel = (fixture) => {
+    const place = `${roundName(stageOf(fixture.stageId) ?? {}, fixture)}, match ${(fixture.slot ?? 0) + 1}`;
+    const left = slotLabel(fixture.left);
+    const right = slotLabel(fixture.right);
+    return left && right ? `${place} - ${left} v ${right}` : place;
+  };
+
+  /**
+   * BOTH controls for one side of a match: who is in it, and where they come
+   * from.
+   *
+   * ## Why the wiring control exists at all
+   *
+   * Nothing in this program could SET `fixture.left.source` before it. The
+   * team picker could only ever CLEAR an edge and `sourceLabel` could only
+   * ever display one, so every edge in every schedule here was written by
+   * `generate` or by a template - and the moment an operator needed a draw no
+   * template covers, their only route to a bracket that flows was to hand-edit
+   * `schedule.json`. A hand-built bracket had no flow between rounds at all.
+   *
+   * ## Why they are one function
+   *
+   * They are one decision with two answers and each answer clears the other,
+   * so they share a `sync` that re-reads the draft into both. Two functions
+   * would mean two ideas of what the slot currently says, and the way that
+   * goes wrong is a select showing a team the draft no longer holds.
+   *
+   * ## It does not check for a cycle, deliberately
+   *
+   * `apply` validates acyclicity on the way in and refuses the whole write,
+   * and `act` puts its message in front of the operator. A second
+   * implementation here is one refactor from disagreeing with that one - and
+   * the way it would disagree is by ALLOWING something, because the browser
+   * only ever sees the draft it is holding.
+   */
+  function sideFields(draft, which) {
+    const label = which === 'left' ? 'Left' : 'Right';
+    const played = () => (draft.maps ?? []).some(mapRowPlayed);
+
+    // ------------------------------------------------------ who is in it ---
+    const team = el('select', null, { 'aria-label': `${label} team` });
+    const blank = el('option', null, { value: '' }, '- nobody yet -');
+    team.append(blank);
+    for (const entry of library) {
       // The full name, not teamLabel() - that prefers the tricode, which is
       // right on a graphic at 1920x1080 and useless where "ALP" and "ALT" are
       // the whole of what an operator has to tell apart.
-      pick.append(
-        el('option', null, { value: team.id, selected: team.id === slot.teamId ? 'selected' : null }, team.name || teamLabel(team)),
-      );
+      team.append(el('option', null, { value: entry.id }, entry.name || teamLabel(entry)));
     }
     /*
      * A team that is IN the fixture but not selectable from the library.
@@ -1257,21 +1343,120 @@ if (host) {
      *
      * `__keep` rather than the id, because there may be no id: it means "leave
      * this slot exactly as it is", which is a third answer the other two
-     * options cannot express.
+     * options cannot express. It is added and removed by `sync` rather than
+     * once at build time, because wiring the slot is what takes that team away.
      */
-    const known = library.some((team) => team.id === slot.teamId);
-    if (slot.name && !known) {
-      pick.append(el('option', null, { value: '__keep', selected: 'selected' }, `${slot.name} (not from the library)`));
+    const keep = el('option', null, { value: '__keep' }, '');
+
+    // -------------------------------------------------- where they came from
+    const take = el('select', null, { 'aria-label': `${label} side takes` });
+    for (const value of EDGE_TAKES) {
+      take.append(el('option', null, { value }, TAKE_LABEL[value] ?? value));
     }
 
-    pick.addEventListener('change', () => {
-      if (pick.value === '__keep') return;
-      const team = library.find((entry) => entry.id === pick.value);
+    const from = el('select', null, { 'aria-label': `${label} side comes from` });
+    from.append(el('option', null, { value: '' }, '- not fed by a match -'));
+    /*
+     * Every match in the document except this one, grouped by stage.
+     *
+     * Not just this stage's: an edge may cross one, `stage.remove` clears
+     * exactly those edges, and a playoff fed by the last match of a group is a
+     * real draw. Itself is left out because a match cannot feed itself - that
+     * is not the cycle check, it is not offering nonsense.
+     */
+    for (const stage of doc.stages) {
+      const rows = fixturesIn(stage.id).filter((entry) => entry.id !== draft.id);
+      if (!rows.length) continue;
+      const group = el('optgroup', null, { label: stage.name });
+      for (const entry of rows) group.append(el('option', null, { value: entry.id }, feedLabel(entry)));
+      from.append(group);
+    }
+
+    const feed = el('div', 'sch-feed');
+    feed.append(take, from);
+
+    // ------------------------------------------------------------- in step --
+    const sync = () => {
+      const slot = draft[which];
+      const wired = Boolean(slot.source);
+
+      // The blank option is what the slot IS when no team is named on it, and
+      // an edge is a real answer rather than an absence.
+      blank.textContent = wired ? `← ${sourceLabel(slot.source)}` : '- nobody yet -';
+
+      const known = library.some((entry) => entry.id === slot.teamId);
+      const stray = Boolean(slot.name) && !known;
+      if (stray) {
+        keep.textContent = `${slot.name} (not from the library)`;
+        if (!keep.isConnected) team.append(keep);
+      } else if (keep.isConnected) {
+        keep.remove();
+      }
+
+      team.value = stray ? '__keep' : known ? slot.teamId : '';
+      from.value = slot.source?.fixtureId ?? '';
+      take.value = slot.source?.take ?? EDGE_TAKES[0];
+      // "Loser of nothing" is not a state, and a dead control says so before
+      // the click rather than after it.
+      take.disabled = !wired;
+    };
+
+    /**
+     * Put an edge on the slot, and let `propagate` own the copy under it.
+     *
+     * The copied team goes when the edge arrives: under an edge the copy is
+     * DERIVED, so leaving a hand-picked name in a slot that reads "Winner of
+     * QF1" is two answers to one question with nothing to choose between them.
+     * If the feeder is already decided, propagation writes the right team
+     * straight back in on this same save.
+     *
+     * UNLESS this match has been played, and that exception is the sharp one.
+     * `propagate` refuses to rewrite a fixture that has a result, so clearing
+     * here would leave a played match with no teams and its map rows intact -
+     * a 13-7 between nobody and nobody. Wiring one after the fact keeps its
+     * teams and lets propagation raise the disagreement if there is one.
+     */
+    const wire = (edge) => {
+      const slot = draft[which];
+      const cleared = played() ? slot : { ...slot, ...EMPTY_TEAM, teamId: '' };
+      draft[which] = { ...cleared, source: edge };
+      sync();
+    };
+
+    team.addEventListener('change', () => {
+      if (team.value === '__keep') return;
+      const picked = library.find((entry) => entry.id === team.value);
       // Picking a team by hand is what PINS a slot, so the edge is cleared
-      // explicitly - the sanitiser deliberately arbitrates neither.
-      draft[which] = team ? { ...asSlot(team), source: null } : { ...slot, ...EMPTY_TEAM, teamId: '' };
+      // explicitly - the sanitiser deliberately arbitrates neither. Picking
+      // the blank option does NOT: that option IS the edge's label, so
+      // choosing it means "go back to being fed by that match".
+      draft[which] = picked ? { ...asSlot(picked), source: null } : { ...draft[which], ...EMPTY_TEAM, teamId: '' };
+      sync();
     });
-    return pick;
+
+    from.addEventListener('change', () => {
+      if (from.value) {
+        wire({ fixtureId: from.value, take: take.value });
+        return;
+      }
+      /*
+       * Unwiring keeps whoever is in the slot - the same rule `stage.remove`
+       * follows when it clears the edges into a deleted stage. A semi-final
+       * does not lose the team that reached it because the link that carried
+       * them there was cut.
+       */
+      draft[which] = { ...draft[which], source: null };
+      sync();
+    });
+
+    take.addEventListener('change', () => {
+      const slot = draft[which];
+      if (!slot.source) return;
+      wire({ ...slot.source, take: take.value });
+    });
+
+    sync();
+    return { team: field(`${label} team`, team), feed: field(`${label} fed by`, feed) };
   }
 
   /** The series length. Changing it adds or removes map rows there and then. */
