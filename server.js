@@ -2364,8 +2364,23 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
      * takes the same bar as deleting the stage: the exact name typed back once
      * there is anything to lose. Empty asks nothing.
      */
-    case 'template.apply':
-      return out(
+    case 'template.apply': {
+      /*
+       * Logged at WARN when it overwrote something, exactly as `stage.remove`
+       * is - and for the identical reason, which the first version of this
+       * missed. Both destroy results that somebody filed, and that line is the
+       * only trace left afterwards: the schedule is shared by every desk of the
+       * tournament, so "who wiped the group stage" has no other answer.
+       *
+       * Counted inside the write and reported after it, so a refused apply -
+       * the wrong name typed, an unknown template - logs nothing at all. A
+       * warning for something that did not happen is worse than none, because
+       * it is the line somebody reads while trying to work out what did.
+       */
+      let replaced = 0;
+      let laidOut = '';
+
+      const applied = out(
         schedule.apply((draft) => {
           const stage = draft.stages.find((entry) => entry.id === String(body?.stageId ?? ''));
           if (!stage) throw badRequest('No such stage.');
@@ -2388,6 +2403,8 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
               );
             }
           }
+          replaced = holding.length;
+          laidOut = `${stage.name}`;
 
           let built;
           try {
@@ -2443,6 +2460,16 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
           if (built.groups.length) stage.groups = built.groups;
         }),
       );
+
+      if (replaced) {
+        log.warn(
+          'schedule',
+          `stage "${laidOut}" laid out as ${String(body?.template ?? '')}, replacing ${replaced} match${replaced === 1 ? '' : 'es'}`,
+          { tournament: by.tournament, who: by.who },
+        );
+      }
+      return applied;
+    }
 
     case 'fixture.save':
       return out(

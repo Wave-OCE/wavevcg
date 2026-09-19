@@ -1079,10 +1079,39 @@ try {
   await wait(800);
   ok('27d6. ...and discarding writes nothing', (await page.textContent('.sch-stage')).startsWith('Playoff bracket'), await page.textContent('.sch-stage'));
 
-  await page.click('#sch-body button:has-text("Add fixture")');
+  await page.click('#sch-body button:has-text("Add match")');
   await wait(800);
   ok('27f. a fixture can be added', (await page.$$('.sch-fixture')).length === 1, String((await page.$$('.sch-fixture')).length));
   ok('27g. ...and starts as scheduled', (await page.textContent('.sch-fixture .sch-status')) === 'Scheduled');
+
+  /*
+   * EVERY DESTRUCTIVE BUTTON IS RED, including this one.
+   *
+   * The match editor builds its footer by hand with `sch-modal-*` classes
+   * rather than through `modalFoot`, and styles.css pairs those with their
+   * `rl-modal-*` twins for the order, the spacer and the phone-width
+   * reordering - but not, until an audit found it, for the COLOUR. "Remove
+   * match" sat in the danger position looking like an ordinary ghost button, on
+   * the one dialog where a mis-click deletes a played result.
+   *
+   * Compared against the team editor's Delete rather than against a literal:
+   * the point is that they MATCH, and a hex here would go stale the day the
+   * palette moves.
+   */
+  await page.click('#sch-body .sch-fixture .sch-edit, #sch-body .sch-fixture button');
+  await wait(700);
+  const dangerColours = await page.evaluate(() => {
+    const drop = document.querySelector('.sch-modal-drop');
+    return drop ? getComputedStyle(drop).color : null;
+  });
+  await page.keyboard.press('Escape');
+  await wait(400);
+  ok('27g1a. the match editor has a Remove button', dangerColours !== null, 'no .sch-modal-drop');
+  ok(
+    '27g1b. ...painted the danger colour like every other one',
+    dangerColours === 'rgb(201, 66, 79)',
+    String(dangerColours),
+  );
 
   /*
    * DELETING A STAGE THAT HOLDS MATCHES.

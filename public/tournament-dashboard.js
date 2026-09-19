@@ -455,9 +455,24 @@ if (els.pick) {
           row.append(button);
         }
 
+        /*
+         * Asked for, which it was not.
+         *
+         * Revoking somebody's access was a plain click - the only destructive
+         * action in the dashboard with no confirmation of any kind, sitting in
+         * a list of rows where the button next to it changes a level. A confirm
+         * rather than a typed name because this is reversible: the remedy is to
+         * add them back, and the bar has to match the damage or it becomes
+         * noise. It names them, because "Remove" in a row of four people is
+         * exactly the press somebody makes on the wrong row.
+         */
         const remove = el('button', 'btn btn-small btn-danger', { type: 'button' }, 'Remove');
         remove.disabled = !owner;
-        remove.addEventListener('click', () => setMember(member, ''));
+        remove.addEventListener('click', () => {
+          const who = member.username || 'this account';
+          if (!window.confirm(`Remove ${who} from "${tournamentLabel(current)}"?\n\nThey lose access to it immediately. You can add them back.`)) return;
+          setMember(member, '');
+        });
         row.append(remove);
 
         return row;

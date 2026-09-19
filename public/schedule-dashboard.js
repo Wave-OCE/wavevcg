@@ -491,7 +491,23 @@ if (host) {
          * does: laying out reads the stage as the SERVER has it, and a group
          * that has only been typed does not exist there yet.
          */
-        const gen = el('button', 'btn btn-small', { type: 'button', title: 'Lay this group out from the team library' }, 'Generate');
+        /*
+         * SAVES THE WHOLE DRAFT, and the title says so.
+         *
+         * It has to: the group may have been typed a second ago and not exist
+         * on the server yet, so laying it out means saving the stage first. The
+         * consequence is the part worth saying out loud - a name or a format
+         * edited in this same dialog and not yet saved is committed too. An
+         * operator who typed a new stage name, thought better of it, and then
+         * pressed Generate on a group lower down would otherwise find the
+         * rename had stuck.
+         */
+        const gen = el(
+          'button',
+          'btn btn-small',
+          { type: 'button', title: 'Saves this stage, then lays this group out from the team library.' },
+          'Save and generate',
+        );
         gen.addEventListener('click', () => {
           if (!String(box.value ?? '').trim()) {
             toast('Name the group first.');
@@ -554,7 +570,8 @@ if (host) {
       help(
         'Split this stage into pools, each with its own table, shown together. Sixteen teams in four groups is ' +
           'four round robins of six matches instead of one of a hundred and twenty. Removing a group leaves its ' +
-          'matches in the stage - they move to "Not in a group" rather than being deleted.',
+          'matches in the stage - they move to "Not in a group" rather than being deleted. Generating a group ' +
+          'saves this whole form first, because the group has to exist before it can be laid out.',
       ),
       groupList,
       el('div', 'subhead', {}, 'Matches'),
@@ -701,7 +718,7 @@ if (host) {
     const list = el('div', 'sch-fixtures');
 
     if (!rows.length) {
-      list.append(el('p', 'field-help', {}, 'No fixtures in this stage yet. Generate them, or add one below.'));
+      list.append(el('p', 'field-help', {}, 'No matches in this stage yet. Lay it out from a template, or add one below.'));
     }
 
     /*
@@ -740,7 +757,7 @@ if (host) {
       }
     }
 
-    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add fixture');
+    const add = el('button', 'btn btn-small', { type: 'button' }, 'Add match');
     add.addEventListener('click', () =>
       act({
         action: 'fixture.save',
@@ -847,7 +864,7 @@ if (host) {
 
   const sourceLabel = (source) => {
     const from = doc.fixtures.find((entry) => entry.id === source.fixtureId);
-    return from ? `${source.take === 'loser' ? 'Loser' : 'Winner'} of ${fixtureLabel(from)}` : 'a fixture that is gone';
+    return from ? `${source.take === 'loser' ? 'Loser' : 'Winner'} of ${fixtureLabel(from)}` : 'a match that is gone';
   };
 
   // ------------------------------------------------------------- the modal ---
@@ -1189,7 +1206,7 @@ if (host) {
   function bracket(stage) {
     const layout = bracketLayout(doc, stage.id);
     if (!layout.nodes.length) {
-      return el('p', 'field-help', {}, 'Nothing to draw yet - generate or add a fixture.');
+      return el('p', 'field-help', {}, 'Nothing to draw yet - lay the stage out, or add a match.');
     }
 
     const width = layout.columns * (CARD_W + COL_GAP) - COL_GAP;

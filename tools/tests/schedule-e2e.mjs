@@ -383,6 +383,14 @@ try {
 
   r = await boss(here('/api/schedule'), json({ action: 'template.apply', stageId: 'main-event', template: 'single', teams: eight, confirm: 'Main event' }));
   ok('t12. the exact name lays it out again', r.status === 200, r.text.slice(0, 200));
+  /*
+   * LOGGED, like removing a stage, and for the identical reason: both destroy
+   * results somebody filed, and the schedule is shared by every desk of the
+   * tournament, so that line is the only answer to "who wiped the group stage".
+   * The first version of this action had no log call at all.
+   */
+  ok('t12a. ...and says so in the log', /laid out as single, replacing 14 match/.test(log), 'no audit line for a re-layout');
+  ok('t12b. ...naming who did it', /boss/.test(log.split('laid out as single')[1]?.slice(0, 200) ?? ''), 'the audit line does not say who');
   main = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'main-event');
   ok('t13. ...as the new shape', main.length === 7, String(main.length));
   ok('t14. ...with nothing of the old one left', main.every((f) => f.bracket === 'upper'), JSON.stringify([...new Set(main.map((f) => f.bracket))]));

@@ -4142,8 +4142,17 @@ body.is-adrift .rail-item[data-tab='global'] {
 }
 
 /* A destructive button in a footer, kept visibly apart from the safe ones as
-   well as physically apart by the spacer. */
-.rl-modal-danger {
+   well as physically apart by the spacer.
+
+   BOTH class families, and the omission is worth recording. Every layout rule
+   in this file pairs `.rl-modal-*` with the schedule's `.sch-modal-*` - the
+   order, the spacer, the phone-width reordering - except this one, so "Remove
+   match" was the single destructive button in the program that sat in the
+   danger POSITION without the danger COLOUR. It looked like an ordinary ghost
+   button on the one dialog where a mis-click deletes a played result. Found by
+   an audit rather than by anybody looking at it. */
+.rl-modal-danger,
+.sch-modal-drop {
   color: var(--on-air, #c9424f);
 }
 

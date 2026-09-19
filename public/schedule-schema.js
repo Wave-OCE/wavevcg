@@ -890,7 +890,7 @@ export function propagate(draft) {
           problem(
             'resultAfterAdvance',
             `"${fixtureLabel(fixture)}" has already been played, so its teams were left alone.`,
-            `It takes its ${side} side from "${fixtureLabel(from)}", whose result changed. Fix it by hand if the match really did change.`,
+            `It takes its ${side} side from "${fixtureLabel(from)}", whose result changed. Fix it by hand if that result really did change.`,
           ),
         );
         continue;
