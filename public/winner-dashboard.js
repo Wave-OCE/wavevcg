@@ -31,7 +31,7 @@ import {
   teamLabel,
 } from './teams.js';
 import { CSV_TEAM_LIMIT, columnHelp, csvTemplate, readRosterCsv, readTeamCsv } from './team-csv.js';
-import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, setSaveStatus, subhead, title } from './fields.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffTeams, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
 import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
@@ -124,10 +124,9 @@ let saveTimer = null;
 let saveGeneration = 0;
 let saveInFlight = false;
 
-function setStatus(kind, label) {
-  els.status.className = `save-status ${kind}`.trim();
-  els.status.textContent = label;
-}
+// Kept as a local name because two dozen call sites read better for it; the
+// behaviour is the shared one, so the seven dashboards cannot drift.
+const setStatus = (kind, label) => setSaveStatus(els.status, kind, label);
 
 function queueSave() {
   setStatus('saving', 'Saving...');

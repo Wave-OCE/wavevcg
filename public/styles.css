@@ -1389,8 +1389,19 @@ pre {
   color: var(--warn);
 }
 
+/*
+ * NOT the accent, which is what this said for as long as it has existed.
+ *
+ * `--accent` means "selected, and staged in preview" everywhere else in this
+ * tool - the note at the top of this file about three colours meaning three
+ * things. A save that FAILED is not selected and is not staged; it is the one
+ * state on this indicator where something is wrong, and painting it the same
+ * blue as a staged edit says the opposite of what happened. `--danger` is the
+ * token the destructive buttons already use, and it is not `--on-air`, which
+ * means an audience can see it and would be a lie about a dashboard label.
+ */
 .save-status.failed {
-  color: var(--accent);
+  color: var(--danger);
 }
 
 /* A lookup somebody else started. Lives in the topbar rather than beside the

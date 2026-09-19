@@ -17,7 +17,7 @@ import { aliasForPlayer } from './select-schema.js';
 import { applyTeam } from './teams.js';
 import { STATS, STAT_FIELDS, STAT_SLOTS, resultText, statDef } from './stats.js';
 import { ANIM_FIELDS, ANIM_GROUPS, ANIM_TIER_COUNT, inDurationMs } from './animation.js';
-import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, setSaveStatus, subhead, title } from './fields.js';
 import { confirmDanger } from './modal.js';
 import { api, outputUrl, pageUrl, targetKey } from './session.js';
 import { REVERT_NOTE, makeTakeBar } from './take-bar.js';
@@ -161,10 +161,9 @@ let saveTimer = null;
 let saveGeneration = 0;
 let saveInFlight = false;
 
-function setStatus(kind, label) {
-  els.status.className = `save-status ${kind}`.trim();
-  els.status.textContent = label;
-}
+// Kept as a local name because two dozen call sites read better for it; the
+// behaviour is the shared one, so the seven dashboards cannot drift.
+const setStatus = (kind, label) => setSaveStatus(els.status, kind, label);
 
 function queueSave() {
   setStatus('saving', 'Saving...');

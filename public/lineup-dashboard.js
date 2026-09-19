@@ -7,7 +7,7 @@
  * survive a Load that only means "now show the other team".
  */
 
-import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, setSaveStatus, subhead, title } from './fields.js';
 import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
@@ -41,7 +41,7 @@ if (els.tab) {
   let chosen = '';
 
   async function post(body) {
-    els.status.textContent = 'Saving…';
+    setSaveStatus(els.status, 'saving', 'Saving...');
     try {
       const response = await fetch(api('/api/lineup', 'preview'), {
         method: 'POST',
@@ -51,11 +51,11 @@ if (els.tab) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error?.message ?? `HTTP ${response.status}`);
       state = payload.state;
-      els.status.textContent = 'Saved';
+      setSaveStatus(els.status, '', 'Saved');
       paint();
       return payload;
     } catch (error) {
-      els.status.textContent = 'Not saved';
+      setSaveStatus(els.status, 'failed', 'Not saved');
       toast(error.message);
       throw error;
     }

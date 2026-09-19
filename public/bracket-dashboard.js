@@ -19,7 +19,7 @@
  *   that types nothing still gets the right team.
  */
 
-import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, setSaveStatus, subhead, title } from './fields.js';
 import { confirmDanger } from './modal.js';
 import { mediaControl } from './media-field.js';
 import { onState } from './live.js';
@@ -37,19 +37,26 @@ import {
 import { bracketLayout, fixtureScore, fixtureWinner } from './schedule-schema.js';
 
 const $ = (id) => document.getElementById(id);
+
 /*
  * The event's colours, so a blank field can SHOW what it inherits.
  *
- * SYNC, never rebuild. The style panel is painted once and never again - the
- * caret rule - and a brandField's swatch is bound, so `syncFields` moves it
- * without replacing the box somebody may be typing into. A repaint here would
- * undo the very property this panel is built once to protect.
+ * The VALUE is module-level and the LISTENER is not, and that split is the
+ * whole of a bug that shipped. `fields` is created inside `if (els.tab)`, so a
+ * subscription registered out here called a name that does not exist in this
+ * scope - every brand frame threw `fields is not defined`, `live.js` caught it
+ * and reported it with console.warn, and nothing else happened. The bracket's
+ * two swatches simply stopped following the event: change the tournament accent
+ * and the OUTPUT page repainted (bracket.js subscribes separately and was fine)
+ * while the operator's own picker kept showing the old colour. The desk
+ * disagreeing with air, silently, on the one graphic whose comment already
+ * warns that its two colours are easy to get the wrong way round.
+ *
+ * It never threw on a plain load, which is why no suite caught it: the brand store
+ * is silent when nothing moved, so the only frame that reaches this is the one
+ * an operator provokes by restyling the show mid-season.
  */
 let brand = { ...DEFAULT_BRAND };
-onState('brand', (next) => {
-  brand = brandOf(next);
-  fields.syncFields();
-});
 
 const toast = (message) => window.dispatchEvent(new CustomEvent('app-toast', { detail: message }));
 
@@ -80,7 +87,7 @@ if (els.tab) {
   let chosen = '';
 
   async function post(body) {
-    els.status.textContent = 'Saving…';
+    setSaveStatus(els.status, 'saving', 'Saving...');
     try {
       const response = await fetch(api('/api/bracket', 'preview'), {
         method: 'POST',
@@ -90,11 +97,11 @@ if (els.tab) {
       const payload = await response.json();
       if (!response.ok) throw new Error([payload?.error?.message, payload?.error?.hint].filter(Boolean).join(' '));
       state = payload.state;
-      els.status.textContent = 'Saved';
+      setSaveStatus(els.status, '', 'Saved');
       paint();
       return payload;
     } catch (error) {
-      els.status.textContent = 'Not saved';
+      setSaveStatus(els.status, 'failed', 'Not saved');
       toast(error.message);
       throw error;
     }
@@ -115,6 +122,22 @@ if (els.tab) {
     () => state,
     () => save({}),
   );
+
+  /*
+   * SYNC, never rebuild. The style panel is painted once and never again - the
+   * caret rule - and a brandField's swatch is bound, so `syncFields` moves it
+   * without replacing the box somebody may be typing into. A repaint here would
+   * undo the very property this panel is built once to protect.
+   *
+   * Registered HERE, next to what it calls, which is what the lineup, the
+   * head-to-head and the veto board already do. The two dashboards that
+   * subscribe at module scope can only do so because their `fields` is at
+   * module scope too.
+   */
+  onState('brand', (next) => {
+    brand = brandOf(next);
+    fields.syncFields();
+  });
 
   /**
    * What the stage would draw as RIGHT NOW, for the staleness note.

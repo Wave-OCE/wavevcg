@@ -60,6 +60,28 @@ export const help = (text) => el('p', 'field-help', {}, text);
 const URL_MAX = 500;
 const USABLE_URL = /^(?:https?:\/\/\S+|\/[\w./-]*)$/i;
 
+/**
+ * The save indicator, for any dashboard that has one.
+ *
+ * Here because seven dashboards need it and four of them did not have it. The
+ * three older ones each carried an identical three-line `setStatus`, and the
+ * four newer ones wrote `els.status.textContent` directly - so on the lineup,
+ * the head-to-head, the bracket and the veto board a FAILED save was painted in
+ * the same faint grey as a successful one. Saving, Saved and Not saved were
+ * three different words in one colour, 11px, uppercase, at the right-hand edge
+ * of a toolbar. The toast said what went wrong and was gone in four seconds;
+ * after that the desk showed an edit the server had never accepted, with
+ * nothing to distinguish it.
+ *
+ * `kind` is '', 'saving' or 'failed', matching the classes styles.css already
+ * defined and only three of the seven ever set.
+ */
+export function setSaveStatus(node, kind, label) {
+  if (!node) return;
+  node.className = `save-status ${kind}`.trim();
+  node.textContent = label;
+}
+
 export function field(label, input) {
   const wrap = el('label', 'g-field');
   wrap.append(el('span', null, {}, label), input);

@@ -58,7 +58,22 @@ export function onState(name, handler) {
         try {
           listener(state);
         } catch (error) {
-          console.warn(`a ${name} listener threw: ${error.message}`);
+          /*
+           * console.ERROR, and the difference is not cosmetic.
+           *
+           * Catching here is right - one module's broken handler must not take
+           * the other six down with it - but catching turns a crash into a
+           * line of text, and a line of text nobody reads is the same as
+           * silence. As a warn it WAS silence: every suite in this repo
+           * collects `pageerror` and console messages of type `error`, so a
+           * throwing listener was the one class of fault that could not fail a
+           * test. The bracket dashboard's brand subscription threw on every
+           * event-colour change from the day it was written, behind this line.
+           *
+           * A listener that throws is a bug by definition - nothing here is
+           * allowed to fail - so it is reported as one.
+           */
+          console.error(`a ${name} listener threw: ${error.message}`);
         }
       }
     });

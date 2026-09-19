@@ -18,7 +18,7 @@ import { DEFAULT_BRAND, brandOf } from './brand.js';
 import { mediaControl } from './media-field.js';
 import { SIDE_CHOICES, applyTeam } from './teams.js';
 import { mapDisplayName } from './maps.js';
-import { el, field, grid, help, makeFields, subhead, title } from './fields.js';
+import { el, field, grid, help, makeFields, setSaveStatus, subhead, title } from './fields.js';
 import { confirmDanger } from './modal.js';
 import { api, account, outputUrl, targetKey } from './session.js';
 import { diffPlayers, downloadLibraryFile, importSummary, readLibraryFile, resolveImport } from './library-file.js';
@@ -101,10 +101,9 @@ let saveInFlight = false;
  */
 let pendingAliases = [];
 
-function setStatus(kind, label) {
-  els.status.className = `save-status ${kind}`.trim();
-  els.status.textContent = label;
-}
+// Kept as a local name because two dozen call sites read better for it; the
+// behaviour is the shared one, so the seven dashboards cannot drift.
+const setStatus = (kind, label) => setSaveStatus(els.status, kind, label);
 
 function queueSave() {
   setStatus('saving', 'Saving...');

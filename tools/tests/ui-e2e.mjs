@@ -226,6 +226,30 @@ try {
 
   // The dashboard's own state, edited through the real controls.
   await page.waitForSelector('#ed-left input', { timeout: 8000 });
+
+  /*
+   * A tap on the two channels the take bar watches, so that if the note fails
+   * to appear the failure can say WHICH of the two possible reasons it was:
+   * a frame that never arrived, or a frame that arrived and was judged equal.
+   *
+   * The dynamic import resolves to the same `/live.js` the dashboard modules
+   * imported, so this subscribes to the live Set rather than opening anything -
+   * a second EventSource here would itself be a bug (the six-connection cap).
+   * Read-only: it counts and records, and touches no state.
+   */
+  await page.evaluate(async () => {
+    const { onState } = await import('./live.js');
+    window.__tap = { graphic: 0, graphicPreview: 0, air: null, preview: null };
+    onState('graphic', (next) => {
+      window.__tap.graphic += 1;
+      window.__tap.air = next?.left?.teamName ?? null;
+    });
+    onState('graphicPreview', (next) => {
+      window.__tap.graphicPreview += 1;
+      window.__tap.preview = next?.left?.teamName ?? null;
+    });
+  });
+
   const teamInput = page.locator('#ed-left input[type="text"]').first();
   await teamInput.fill('CLOUD9');
   await page.waitForTimeout(700);
@@ -245,9 +269,48 @@ try {
    * one asks the BROWSER, which only repaints once the push comes back down the
    * stream - so a fixed pause was a race, and it lost about one run in three.
    * Still a real assertion: it fails if the note never appears.
+   *
+   * AND IT SAYS WHY IT FAILED, which it did not. "no differs-from-air note" is
+   * the same sentence for four completely different faults - the SSE frame
+   * never arrived, the comparison said they match, the element is unhidden but
+   * its tab is not on screen, or `hidden` stopped working because some rule set
+   * `display` on it. Three of those are bugs in the program and one is a slow
+   * machine, and the message could not tell them apart, so the failure got
+   * written off as flake. Measured instead: 225ms from keystroke to note on an
+   * idle server, against a budget of 5700ms here.
    */
   await page.waitForSelector('#g-staged:not([hidden])', { timeout: 5000 }).catch(() => {});
-  ok('the take bar says so', await page.isVisible('#g-staged'), 'no "differs from air" note');
+  const noteShown = await page.isVisible('#g-staged');
+  const why = noteShown
+    ? ''
+    : JSON.stringify(
+        await page.evaluate(async () => {
+          const note = document.getElementById('g-staged');
+          const rect = note.getBoundingClientRect();
+          const read = (bus) =>
+            fetch(`/api/graphic?bus=${bus}`)
+              .then((r) => r.json())
+              .then((d) => d.state.left.teamName)
+              .catch((e) => `err:${e.message}`);
+          return {
+            hiddenAttr: note.hasAttribute('hidden'),
+            display: getComputedStyle(note).display,
+            box: [Math.round(rect.width), Math.round(rect.height)],
+            tabOnScreen: getComputedStyle(document.getElementById('tab-graphic')).display,
+            barStaged: document.getElementById('g-take-bar').classList.contains('is-staged'),
+            revertOff: document.getElementById('g-revert').disabled,
+            preview: await read('preview'),
+            air: await read('program'),
+            // What the BROWSER received, against what the server holds above.
+            // Counts at zero mean the stream never delivered; counts that moved
+            // with stale values mean the comparison is what is wrong.
+            tap: window.__tap ?? null,
+            liveFrames: [...document.querySelectorAll('iframe')].filter((f) => f.src && f.src !== 'about:blank')
+              .length,
+          };
+        }),
+      );
+  ok('the take bar says so', noteShown, why);
 
   // ------------------------------------------------- the OBS URL really works ---
   const obs = await context.newPage();
@@ -805,6 +868,136 @@ try {
   // --------------------------------------------------- connection budget ---
   const streams = await page.evaluate(() => window.performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/events')).length);
   ok('the dashboard opened exactly one multiplexed stream', streams <= 1, String(streams));
+
+  /*
+   * ------------------------------------ A FAILED SAVE HAS TO LOOK LIKE ONE ---
+   *
+   * Four of the seven graphics painted Saving, Saved and Not saved in the same
+   * faint grey: the three older dashboards each carried an identical local
+   * `setStatus` that applied a class, and the four newer ones wrote
+   * `els.status.textContent` directly. So on the lineup, the head-to-head, the
+   * bracket and the veto board, a save the server never accepted was
+   * indistinguishable at a glance from one it did. The toast said what went
+   * wrong and was gone in four seconds; after that the desk simply showed an
+   * edit that did not exist anywhere else.
+   *
+   * The lineup is asked because it was one of the four. The colour is compared
+   * against `--danger` rather than a literal hex - the point is that they
+   * MATCH - and the resting state is measured first, so this cannot pass on a
+   * dashboard that paints everything red.
+   */
+  await page.click('.rail-item[data-section="graphics"]');
+  await page.click('.subtabs[data-for="graphics"] .subtab[data-group="team"]');
+  await wait(300);
+  await page.click('#graphic-strip .tab[data-tab="lineup"]');
+  await wait(800);
+
+  const statusLook = () =>
+    page.evaluate(() => {
+      const node = document.getElementById('l-status');
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--danger)';
+      document.body.append(probe);
+      const answer = {
+        text: node.textContent.trim(),
+        colour: getComputedStyle(node).color,
+        danger: getComputedStyle(probe).color,
+      };
+      probe.remove();
+      return answer;
+    });
+
+  const restingSave = await statusLook();
+  ok('the lineup save indicator rests quiet', restingSave.colour !== restingSave.danger, JSON.stringify(restingSave));
+
+  // POSTs only. The preview iframe on this tab holds its own stream, and
+  // aborting that as well would be testing something else.
+  const killSave = (route) => (route.request().method() === 'POST' ? route.abort('failed') : route.continue());
+  await page.route('**/api/lineup**', killSave);
+  await page.click('#l-show');
+  await wait(1500);
+  const failedSave = await statusLook();
+  await page.unroute('**/api/lineup**', killSave);
+  ok(
+    'a save that failed says so, in the danger colour',
+    failedSave.text === 'Not saved' && failedSave.colour === failedSave.danger,
+    JSON.stringify(failedSave),
+  );
+  errors.length = 0; // the aborted POST above was asked for
+
+  /*
+   * ------------------------------------- the event's colour reaches the DESK ---
+   *
+   * The settled behaviour is that changing the tournament accent restyles every
+   * graphic that has not overridden it, LIVE and with no take. Six output pages
+   * are covered by their own suites; this asks the seventh question, which none
+   * of them could: does the OPERATOR'S OWN PICKER follow?
+   *
+   * It did not, and the shape of the failure is why this assertion is here
+   * rather than a tidier one somewhere else. `bracket-dashboard.js` subscribed
+   * at module scope and called `fields.syncFields()`, but its `fields` is built
+   * inside `if (els.tab)` - so every brand frame threw `fields is not defined`,
+   * live.js caught it, and the two swatches silently stopped following the
+   * event. The graphic ON AIR repainted correctly the whole time, because
+   * `bracket.js` subscribes separately. Desk and air disagreeing, with nothing
+   * failing anywhere.
+   *
+   * The bracket is the right graphic to ask because it is the documented trap:
+   * the field named `accent` is the HIGHLIGHT and `trim` is the accent, so the
+   * two event colours are set to DIFFERENT values and each is checked against
+   * the field it belongs to. With one colour this passes whichever way round
+   * the mapping is - the shape of test that lets the bug back in.
+   */
+  /*
+   * Three presses, not one: Graphics is a rail GROUP of three, and
+   * `#graphic-strip` only carries the tabs of whichever group is open - so the
+   * Bracket tab button does not exist to click until its group does. That is
+   * the operator's own path and the reason the rail costs a second click, which
+   * is itself noted as an open question in CLAUDE.md.
+   */
+  await page.click('.rail-item[data-section="graphics"]');
+  await page.click('.subtabs[data-for="graphics"] .subtab[data-group="bracket"]');
+  await wait(400);
+  await page.click('#graphic-strip .tab[data-tab="bracket"]');
+  await wait(900);
+  ok('the bracket tab opens from the rail', await page.isVisible('#tab-bracket'));
+
+  const swatches = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...document.querySelectorAll('#tab-bracket .brand-row')].map((row) => [
+          row.closest('.g-field')?.querySelector('span')?.textContent ?? '?',
+          `${row.querySelector('input[type="color"]')?.value ?? '?'}|${row.querySelector('.brand-state')?.textContent ?? '?'}`,
+        ]),
+      ),
+    );
+
+  const beforeBrand = await swatches();
+  ok(
+    'the bracket swatches start out inheriting',
+    Object.values(beforeBrand).length === 2 && Object.values(beforeBrand).every((v) => v.endsWith('from the event')),
+    JSON.stringify(beforeBrand),
+  );
+
+  await page.evaluate(
+    (id) =>
+      fetch('/api/tournaments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update', id, fields: { accent: '#00ff88', highlight: '#8800ff' } }),
+      }).then((r) => r.json()),
+    showId,
+  );
+  await wait(1800);
+
+  const afterBrand = await swatches();
+  ok('the event trim reaches the dashboard swatch', afterBrand.Trim === '#00ff88|from the event', JSON.stringify(afterBrand));
+  ok(
+    'and the event highlight reaches the other one, not the same one',
+    afterBrand.Highlight === '#8800ff|from the event',
+    JSON.stringify(afterBrand),
+  );
+  ok('neither stopped saying it is inherited', Object.values(afterBrand).every((v) => v.endsWith('from the event')));
 
   ok('no page errors on the owner dashboard', errors.length === 0, errors.join(' | '));
 
