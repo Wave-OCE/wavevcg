@@ -56,6 +56,7 @@ import {
   makeHeadToHeadStore,
   makeLineupStore,
   makeSelectStore,
+  makeStandingsStore,
   makeVetoBoardStore,
   makeWinnerStore,
 } from './graphics.js';
@@ -143,6 +144,24 @@ export const BUS_KINDS = {
   bracket: {
     file: 'bracket.json',
     make: makeBracketGraphicStore,
+    transport: (state) => [state.anim.visible],
+    cue: (state) => state.anim.cue ?? 0,
+    withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),
+  },
+  /*
+   * The standings. Visibility only, and `group` is deliberately NOT in here.
+   *
+   * The same argument the veto board's `reveal` and the bracket's already make,
+   * with one extra turn: stepping to Group C is meant to animate Group C in
+   * while the board it sits on stays put. Putting the index in `transport`
+   * would bump the cue on a take that walked the pools, and the page would fly
+   * the whole board on again every time - which is both the failure the counter
+   * exists to prevent and, here, a worse-looking one, because the thing an
+   * operator is trying to do IS change what is on the board.
+   */
+  standings: {
+    file: 'standings.json',
+    make: makeStandingsStore,
     transport: (state) => [state.anim.visible],
     cue: (state) => state.anim.cue ?? 0,
     withCue: (state, cue) => ({ ...state, anim: { ...state.anim, cue } }),

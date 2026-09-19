@@ -48,6 +48,7 @@ const SECTION_OF = {
   headToHead: 'graphics',
   vetoBoard: 'graphics',
   bracket: 'graphics',
+  standings: 'graphics',
   global: 'global',
   tournament: 'tournament',
   account: 'account',
@@ -64,9 +65,19 @@ const SECTION_OF = {
 const GROUP_TABS = {
   match: ['graphic', 'winner', 'select'],
   team: ['lineup', 'headToHead', 'vetoBoard'],
-  // One screen today, and a group anyway: a second bracket graphic then costs a
-  // line rather than a redesign.
-  bracket: ['bracket'],
+  /*
+   * The graphics that come from the SCHEDULE rather than from a match or an
+   * org: the draw sheet and the tables under it.
+   *
+   * It was called `bracket` while a bracket was the only thing in it, and the
+   * moment the standings arrived that name stopped describing the group - a
+   * strip reading Bracket / Standings would have said "the bracket's
+   * standings", which is not what a group stage table is. The KEY moved with
+   * the label deliberately: a group key that says one thing and a button that
+   * says another is the drift this codebase keeps finding in other places, and
+   * it costs one line here to not have it.
+   */
+  competition: ['bracket', 'standings'],
 };
 
 /** tab -> group, derived so the two tables cannot drift apart. */
@@ -74,7 +85,7 @@ const GROUP_OF = Object.fromEntries(
   Object.entries(GROUP_TABS).flatMap(([group, tabs]) => tabs.map((tab) => [tab, group])),
 );
 
-const lastOf = { match: 'graphic', team: 'lineup', bracket: 'bracket' };
+const lastOf = { match: 'graphic', team: 'lineup', competition: 'bracket' };
 let lastGroup = 'match';
 
 /**
@@ -93,6 +104,7 @@ const PAGE = {
   headToHead: ['Head to head', 'Two orgs before a match'],
   vetoBoard: ['Map veto', 'The bans and picks, on air'],
   bracket: ['Bracket', 'The draw sheet'],
+  standings: ['Standings', 'The group tables, on air'],
   global: ['Global', 'Settings and libraries shared by every graphic'],
   tournament: ['Tournament', 'The competition, and who may work on it'],
   account: ['Account', 'Your keys, your sessions, and who may reach them'],

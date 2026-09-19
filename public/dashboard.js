@@ -65,7 +65,10 @@ const els = {
     lineup: $('tab-lineup'),
     headToHead: $('tab-headToHead'),
     vetoBoard: $('tab-vetoBoard'),
+    // The Competition group: the draw sheet and the tables under it. Both
+    // come from the schedule rather than from a match or an org.
     bracket: $('tab-bracket'),
+    standings: $('tab-standings'),
     // No preview and no stream of its own - see index.html.
     global: $('tab-global'),
     tournament: $('tab-tournament'),

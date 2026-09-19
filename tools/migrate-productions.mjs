@@ -71,6 +71,13 @@ const SCHEMA_VERSION = 3;
  * file added next year into a desk directory without anybody deciding that it
  * should go there. A list makes every new file force the question, the same way
  * KEYED_ROUTES does for routes.
+ *
+ * ASKED AND ANSWERED for every graphic added since: the veto board, the lineup,
+ * the head-to-head, the bracket and the standings are all deliberately absent.
+ * Every one of them was built AFTER productions existed, so their stores have
+ * only ever created their files inside a desk directory - a tree old enough to
+ * need this migration cannot contain one at the tournament root, and listing
+ * them would be a rename that never fires looking like one that might.
  */
 const DESK_FILES = [
   'graphic.json',

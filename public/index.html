@@ -127,7 +127,7 @@
           <nav class="subtabs" data-for="graphics" aria-label="Graphic groups" hidden>
             <button type="button" class="subtab" data-group="match" aria-selected="true">Match</button>
             <button type="button" class="subtab" data-group="team" aria-selected="false">Team</button>
-            <button type="button" class="subtab" data-group="bracket" aria-selected="false">Bracket</button>
+            <button type="button" class="subtab" data-group="competition" aria-selected="false">Competition</button>
           </nav>
 
           <nav class="subtabs" data-for="tournament" aria-label="Tournament" hidden>
@@ -220,7 +220,8 @@
       <button type="button" class="tab" role="tab" data-tab="lineup" data-group="team" aria-selected="false">Lineup</button>
       <button type="button" class="tab" role="tab" data-tab="headToHead" data-group="team" aria-selected="false">Head to head</button>
       <button type="button" class="tab" role="tab" data-tab="vetoBoard" data-group="team" aria-selected="false">Map veto</button>
-      <button type="button" class="tab" role="tab" data-tab="bracket" data-group="bracket" aria-selected="false">Bracket</button>
+      <button type="button" class="tab" role="tab" data-tab="bracket" data-group="competition" aria-selected="false">Bracket</button>
+      <button type="button" class="tab" role="tab" data-tab="standings" data-group="competition" aria-selected="false">Standings</button>
     </nav>
 
     <div id="no-tournament" class="banner banner-warn" role="status" hidden></div>
@@ -896,6 +897,74 @@
       </div>
     </main>
 
+    <!-- ====================================================== standings === -->
+    <!--
+      The group table.
+
+      Its state carries the TABLES `stageTables` answered with - rows with
+      names, records and ranks already worked out - rather than a competition,
+      so the output page never works out a rank while it paints. The transport
+      walks the POOLS, because one group at a time is an index rather than a
+      filter; it is not the cue, so stepping to Group C animates Group C and
+      leaves the board it sits on where it is.
+    -->
+    <main class="graphic-tab" id="tab-standings" role="tabpanel" hidden>
+      <div class="graphic-toolbar">
+        <button type="button" id="st-reset" class="btn btn-ghost">Reset graphic</button>
+        <span class="toolbar-gap"></span>
+        <label class="obs-url">
+          <span>OBS browser source</span>
+          <span class="obs-url-row">
+            <code id="st-obs-url">/standings.html</code>
+            <button type="button" class="btn-copy" data-copy-target="st-obs-url" title="Copy URL">Copy</button>
+            <a class="btn btn-ghost" id="st-open" href="/standings.html" target="_blank" rel="noopener">Open</a>
+          </span>
+        </label>
+        <span id="st-status" class="save-status">Saved</span>
+      </div>
+
+      <div class="cue-bar">
+        <span class="cue-state" id="st-air">
+          <span class="cue-dot" aria-hidden="true"></span>
+          <span id="st-air-label">Off air</span>
+        </span>
+        <button type="button" id="st-show" class="btn btn-cue">Show</button>
+        <button type="button" id="st-hide" class="btn btn-ghost">Hide</button>
+        <span class="toolbar-gap"></span>
+        <button type="button" id="st-first" class="btn btn-ghost" title="Back to the first group">First</button>
+        <button type="button" id="st-back" class="btn btn-ghost" title="The group before this one">Back</button>
+        <button type="button" id="st-next" class="btn btn-cue" title="The next group">Next group</button>
+        <span class="cue-note" id="st-group-note"></span>
+      </div>
+
+      <div class="take-bar" id="st-take-bar">
+        <span class="prog-state" id="st-prog">
+          <span class="prog-dot" aria-hidden="true"></span>
+          <span id="st-prog-label">Off air</span>
+        </span>
+        <button type="button" id="st-take" class="btn btn-take">Send to program</button>
+        <button type="button" id="st-revert" class="btn btn-ghost">Revert to air</button>
+        <span class="toolbar-gap"></span>
+        <span class="staged-note" id="st-staged" hidden>Preview differs from air</span>
+      </div>
+
+      <section class="panel preview-panel">
+        <h2 class="panel-title">Live preview <span class="pill">1920 &times; 1080</span></h2>
+        <div class="preview-frame checker" id="st-preview-frame">
+          <iframe id="st-preview" data-src="/standings.html" title="Standings preview" scrolling="no"></iframe>
+        </div>
+      </section>
+
+      <div class="editor-grid" data-cards="standings">
+        <section class="panel" id="sted-stage"></section>
+        <!-- The two colours a show restyles. Its own card because it is set
+             once before a season and never touched again, while the card above
+             it is pressed every match. -->
+        <section class="panel" id="sted-colours"></section>
+        <section class="panel" id="sted-style"></section>
+      </div>
+    </main>
+
     <!-- ========================================================== lineup === -->
     <main class="graphic-tab" id="tab-lineup" role="tabpanel" hidden>
       <div class="graphic-toolbar">
@@ -1476,6 +1545,7 @@
     <script src="/lineup-dashboard.js" type="module"></script>
     <script src="/headtohead-dashboard.js" type="module"></script>
     <script src="/bracket-dashboard.js" type="module"></script>
+    <script src="/standings-dashboard.js" type="module"></script>
     <script type="module" src="/tournament-dashboard.js"></script>
     <script type="module" src="/schedule-dashboard.js"></script>
     <!-- Rail and sub-tab presentation only. Loaded last: it reads the tab state the others set. -->

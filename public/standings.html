@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VALORANT Standings - Output</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Gabarito:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/standings.css" />
+  </head>
+
+  <!--
+    OBS browser source: 1920 x 1080, transparent, "Shutdown source when not
+    visible" off.
+
+    The group table. The state carries the TABLES `stageTables` answered with -
+    rows with names, records and ranks already worked out - rather than a
+    competition, so this page never works out a rank while it paints and a
+    result filed behind the show cannot move what is on air. See
+    standings-schema.js.
+
+    Every table and every row is built in standings.js, because their count
+    comes from the draw and not from a shape written out here. The grid shape
+    and the scale are ARITHMETIC: this page is rendered while nothing is on
+    screen, and anything that measured itself would read zero.
+  -->
+  <body>
+    <div id="stage">
+      <div class="board" id="board">
+        <div class="head">
+          <div class="head-eyebrow" id="eyebrow" hidden></div>
+          <div class="head-stage" id="stage-name"></div>
+        </div>
+
+        <!-- Positioned, sized and scaled from standings.js. The tables inside
+             it lay themselves out in ordinary flow - a table is a stack of
+             rows, unlike a bracket, where a match sits at a fractional row and
+             has to be placed. What is arithmetic here is the SIZE, because the
+             fit has to be known without measuring anything. -->
+        <div id="tables"></div>
+
+        <div class="event-logo" id="event-logo" hidden><img id="event-logo-img" alt="" /></div>
+      </div>
+    </div>
+
+    <script src="/standings.js" type="module"></script>
+  </body>
+</html>

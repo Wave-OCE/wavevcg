@@ -45,6 +45,7 @@ const CUE_PATH = {
   lineup: (state) => state.anim,
   headToHead: (state) => state.anim,
   bracket: (state) => state.anim,
+  standings: (state) => state.anim,
 };
 
 function comparable(graphic, state) {
@@ -57,7 +58,7 @@ function comparable(graphic, state) {
 
 /**
  * @param {object} options
- * @param {'graphics'|'winner'|'select'|'vetoBoard'|'lineup'|'headToHead'|'bracket'} options.graphic  the API's name for it
+ * @param {'graphics'|'winner'|'select'|'vetoBoard'|'lineup'|'headToHead'|'bracket'|'standings'} options.graphic  the API's name for it
  * @param {string} options.prefix                         the DOM id prefix
  * @param {string} options.programChannel                 SSE channel for air
  * @param {string} options.previewChannel                 SSE channel for preview

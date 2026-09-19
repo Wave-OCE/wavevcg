@@ -54,6 +54,7 @@ import { boardFromVeto } from './public/veto-board-schema.js';
 import { lineupFromTeam } from './public/lineup-schema.js';
 import { halfFromTeam, headToHeadFromFixture } from './public/headtohead-schema.js';
 import { bracketFromStage } from './public/bracket-graphic-schema.js';
+import { standingsFromStage } from './public/standings-schema.js';
 import {
   BAND_LABELS,
   bracketLayout,
@@ -71,6 +72,8 @@ import {
   sanitiseMapRow,
   sanitiseSlot,
   sanitiseStage,
+  stageHasTable,
+  stageTables,
   buildTemplate,
   STAGE_TEMPLATES,
   STAGE_TEMPLATE_KEYS,
@@ -1493,6 +1496,7 @@ async function handleApi(pathname, params, ctx) {
   const lineup = ctx.bundle?.lineup?.of(readBus);
   const headToHead = ctx.bundle?.headToHead?.of(readBus);
   const bracket = ctx.bundle?.bracket?.of(readBus);
+  const standings = ctx.bundle?.standings?.of(readBus);
   const select = ctx.bundle?.select?.of(readBus);
 
   // The configured default, unless it is the source an administrator has just
@@ -1708,6 +1712,9 @@ async function handleApi(pathname, params, ctx) {
 
     case '/api/bracket':
       return { revision: bracket.revision, state: bracket.state };
+
+    case '/api/standings':
+      return { revision: standings.revision, state: standings.state };
 
     case '/api/global':
       return { revision: globals.revision, state: globals.state };
@@ -3929,6 +3936,21 @@ const KEYED_ROUTES = new Set([
   '/api/headtohead/events',
   '/api/bracket',
   '/api/bracket/events',
+  /*
+   * The standings, read-only, and the decision made rather than assumed.
+   *
+   * It is an output page like the other seven, so an OBS browser source -
+   * which carries a key and no cookie - is unreachable without it. What makes
+   * it worth a second look is that this graphic holds a TABLE, and the note on
+   * `/api/schedule` says a key must not leak an unannounced draw from a URL
+   * sitting in somebody's stream settings. It does not apply: a standings
+   * table is a SNAPSHOT an operator pressed Load to take, it carries results
+   * that have already been played on air, and it holds no fixture list, no
+   * dates and nothing that has not happened yet. The schedule itself stays out
+   * of this list in both directions.
+   */
+  '/api/standings',
+  '/api/standings/events',
   '/api/events',
   '/api/roster',
   '/api/game',
@@ -6188,6 +6210,7 @@ async function handleStream(pathname, req, res, ctx, params) {
   const lineup = ctx.bundle.lineup.of(streamBus);
   const headToHead = ctx.bundle.headToHead.of(streamBus);
   const bracket = ctx.bundle.bracket.of(streamBus);
+  const standings = ctx.bundle.standings.of(streamBus);
 
   /*
    * Every output page's stream carries the event's colours beside its own
@@ -6203,6 +6226,7 @@ async function handleStream(pathname, req, res, ctx, params) {
   if (pathname === '/api/lineup/events') return streamState(lineup, 'lineup', req, res, brand), true;
   if (pathname === '/api/headtohead/events') return streamState(headToHead, 'headToHead', req, res, brand), true;
   if (pathname === '/api/bracket/events') return streamState(bracket, 'bracket', req, res, brand), true;
+  if (pathname === '/api/standings/events') return streamState(standings, 'standings', req, res, brand), true;
 
   /*
    * Every graphic on one connection, for the dashboard.
@@ -6252,6 +6276,8 @@ async function handleStream(pathname, req, res, ctx, params) {
         ['headToHeadPreview', ctx.bundle.headToHead.preview],
         ['bracket', ctx.bundle.bracket.program],
         ['bracketPreview', ctx.bundle.bracket.preview],
+        ['standings', ctx.bundle.standings.program],
+        ['standingsPreview', ctx.bundle.standings.preview],
         /*
          * The event's colours. ONE channel, not one per bus: a colour is not
          * staged - there is no take on it - so a `brandPreview` would be a
@@ -6334,6 +6360,7 @@ async function handlePost(pathname, req, res, ctx, params) {
   const lineup = bundle.lineup.of(writeBus);
   const headToHead = bundle.headToHead.of(writeBus);
   const bracket = bundle.bracket.of(writeBus);
+  const standings = bundle.standings.of(writeBus);
   const select = bundle.select.of(writeBus);
   // The webhooks' select, pinned to air whatever the query string says.
   const selectAir = bundle.select.program;
@@ -6543,6 +6570,86 @@ async function handlePost(pathname, req, res, ctx, params) {
 
         const state = body?.reset === true ? bracket.reset() : bracket.replace(body?.state ?? body);
         return { bus: writeBus, revision: bracket.revision, state };
+      });
+
+    /*
+     * The standings.
+     *
+     * `load` runs `stageTables` - the SAME pure function the Schedule sub-page
+     * draws its tables from - and stores its output. The graphic then holds a
+     * TABLE rather than a competition, so the output page never works out a
+     * rank while it paints, and the two tables cannot disagree because there is
+     * only one implementation of the standings.
+     *
+     * Done here rather than in the browser so the copy is taken from the
+     * document as the server holds it, not from whatever the dashboard last
+     * polled - the same reason the bracket loads here.
+     */
+    case '/api/standings':
+      return handleWrite(res, async () => {
+        const body = await readJsonBody(req);
+        const action = String(body?.action ?? '');
+
+        if (action === 'load') {
+          const stageId = String(body?.id ?? '');
+          const stage = bundle.schedule.stage(stageId);
+          if (!stage) throw new ProviderError(404, 'No such stage.');
+          /*
+           * Refused SERVER-SIDE, not only filtered out of the picker.
+           *
+           * `standings` will happily count a bracket's fixtures and answer with
+           * a table - it is just fixtures and results - and that table is a
+           * meaningless object: nobody is ranked in a knockout, they are
+           * eliminated. The dashboard leaving bracket stages out of its list is
+           * a courtesy to an operator; this is the rule.
+           */
+          if (!stageHasTable(stage)) {
+            throw new ProviderError(
+              400,
+              'That stage has no table.',
+              'Groups and round robins have standings; a bracket does not - load that onto the bracket graphic.',
+            );
+          }
+
+          const tables = standingsFromStage({
+            tables: stageTables(bundle.schedule.document(), stage),
+            stage,
+          });
+          if (!tables.groups.some((entry) => entry.rows.length)) {
+            throw new ProviderError(400, 'That stage has no teams to show.', 'Add matches to it first.');
+          }
+
+          /*
+           * Patched, not replaced - and the group INDEX is deliberately left
+           * where it is. The look, the columns and the qualification cut were
+           * set before the show, and an operator pressing Load to catch up with
+           * a result filed behind them means "the numbers have moved", not "go
+           * back to Group A". A stage with fewer pools than the last one clamps
+           * the index on the way through the sanitiser, so it can never point
+           * at a table that is not there.
+           */
+          const state = standings.patch(tables);
+          log.info('air', `standings loaded: ${stage.name}`, {
+            tournament: ctx.owner?.id,
+            bus: writeBus,
+            who: ctx.user?.username ?? '(key)',
+          });
+          return { bus: writeBus, revision: standings.revision, state };
+        }
+
+        if (action === 'group') {
+          // Absolute rather than a delta, so two presses racing cannot leave
+          // the board on a pool neither of them asked for - the same shape the
+          // bracket's reveal uses, for the same reason.
+          const current = standings.state;
+          const wanted = body?.to === undefined ? (current.group ?? 0) + 1 : Number.parseInt(body.to, 10);
+          if (!Number.isInteger(wanted)) throw new ProviderError(400, 'Show which group?');
+          const state = standings.patch({ group: wanted });
+          return { bus: writeBus, revision: standings.revision, state };
+        }
+
+        const state = body?.reset === true ? standings.reset() : standings.replace(body?.state ?? body);
+        return { bus: writeBus, revision: standings.revision, state };
       });
 
     /*

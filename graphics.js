@@ -45,6 +45,7 @@ import { DEFAULT_VETO_BOARD, sanitiseVetoBoard } from './public/veto-board-schem
 import { DEFAULT_LINEUP, sanitiseLineup } from './public/lineup-schema.js';
 import { DEFAULT_HEADTOHEAD, sanitiseHeadToHead } from './public/headtohead-schema.js';
 import { DEFAULT_BRACKET_GRAPHIC, sanitiseBracketGraphic } from './public/bracket-graphic-schema.js';
+import { DEFAULT_STANDINGS, sanitiseStandings } from './public/standings-schema.js';
 import {
   COLOUR_SOURCE_KEYS,
   DEFAULT_GLOBAL,
@@ -1665,6 +1666,11 @@ export const makeHeadToHeadStore = (filePath) => makeStateStore(filePath, saniti
  * walks a graph while it paints. See bracket-graphic-schema.js. */
 export const makeBracketGraphicStore = (filePath) =>
   makeStateStore(filePath, sanitiseBracketGraphic, DEFAULT_BRACKET_GRAPHIC);
+/* The standings. Holds the TABLES `stageTables` answered with, rows resolved,
+ * rather than a competition - so the output page never works out a rank while
+ * it paints and a result filed mid-show cannot move what is on air. See
+ * standings-schema.js. */
+export const makeStandingsStore = (filePath) => makeStateStore(filePath, sanitiseStandings, DEFAULT_STANDINGS);
 
 // -------------------------------------------------------------- presets ---
 

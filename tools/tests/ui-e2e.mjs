@@ -956,7 +956,7 @@ try {
    * is itself noted as an open question in CLAUDE.md.
    */
   await page.click('.rail-item[data-section="graphics"]');
-  await page.click('.subtabs[data-for="graphics"] .subtab[data-group="bracket"]');
+  await page.click('.subtabs[data-for="graphics"] .subtab[data-group="competition"]');
   await wait(400);
   await page.click('#graphic-strip .tab[data-tab="bracket"]');
   await wait(900);
@@ -998,6 +998,45 @@ try {
     JSON.stringify(afterBrand),
   );
   ok('neither stopped saying it is inherited', Object.values(afterBrand).every((v) => v.endsWith('from the event')));
+
+  /*
+   * THE STANDINGS, WHICH IS THE COUNTERPOINT TO THAT TRAP.
+   *
+   * The bracket's `accent` is its highlight and its `trim` is its accent - a
+   * mismatch that predates the word "highlight" existing here and that the
+   * block above exists to pin. The standings arrived after it and names its two
+   * fields for what they mean, so the mapping is straight through. Asserted
+   * with the SAME two event colours still set to different values, so a crossed
+   * mapping here would be caught rather than hidden by one colour.
+   *
+   * Opening the tab at all is the other half: a panel correctly hidden and a
+   * panel never wired look identical to every DOM assertion, and this is the
+   * only suite that drives the standings dashboard in a browser - so `no page
+   * errors` below is what proves the module runs.
+   */
+  ok('the strip offers the standings beside the bracket', await page.isVisible('#graphic-strip .tab[data-tab="standings"]'));
+  await page.click('#graphic-strip .tab[data-tab="standings"]');
+  await wait(900);
+  ok('the standings tab opens', await page.isVisible('#tab-standings'));
+
+  const standingSwatches = await page.evaluate(() =>
+    Object.fromEntries(
+      [...document.querySelectorAll('#tab-standings .brand-row')].map((row) => [
+        row.closest('.g-field')?.querySelector('span')?.textContent ?? '?',
+        `${row.querySelector('input[type="color"]')?.value ?? '?'}|${row.querySelector('.brand-state')?.textContent ?? '?'}`,
+      ]),
+    ),
+  );
+  ok(
+    'its accent takes the event ACCENT, with nothing crossed over',
+    standingSwatches.Accent === '#00ff88|from the event',
+    JSON.stringify(standingSwatches),
+  );
+  ok(
+    'and its highlight takes the event HIGHLIGHT',
+    standingSwatches.Highlight === '#8800ff|from the event',
+    JSON.stringify(standingSwatches),
+  );
 
   ok('no page errors on the owner dashboard', errors.length === 0, errors.join(' | '));
 

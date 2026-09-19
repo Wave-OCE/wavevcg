@@ -1,0 +1,321 @@
+/*
+ * The standings, on air. Its own stylesheet like every other output page.
+ * Fixed 1920x1080 scaled as a whole - do not switch to viewport units.
+ *
+ * Every pixel constant a table is built from comes in as a custom property,
+ * written by standings.js out of STANDINGS_METRICS. That is not indirection for
+ * its own sake: the SIZE of this drawing has to be known without measuring
+ * anything - OBS renders this page while nothing is on screen - so the schema
+ * computes it from those numbers, and a second copy of them here would be a fit
+ * that is right about a table nobody is looking at.
+ */
+
+:root {
+  --ink: #ffffff;
+  --ink-dim: rgba(255, 255, 255, 0.5);
+  --ground: #12161d;
+  --ground-alt: #171c25;
+  --line: rgba(255, 255, 255, 0.12);
+  --accent: #c8aa6e;
+  --highlight: #c8aa6e;
+
+  /* Overwritten by standings.js on every paint - see the header. */
+  --table-w: 680px;
+  --row-h: 54px;
+  --head-h: 40px;
+  --name-h: 48px;
+  --gap-x: 56px;
+  --gap-y: 44px;
+  --cols: 1;
+  --row-cols: 52px 1fr;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * The attribute's own `display: none` comes from the UA sheet and loses to any
+ * rule that sets display, so a `.event-logo { display: flex }` further down
+ * would silently make hiding it a no-op. One rule rather than a class per
+ * element - the finding the veto board's stylesheet already carries.
+ *
+ * Nothing that ANIMATES is gated with it: an element arriving from
+ * `display: none` has no previous computed style to transition from, so it
+ * snaps. The rows are gated on a class instead.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family: Gabarito, 'Segoe UI', system-ui, sans-serif;
+  color: var(--ink);
+}
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: top left;
+}
+
+.board {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 360ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.board.is-on {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- header --- */
+
+.head {
+  position: absolute;
+  left: 96px;
+  top: 52px;
+}
+
+.head-eyebrow {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.head-stage {
+  margin-top: 4px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------------- tables --- */
+
+/*
+ * Positioned and SIZED from standings.js, which fits the grid to the frame and
+ * centres it there. Ordinary flow inside: a table is a stack of rows, so unlike
+ * the bracket - where a match sits at a fractional row and has to be placed -
+ * nothing here needs absolute positioning to avoid measuring itself.
+ */
+#tables {
+  position: absolute;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--table-w));
+  gap: var(--gap-y) var(--gap-x);
+  align-items: start;
+  /*
+   * Written down although it is already the default for this element's box.
+   *
+   * The scale is applied about the top left because the centring arithmetic in
+   * standings.js measures from that corner - magnifying about the middle would
+   * push the grid up and left by however much it grew. The bracket carries the
+   * same note for the same reason.
+   */
+  transform-origin: top left;
+}
+
+.table {
+  width: var(--table-w);
+}
+
+.table-name {
+  height: var(--name-h);
+  display: flex;
+  align-items: center;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ rows --- */
+
+.row {
+  display: grid;
+  grid-template-columns: var(--row-cols);
+  align-items: center;
+  height: var(--row-h);
+  padding: 0 16px;
+  background: var(--ground);
+  border-left: 4px solid transparent;
+
+  /*
+   * The resting state, and the rows animate INTO it - see `is-in` below. Both
+   * halves are declared here rather than only on the shown state, or a row
+   * would fly on and snap back when the stagger is replayed.
+   */
+  opacity: 0;
+  transform: translateX(-18px);
+  transition:
+    opacity 300ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 45ms);
+}
+
+/*
+ * Every other row is lifted a shade, because a table of eleven identical bars
+ * is one an eye slides off. Not a border between them: a 1px rule at a 0.6 fit
+ * is a smudge, and at 1.5 it is a line somebody drew.
+ */
+.row:nth-child(even) {
+  background: var(--ground-alt);
+}
+
+.row + .row {
+  margin-top: 2px;
+}
+
+/*
+ * THE CLASS THAT LETS THE STAGGER BE REPLAYED.
+ *
+ * Walking to the next pool repaints these same rows with a different pool's
+ * teams in them - nothing is recreated, which is the rule every output page
+ * here follows - so without something to drop and re-add, the new table would
+ * simply appear. standings.js removes this, forces the reflow that establishes
+ * the resting computed style, and puts it back.
+ */
+#tables.is-in .row {
+  opacity: 1;
+  transform: none;
+}
+
+.row.is-head {
+  height: var(--head-h);
+  background: transparent;
+  border-left-color: transparent;
+  border-bottom: 2px solid var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+/*
+ * WENT THROUGH.
+ *
+ * Marked by RANK rather than by position, which is the whole argument in the
+ * schema's header: with 1, 2, 2, 4 and a cut of two, three rows are marked,
+ * because the table cannot separate the two on equal wins and a graphic must
+ * not invent an order the table refuses to have.
+ */
+.row.is-through {
+  border-left-color: var(--highlight);
+}
+
+.row.is-through .cell-rank {
+  color: var(--highlight);
+}
+
+/* ----------------------------------------------------------------- cells --- */
+
+.cell-rank {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * `min-width: 0` HERE IS THE ONE THAT HOLDS THE ROW TOGETHER.
+ *
+ * This is the grid item, and a grid item's automatic minimum size is its
+ * CONTENT - so without it a long org name widens the `1fr` track and shoves the
+ * stat columns off the end of a table whose width the fit arithmetic has
+ * already committed to. Measured: the last column moves 192px to the right.
+ * Same family as the winner name's band - whatever holds text must be sized by
+ * the layout, never by the text.
+ */
+.cell-team {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.cell-team img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+/*
+ * The name is clipped rather than allowed to spill over the numbers beside it.
+ *
+ * The two guards here are REDUNDANT WITH EACH OTHER and both are kept
+ * deliberately, which is worth saying because it looks like belt and braces by
+ * accident. A flex item whose `overflow` is anything but `visible` already has
+ * an automatic minimum size of zero, so the clip alone would do it - and
+ * `min-width: 0` alone would do it too. Taking either away on its own changes
+ * nothing on screen, verified; taking BOTH away paints the name 192px out
+ * through the side of its cell and across the stat columns, with every box on
+ * the row still reporting exactly the size it asked for.
+ *
+ * This is NOT the declaration that keeps the columns in place - see
+ * `.cell-team` above, which is the grid item and therefore the one the track
+ * sizes itself to.
+ */
+.cell-name {
+  min-width: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-stat {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.is-head .cell-stat {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.is-head .cell-rank,
+.is-head .cell-team {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------ event logo --- */
+
+.event-logo {
+  position: absolute;
+  left: 96px;
+  bottom: 48px;
+}
+
+.event-logo img {
+  max-height: 54px;
+  max-width: 300px;
+  object-fit: contain;
+}
