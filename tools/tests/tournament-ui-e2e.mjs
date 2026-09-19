@@ -796,7 +796,30 @@ try {
     await poolBoxes.nth(i).check();
     await wait(140);
   }
+  /*
+   * A veto is standalone or it is for a scheduled match, and those are two
+   * different jobs - one is a showmatch somebody types the names for, the other
+   * brings both teams and the series across from the draw. The dialog showed
+   * that as ONE FIELD among six, which reads as an optional extra rather than
+   * as the other way of doing this, so it is asked first now.
+   */
   await page.click('#veto-body button:has-text("New veto")');
+  await page.waitForSelector('.rl-modal-choose', { timeout: 6000 });
+  const vetoWays = await page.$$eval('.rl-choose-option', (nodes) =>
+    nodes.map((n) => ({ id: n.dataset.choice, off: n.disabled })),
+  );
+  ok('28a1. a new veto asks which way first', vetoWays.length === 2, JSON.stringify(vetoWays));
+  ok(
+    '28a2. ...and the scheduled-match one is dead while the draw is empty',
+    vetoWays.find((w) => w.id === 'fixture')?.off === true,
+    JSON.stringify(vetoWays),
+  );
+  await page.click('.rl-choose-option[data-choice="manual"]');
+  await wait(600);
+  ok(
+    '28a3. standalone leaves the match picker out of the form entirely',
+    (await page.$$('.rl-modal select[aria-label="From a match"]')).length === 0,
+  );
   await page.waitForSelector('.rl-modal', { timeout: 6000 });
   await page.fill('.rl-modal input[aria-label="Veto name"]', 'Grand final');
   await page.fill('.rl-modal input[aria-label="Team A name"]', 'Crusaders');
@@ -1082,6 +1105,19 @@ try {
     await wait(250);
   };
 
+  /*
+   * Adding a stage asks WHICH WAY first. Every way of making one was already
+   * in the editor and one of them was four sections down, so an operator who
+   * did not know the template picker was there laid a sixteen-team bracket out
+   * a round at a time.
+   */
+  const addStage = async (how = 'manual') => {
+    await page.click('#sch-body button:has-text("Add stage")');
+    await page.waitForSelector('.rl-modal-choose', { timeout: 6000 });
+    await page.click(`.rl-choose-option[data-choice="${how}"]`);
+    await wait(900);
+  };
+
   await page.click('.subtabs[data-for="tournament"] .subtab[data-view="tou-schedule"]');
   await wait(600);
   ok('27a. the Schedule panel opens', await page.isVisible('#tou-schedule'));
@@ -1100,7 +1136,29 @@ try {
    * permanent short of hand-editing schedule.json. 27d2 is the assertion that
    * it can now be fixed.
    */
+  /*
+   * THE CHOOSER, asked before the form. Three ways in, and the one that matters
+   * is the template: it was already possible and already buried four sections
+   * down the editor, so an operator who did not know it was there laid a
+   * sixteen-team bracket out a round at a time.
+   */
   await page.click('#sch-body button:has-text("Add stage")');
+  await page.waitForSelector('.rl-modal-choose', { timeout: 6000 });
+  const ways = await page.$$eval('.rl-choose-option', (nodes) =>
+    nodes.map((n) => ({ id: n.dataset.choice, off: n.disabled })),
+  );
+  ok('27c1a. adding a stage asks which way first', ways.length === 3, JSON.stringify(ways));
+  ok(
+    '27c1b. ...with the template one offered up front rather than buried',
+    ways.some((w) => w.id === 'template' && !w.off),
+    JSON.stringify(ways),
+  );
+  ok(
+    '27c1c. ...and copying offered but dead while there is nothing to copy',
+    ways.find((w) => w.id === 'copy')?.off === true,
+    JSON.stringify(ways),
+  );
+  await page.click('.rl-choose-option[data-choice="manual"]');
   await wait(900);
   ok('27c2. adding a stage opens its editor', await page.isVisible('.rl-modal'), 'no modal');
   ok(
@@ -1356,8 +1414,7 @@ try {
    *
    * On a stage of its OWN, built and left behind, so nothing above it moves.
    */
-  await page.click('#sch-body button:has-text("Add stage")');
-  await wait(900);
+  await addStage('manual');
   await page.fill('.rl-modal input[type=text]', 'Pools');
   await page.selectOption('.rl-modal select[aria-label="Format"]', 'roundrobin');
 
@@ -1440,8 +1497,15 @@ try {
    *
    * On a fresh EMPTY stage, so nothing above it moves.
    */
-  await page.click('#sch-body button:has-text("Add stage")');
-  await wait(900);
+  /*
+   * FROM A TEMPLATE lands on the pane that answers it. Opening the template
+   * pick on the Stage tab would make an operator go looking for the thing they
+   * had just asked for, which is what the chooser exists to stop.
+   */
+  await addStage('template');
+  const landed = await page.getAttribute('.rl-modal-pane:not([hidden])', 'data-pane');
+  ok('27p2. asking for a template opens the editor on Matches', landed === 'matches', String(landed));
+  await stageTab('about');
   await page.fill('.rl-modal input[type=text]', 'Main draw');
   await page.click('.rl-modal-foot .btn-primary');
   await wait(900);

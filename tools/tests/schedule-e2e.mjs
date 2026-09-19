@@ -495,6 +495,198 @@ try {
    * perfectly well. The `> 0` is the half that stops it passing vacuously when
    * both sides are empty.
    */
+  /*
+   * ------------------------ A STAGE AGAIN, WITH NONE OF ITS RESULTS ---
+   *
+   * A season is the same shape repeated, and building the second one meant
+   * laying it out from a template again and re-typing the groups, or clicking
+   * through thirty matches. The SHAPE copies - format, groups, every match's
+   * place in the draw, and the edges between them.
+   *
+   * What must NOT copy is the teams and the results, and that is the assertion
+   * worth its length: standings are derived from what has been played, so a
+   * copied 13-7 counts in a live table with nothing on screen saying it was
+   * never played.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'season-one', name: 'Season one', kind: 'bracket', bestOf: 3 },
+  }));
+  await boss(here('/api/schedule'), json({
+    action: 'template.apply',
+    stageId: 'season-one',
+    template: 'single',
+    teams: [{ name: 'Alpha', teamId: 'a' }, { name: 'Bravo', teamId: 'b' }, { name: 'Charlie', teamId: 'c' }, { name: 'Delta', teamId: 'd' }],
+  }));
+  const seasonOne = (await boss(here('/api/schedule'))).json.schedule.fixtures.filter((f) => f.stageId === 'season-one');
+  ok('25d1. the stage to copy has a wired draw', seasonOne.length === 3 && seasonOne.some((f) => f.left?.source || f.right?.source), String(seasonOne.length));
+
+  // File a result, so the copy has something it could wrongly bring across.
+  await boss(here('/api/schedule'), json({
+    action: 'fixture.save',
+    fixture: { ...seasonOne.find((f) => f.round === 1), maps: [{ map: 'Ascent', left: 13, right: 4 }, { map: 'Bind', left: 13, right: 8 }] },
+  }));
+
+  r = await boss(here('/api/schedule'), json({ action: 'stage.duplicate', id: 'season-one', name: 'Season two' }));
+  const copy = r.json.schedule.stages.find((entry) => entry.name === 'Season two');
+  const copied = r.json.schedule.fixtures.filter((f) => f.stageId === copy?.id);
+  ok('25d2. duplicating makes a new stage', Boolean(copy) && copy.id !== 'season-one', JSON.stringify(copy));
+  ok('25d3. ...with the same format and series', copy.kind === 'bracket' && copy.bestOf === 3, JSON.stringify(copy));
+  ok('25d4. ...and the same number of matches', copied.length === seasonOne.length, `${copied.length} vs ${seasonOne.length}`);
+  ok(
+    '25d5. ...in the same places in the draw',
+    JSON.stringify(copied.map((f) => [f.bracket, f.round, f.slot]).sort()) ===
+      JSON.stringify(seasonOne.map((f) => [f.bracket, f.round, f.slot]).sort()),
+    JSON.stringify(copied.map((f) => [f.bracket, f.round, f.slot])),
+  );
+
+  ok(
+    '25d6. NO TEAMS come across',
+    copied.every((f) => !f.left?.name && !f.right?.name && !f.left?.teamId && !f.right?.teamId),
+    JSON.stringify(copied.map((f) => [f.left?.name, f.right?.name])),
+  );
+  /*
+   * `winner: 'auto'` is the ABSENCE of an override, not a result - it is what
+   * `emptyFixture` starts at and means "work it out from the maps". Asserting
+   * `!f.winner` here was wrong about the model rather than about the code, and
+   * it took the failure detail naming the value to see it.
+   */
+  ok(
+    '25d7. AND NO RESULTS, because a copied score counts in a live table',
+    copied.every((f) => (f.maps ?? []).length === 0 && (f.winner ?? 'auto') === 'auto'),
+    JSON.stringify(copied.map((f) => ({ maps: f.maps, winner: f.winner }))),
+  );
+
+  /*
+   * The edges ARE the shape - a bracket without them is thirty unconnected
+   * matches, which is the hand-wiring this exists to avoid. They must point
+   * INSIDE the copy: an edge left pointing at the original would fill the new
+   * season's first round from last season's results.
+   */
+  const copyIds = new Set(copied.map((f) => f.id));
+  const copiedEdges = copied.flatMap((f) => [f.left?.source, f.right?.source].filter(Boolean));
+  ok('25d8. the edges come across', copiedEdges.length > 0, String(copiedEdges.length));
+  ok(
+    '25d9. ...pointing inside the copy, never back at the original',
+    copiedEdges.every((e) => copyIds.has(e.fixtureId)),
+    JSON.stringify(copiedEdges),
+  );
+
+  const stillThere = r.json.schedule.fixtures.filter((f) => f.stageId === 'season-one');
+  ok('25d10. the stage copied FROM is untouched', stillThere.length === seasonOne.length && stillThere.some((f) => (f.maps ?? []).length === 2), String(stillThere.length));
+
+  // A name that slugs onto an existing id must not REPLACE it - the same rule
+  // stage.save applies, and here getting it wrong would delete the original.
+  r = await boss(here('/api/schedule'), json({ action: 'stage.duplicate', id: 'season-one', name: 'Season two' }));
+  const twos = r.json.schedule.stages.filter((entry) => entry.name === 'Season two');
+  ok('25d11. a colliding name makes a second stage rather than replacing', twos.length === 2, JSON.stringify(twos.map((e) => e.id)));
+
+  r = await boss(here('/api/schedule'), json({ action: 'stage.duplicate', id: 'nope', name: 'x' }));
+  ok('25d12. copying a stage that does not exist is refused', r.status === 400, String(r.status));
+
+  for (const gone of ['season-one', ...twos.map((e) => e.id)]) {
+    await boss(here('/api/schedule'), json({ action: 'stage.remove', id: gone, confirm: gone === 'season-one' ? 'Season one' : 'Season two' }));
+  }
+
+  /*
+   * ------------------------------------- THE MATCHES IN NO GROUP, swept up ---
+   *
+   * Removing a group leaves its matches behind on purpose - the reference is
+   * cleared and they land in a visible "Not in a group" bucket, because a match
+   * belonging to no table an operator can see reads as matches having vanished
+   * from the draw. That is right, and it left the bucket a dead end: nothing
+   * could empty it but deleting the matches one at a time.
+   *
+   * Two answers, because there are two honest ones, and both run here on a
+   * stage of their own so nothing above moves.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [{ id: 'pool-a', name: 'Pool A' }] },
+  }));
+  await boss(here('/api/schedule'), json({
+    action: 'generate',
+    stageId: 'loose-pool',
+    group: 'pool-a',
+    teams: [{ name: 'Echo', teamId: 'e' }, { name: 'Foxtrot', teamId: 'f' }, { name: 'Golf', teamId: 'g' }],
+  }));
+  const looseIn = (doc) => doc.schedule.fixtures.filter((f) => f.stageId === 'loose-pool');
+
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: '' }));
+  ok('25s1. a stage whose matches are all in a group has nothing to sweep', r.status === 400, r.text.slice(0, 140));
+
+  // Drop the group. Its matches stay, which is the behaviour this whole block
+  // exists because of.
+  r = await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [] },
+  }));
+  ok('25s2. removing a group leaves its matches behind', looseIn(r.json).length === 3, String(looseIn(r.json).length));
+
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: 'not-a-group' }));
+  ok('25s3. moving them into a group that does not exist is refused', r.status === 400, r.text.slice(0, 140));
+
+  // MOVE. A pool renamed into existence after the matches were made wants them
+  // carried across, not deleted - so the destructive answer is not the only one.
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [{ id: 'pool-b', name: 'Pool B' }] },
+  }));
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: 'pool-b' }));
+  ok(
+    '25s4. they can be moved into a group instead of deleted',
+    looseIn(r.json).length === 3 && looseIn(r.json).every((f) => f.group === 'pool-b'),
+    JSON.stringify(looseIn(r.json).map((f) => f.group)),
+  );
+
+  /*
+   * DELETE, and the bar rising with what it would take. An unplayed match is
+   * nothing filed, so nothing is asked; a filed result wants the stage name
+   * typed back, which is the rule `stage.remove` already follows by asking
+   * nothing at all of an empty stage.
+   */
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [] },
+  }));
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: '' }));
+  ok('25s5. unplayed ones are deleted with no name typed', looseIn(r.json).length === 0, String(looseIn(r.json).length));
+
+  // Again, with a result filed on one of them.
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [{ id: 'pool-c', name: 'Pool C' }] },
+  }));
+  await boss(here('/api/schedule'), json({
+    action: 'generate',
+    stageId: 'loose-pool',
+    group: 'pool-c',
+    teams: [{ name: 'Echo', teamId: 'e' }, { name: 'Foxtrot', teamId: 'f' }],
+  }));
+  const played = looseIn((await boss(here('/api/schedule'))).json)[0];
+  await boss(here('/api/schedule'), json({
+    action: 'fixture.save',
+    fixture: { ...played, maps: [{ map: 'Ascent', left: 13, right: 7 }, { map: 'Bind', left: 13, right: 9 }] },
+  }));
+  await boss(here('/api/schedule'), json({
+    action: 'stage.save',
+    stage: { id: 'loose-pool', name: 'Loose pool', kind: 'roundrobin', bestOf: 3, groups: [] },
+  }));
+
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: '' }));
+  ok('25s6. a filed result is not deleted on the bare ask', r.status === 400, r.text.slice(0, 160));
+  ok('25s7. ...and it says how many have one', /1 of those/.test(r.json?.error?.message ?? ''), r.json?.error?.message);
+  ok('25s8. ...and that nothing has happened yet', /nothing has been deleted/i.test(r.json?.error?.hint ?? ''), JSON.stringify(r.json?.error));
+
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: '', confirm: 'Loose poo' }));
+  ok('25s9. a name that is nearly right is still refused', r.status === 400, r.text.slice(0, 120));
+
+  r = await boss(here('/api/schedule'), json({ action: 'group.sweep', stageId: 'loose-pool', group: '', confirm: 'Loose pool' }));
+  ok('25s10. ...and the exact name deletes them', looseIn(r.json).length === 0, String(looseIn(r.json).length));
+  ok('25s11. destroying a filed result is logged at warn', /ungrouped match/.test(log) && /WARN/.test(log), 'no warn line');
+
+  await boss(here('/api/schedule'), json({ action: 'stage.remove', id: 'loose-pool', confirm: 'Loose pool' }));
+
   const liveCount = (await boss(here('/api/schedule'))).json.schedule.fixtures.length;
   r = await boss('/api/tournaments', json({ action: 'export', id: cup.id }));
   ok('26. the export carries the schedule', liveCount > 0 && r.json.export?.schedule?.fixtures?.length === liveCount, `${r.json.export?.schedule?.fixtures?.length} exported vs ${liveCount} live`);

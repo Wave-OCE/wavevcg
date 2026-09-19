@@ -2289,6 +2289,188 @@ async function handleScheduleAction({ schedule }, body, by = {}) {
     }
 
     /*
+     * A STAGE AGAIN, WITH ITS SHAPE AND NONE OF ITS RESULTS.
+     *
+     * A season is the same shape repeated - four groups this week, four groups
+     * the next, the same bracket in every region - and building the second one
+     * meant either laying it out from a template again and re-typing the groups
+     * or clicking through thirty matches. This copies the SHAPE: the format,
+     * the series length, the groups, every match's place in the draw, and the
+     * edges between them.
+     *
+     * TEAMS AND RESULTS ARE NOT COPIED, and that is the whole decision rather
+     * than an omission. A duplicated stage arriving with last week's scores in
+     * it is a phantom result in a live table - the standings are derived from
+     * what has been played, so a copied 13-7 counts, and nothing on screen
+     * would say it was never played. An empty draw is obviously empty.
+     *
+     * The edges ARE copied, because they are the shape: a bracket without them
+     * is thirty unconnected matches, which is exactly the hand-wiring this
+     * exists to avoid. Minted in two passes for the reason `template.apply`
+     * needs two - an edge can name a match that comes later in the list.
+     */
+    case 'stage.duplicate': {
+      const from = String(body?.id ?? '');
+      const wantedName = String(body?.name ?? '').trim();
+      let madeId = '';
+      let copied = 0;
+
+      const done = out(
+        schedule.apply((draft) => {
+          const source = draft.stages.find((entry) => entry.id === from);
+          if (!source) throw badRequest('No such stage.');
+
+          const name = wantedName || `${source.name} copy`;
+          const fresh = sanitiseStage({ ...source, id: '', name });
+          if (!fresh.id) throw badRequest('A stage needs a name.');
+
+          // The same uniqueness rule `stage.save` applies to a new stage, and
+          // for the same reason: a slug that collides REPLACES, which here
+          // would delete the stage being copied from.
+          const taken = new Set(draft.stages.map((entry) => entry.id));
+          if (taken.has(fresh.id)) {
+            const base = fresh.id;
+            let n = 2;
+            while (taken.has(`${base}-${n}`)) n += 1;
+            fresh.id = `${base}-${n}`;
+          }
+          madeId = fresh.id;
+          draft.stages.push(fresh);
+
+          const rows = draft.fixtures.filter((entry) => entry.stageId === from);
+          const ids = new Map(rows.map((fixture) => [fixture.id, schedule.mintId()]));
+          const slotOf = (slot) => {
+            const to = ids.get(slot?.source?.fixtureId);
+            // An edge that pointed OUT of this stage is dropped rather than
+            // carried: it would name a match in the original, so the copy's
+            // first round would fill itself from last season's results.
+            return to ? { source: { fixtureId: to, take: slot.source.take } } : {};
+          };
+
+          const made = rows.map((fixture) =>
+            sanitiseFixture({
+              id: ids.get(fixture.id),
+              stageId: fresh.id,
+              group: fixture.group ?? '',
+              round: fixture.round,
+              slot: fixture.slot,
+              bracket: fixture.bracket,
+              bestOf: fixture.bestOf,
+              left: slotOf(fixture.left),
+              right: slotOf(fixture.right),
+            }),
+          );
+          draft.fixtures.push(...made);
+          copied = made.length;
+        }),
+      );
+
+      log.info('schedule', `stage "${from}" duplicated as "${madeId}" with ${copied} empty match${copied === 1 ? '' : 'es'}`, {
+        tournament: by.tournament,
+        who: by.who,
+      });
+      return done;
+    }
+
+    /*
+     * THE MATCHES IN NO GROUP, swept up.
+     *
+     * Removing a group deliberately leaves its matches behind - the reference
+     * is cleared and they land in a visible "Not in a group" bucket, because a
+     * match belonging to no table an operator can see reads as matches having
+     * vanished from the draw. That is right, and it left the bucket a dead end:
+     * nothing in the program could empty it except deleting the matches one at
+     * a time.
+     *
+     * TWO answers, because there are two honest ones. A group laid out by
+     * mistake wants its matches GONE; a group renamed into existence after the
+     * matches were made wants them MOVED. Offering only the destructive one
+     * would make deleting results the routine way to tidy a draw.
+     *
+     * `group` names where they go, and empty means delete. Both are one `case`
+     * because they are one question asked of one set of matches, and splitting
+     * them would be two places deciding what "in no group" means.
+     */
+    case 'group.sweep': {
+      const stageId = String(body?.stageId ?? '');
+      const to = String(body?.group ?? '');
+      let touched = 0;
+      let stageName = '';
+      let played = 0;
+
+      const swept = out(
+        schedule.apply((draft) => {
+          const stage = draft.stages.find((entry) => entry.id === stageId);
+          if (!stage) throw badRequest('No such stage.');
+          stageName = String(stage.name ?? '');
+
+          const groups = stage.groups ?? [];
+          if (to && !groups.some((group) => group.id === to)) {
+            throw badRequest('That group is not in this stage.', 'Nothing has been changed.');
+          }
+
+          const known = new Set(groups.map((group) => group.id));
+          const loose = draft.fixtures.filter(
+            (entry) => entry.stageId === stageId && !known.has(entry.group ?? ''),
+          );
+          if (!loose.length) throw badRequest('Every match in this stage is already in a group.');
+
+          touched = loose.length;
+          played = loose.filter((entry) => Boolean(fixtureWinner(entry))).length;
+
+          if (to) {
+            const moving = new Set(loose.map((entry) => entry.id));
+            for (const fixture of draft.fixtures) {
+              if (moving.has(fixture.id)) fixture.group = to;
+            }
+            return;
+          }
+
+          /*
+           * The typed name, and only when a RESULT would go with them. The bar
+           * rises with what it would take - the same rule `stage.remove` uses
+           * for an empty stage, which asks nothing because there is nothing to
+           * lose and asking anyway trains the answer out of somebody.
+           */
+          if (played) {
+            const typed = String(body?.confirm ?? '').trim();
+            if (!typed || typed !== stageName.trim()) {
+              throw badRequest(
+                `${played} of those ${touched} match${touched === 1 ? '' : 'es'} has a result filed.`,
+                `Type "${stageName}" exactly to confirm. Nothing has been deleted.`,
+              );
+            }
+          }
+
+          const gone = new Set(loose.map((entry) => entry.id));
+          draft.fixtures = draft.fixtures.filter((entry) => !gone.has(entry.id));
+
+          // Every edge pointing at one of them, or the document will not
+          // validate. The EDGE is cleared and not the slot, so whoever had
+          // already been carried into a later match stays there - same as
+          // `stage.remove`.
+          for (const fixture of draft.fixtures) {
+            for (const side of ['left', 'right']) {
+              if (gone.has(fixture[side]?.source?.fixtureId)) delete fixture[side].source;
+            }
+          }
+        }),
+      );
+
+      // At WARN when it destroyed a filed result, for the reason removing a
+      // stage is: that line is the only trace left of it afterwards, and the
+      // schedule is shared by every desk of the tournament.
+      if (!to && played) {
+        log.warn(
+          'schedule',
+          `${touched} ungrouped match${touched === 1 ? '' : 'es'} deleted from stage "${stageName}", ${played} with a result`,
+          { tournament: by.tournament, who: by.who },
+        );
+      }
+      return swept;
+    }
+
+    /*
      * A ROUND of empty matches, in one press.
      *
      * You could not make one. "Add fixture" adds a single match at the LAST

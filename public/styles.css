@@ -3676,6 +3676,28 @@ label.is-off {
   }
 }
 
+/* The two ways out of the "Not in a group" bucket, on its own heading.
+
+   On the heading rather than under the list, because what they act on is that
+   bucket and nothing else - a control under the list would be ambiguous about
+   which group it meant the moment a stage has four of them. */
+.sch-sweep {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+  /* The heading is uppercase small-caps; these are controls and must not
+     inherit that. */
+  font-family: var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.sch-sweep select {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
 /* ------------------------------------------------------------ the bracket ---
 
    Drawn from arithmetic: `bracketLayout` answers in columns and rows and
@@ -4250,6 +4272,60 @@ body.is-adrift .rail-item[data-tab='global'] {
    over - the state worth noticing is the one that has been changed. */
 .brand-state.is-inherited {
   color: var(--text-faint, #7d8894);
+}
+
+/* ------------------------------------------------ which way to make one ---
+
+   Asked BEFORE the form, so the form can open knowing the answer - and, more
+   to the point, open on the pane that answers it. A row of big targets rather
+   than a select: there are two or three of these and they are the whole
+   content of the dialog, so making them the size of a real choice costs
+   nothing and makes the one that was previously buried impossible to miss. */
+.rl-modal.rl-modal-choose {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.rl-choose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rl-choose-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.rl-choose-option:hover:not(:disabled),
+.rl-choose-option:focus-visible {
+  border-color: var(--accent-dim);
+  background: var(--accent-wash);
+}
+
+.rl-choose-option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rl-choose-label {
+  font-family: var(--display);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rl-choose-help {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
 }
 
 /* ------------------------------------------- discarding unsaved changes ---

@@ -40,7 +40,7 @@
 
 import { el, field, grid, help, title } from './fields.js';
 import { api } from './session.js';
-import { askClose, confirmDanger, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
+import { askClose, chooserModal, confirmDanger, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import { EMPTY_TEAM, TEAM_KEYS, teamLabel } from './teams.js';
 import {
   BEST_OF_CHOICES,
@@ -176,15 +176,7 @@ if (host) {
      * because the same form renames.
      */
     const add = el('button', 'btn btn-small', { type: 'button' }, 'Add stage');
-    add.addEventListener('click', () => {
-      act({ action: 'stage.save', stage: { name: 'New stage', kind: 'bracket', bestOf: 3 } }, () => {
-        const made = doc.stages.find((entry) => entry.name === 'New stage');
-        if (!made) return;
-        openStage = made.id;
-        paint();
-        openStageEditor(made);
-      });
-    });
+    add.addEventListener('click', () => void addStage());
     row.append(add);
 
     const edit = el('button', 'btn btn-small btn-ghost', { type: 'button' }, 'Edit stage');
@@ -233,6 +225,82 @@ if (host) {
   }
 
   /**
+   * WHICH WAY, before the form.
+   *
+   * Every way of making a stage was already in the editor and one of them was
+   * four sections down: an operator who did not know the template picker was
+   * there laid a sixteen-team bracket out a round at a time. Asking first makes
+   * that one impossible to miss, and lets the editor open on the pane that
+   * answers what they picked.
+   *
+   * Making the record BEFORE the form is kept from the old flow, and it is what
+   * made a stage renameable at all - the name used to be set by a prompt at
+   * creation and nowhere else, so a typo made at speed was permanent short of
+   * hand-editing schedule.json.
+   */
+  async function addStage() {
+    const how = await chooserModal({
+      title: 'Add a stage',
+      lines: ['A stage is one phase of the competition - a group stage, a playoff bracket, a final.'],
+      options: [
+        {
+          id: 'template',
+          label: 'From a template',
+          help: 'Single or double elimination, or a round robin with pools. Lays the whole thing out WIRED, so every winner carries forward on its own.',
+        },
+        {
+          id: 'manual',
+          label: 'Build it by hand',
+          help: 'An empty stage. Add rounds and matches yourself - for a draw no template covers.',
+        },
+        {
+          id: 'copy',
+          label: 'Copy an existing stage',
+          help: doc.stages.length
+            ? 'Its format, its groups and the shape of its draw, with no teams and no results. For a season that is the same shape every week.'
+            : 'Nothing to copy yet.',
+          disabled: doc.stages.length === 0,
+        },
+      ],
+    });
+    if (!how) return;
+
+    if (how === 'copy') {
+      const from = await chooserModal({
+        title: 'Copy which stage?',
+        lines: ['The new one gets its format, its groups and the shape of its draw. No teams and no results come across.'],
+        options: doc.stages.map((stage) => ({
+          id: stage.id,
+          label: stage.name,
+          help: `${fixturesIn(stage.id).length} match${fixturesIn(stage.id).length === 1 ? '' : 'es'}`,
+        })),
+      });
+      if (!from) return;
+      const source = stageOf(from);
+      act({ action: 'stage.duplicate', id: from, name: `${source?.name ?? 'Stage'} copy` }, () => {
+        const made = doc.stages[doc.stages.length - 1];
+        if (!made) return;
+        openStage = made.id;
+        paint();
+        openStageEditor(made);
+        toast(`Copied "${source?.name ?? 'that stage'}" - no teams, no results`);
+      });
+      return;
+    }
+
+    act({ action: 'stage.save', stage: { name: 'New stage', kind: 'bracket', bestOf: 3 } }, () => {
+      const made = doc.stages.find((entry) => entry.name === 'New stage');
+      if (!made) return;
+      openStage = made.id;
+      paint();
+      // Landing on the pane that answers what they just asked for. Opening a
+      // template pick on the Stage tab would make them go looking for it again,
+      // which is the thing this chooser exists to stop.
+      openStageEditor(made, how === 'template' ? 'matches' : 'about');
+    });
+  }
+
+  /**
    * Everything about ONE stage, in a modal.
    *
    * The same shape the match editor and the team editor use, and deliberately
@@ -240,7 +308,7 @@ if (host) {
    * really does mean nothing happened, and asking before it throws away unsaved
    * work. An operator who has learnt one of these has learnt all three.
    */
-  function openStageEditor(stage) {
+  function openStageEditor(stage, startTab = 'about') {
     if (modalOpen()) return;
 
     const draft = { ...stage };
@@ -655,6 +723,7 @@ if (host) {
         { id: 'groups', label: 'Groups', body: groupPane },
         { id: 'matches', label: 'Matches', body: matchPane },
       ],
+      tab: startTab,
       dirty,
       foot: modalFoot({ danger: drop, cancel, confirm: save }),
       onClose: () => paint(),
@@ -783,7 +852,13 @@ if (host) {
      * rather than making the caller branch.
      */
     for (const bucket of listBuckets(stage, rows)) {
-      if (bucket.name) list.append(el('h3', 'sch-group-head', {}, bucket.name));
+      if (bucket.name) {
+        const head = el('h3', 'sch-group-head', {}, bucket.name);
+        // The loose bucket is the only one that can be emptied, because it is
+        // the only one that is not somewhere a match is meant to be.
+        if (!bucket.id) head.append(sweepControls(stage, bucket.rows));
+        list.append(head);
+      }
 
       /*
        * The heading changes when the HALF changes as well as the round.
@@ -843,6 +918,81 @@ if (host) {
     const loose = rows.filter((fixture) => !known.has(fixture.group ?? ''));
     if (loose.length) buckets.push({ id: '', name: 'Not in a group', rows: loose });
     return buckets;
+  }
+
+  /**
+   * What to do with the matches that are in no group.
+   *
+   * Removing a group leaves its matches behind on purpose - they land here
+   * rather than being deleted, because a match belonging to no table an
+   * operator can see reads as matches having vanished from the draw. That left
+   * this bucket a dead end: the only way to empty it was to delete the matches
+   * one at a time.
+   *
+   * BOTH answers, because there are two honest ones. A pool laid out by mistake
+   * wants its matches gone; a pool renamed into existence after the matches
+   * were made wants them moved. Offering only Delete would make destroying
+   * results the routine way to tidy up a draw.
+   *
+   * A select and two buttons rather than a dialog: this sits on a heading in a
+   * list that repaints, so it must hold no text input - the caret rule, met by
+   * shape, which is what the whole Schedule page is built on.
+   */
+  function sweepControls(stage, loose) {
+    const wrap = el('span', 'sch-sweep');
+    const groups = stage.groups ?? [];
+    const count = loose.length;
+    const played = loose.filter((fixture) => Boolean(fixtureWinner(fixture))).length;
+
+    if (groups.length) {
+      const into = el('select', null, { 'aria-label': 'Move these into a group' });
+      into.append(el('option', null, { value: '' }, 'Move all into...'));
+      for (const group of groups) into.append(el('option', null, { value: group.id }, group.name));
+      into.addEventListener('change', () => {
+        if (!into.value) return;
+        const name = groups.find((group) => group.id === into.value)?.name ?? 'that group';
+        act({ action: 'group.sweep', stageId: stage.id, group: into.value }, () => {
+          toast(`Moved ${count} match${count === 1 ? '' : 'es'} into ${name}`);
+        });
+      });
+      wrap.append(into);
+    }
+
+    const drop = el(
+      'button',
+      'btn btn-small btn-ghost sch-modal-drop',
+      { type: 'button' },
+      `Delete all ${count}`,
+    );
+    drop.addEventListener('click', async () => {
+      /*
+       * The typed name only when a RESULT would go with them - the bar rises
+       * with what it would take, which is the rule the stage delete already
+       * follows by asking nothing of an empty stage.
+       */
+      const ok = await confirmDanger({
+        title: `Delete ${count} match${count === 1 ? '' : 'es'} in no group?`,
+        lines: [
+          played
+            ? `${played} of them ${played === 1 ? 'has' : 'have'} a result filed, and deleting them throws that away. ` +
+              'It cannot be undone.'
+            : 'None of them has been played, so nothing filed is lost. It still cannot be undone.',
+          'Any match elsewhere that was fed by one of these keeps whoever had already reached it - the edge is ' +
+            'cleared, not the team.',
+        ],
+        ...(played ? { typed: stage.name, typedLabel: 'Type the stage name to confirm' } : {}),
+        confirm: `Delete ${count === 1 ? 'it' : 'them'}`,
+      });
+      if (!ok) return;
+      act(
+        { action: 'group.sweep', stageId: stage.id, group: '', confirm: played ? stage.name : undefined },
+        () => {
+          toast(`Deleted ${count} match${count === 1 ? '' : 'es'}`);
+        },
+      );
+    });
+    wrap.append(drop);
+    return wrap;
   }
 
   /** `Round 2`, or `Lower round 2` where a stage uses both halves of a bracket. */

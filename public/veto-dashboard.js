@@ -23,7 +23,7 @@
 
 import { el, field, help, subhead, title } from './fields.js';
 import { api } from './session.js';
-import { askClose, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
+import { askClose, chooserModal, modalFoot, modalOpen, modalTitle, openModal, watchChanges } from './modal.js';
 import {
   SIDE_RULES,
   VETO_FORMATS,
@@ -284,7 +284,47 @@ function vetoCard(veto, mayEdit) {
 }
 
 /** Making or editing one, in a dialog. The only text input on this page. */
-function openVeto(existing) {
+/**
+ * WHICH WAY, before the form - the same move the schedule's Add stage makes.
+ *
+ * A veto is standalone or it is for a scheduled match, and those are genuinely
+ * two different jobs: one is a showmatch somebody is typing the team names for,
+ * the other brings both teams and the series length across from the draw. The
+ * dialog showed that as ONE FIELD among six, which reads as an optional extra
+ * rather than as the other way of doing this - so an operator with a schedule
+ * full of matches typed the names in by hand.
+ */
+async function newVeto() {
+  const how = await chooserModal({
+    title: 'New map veto',
+    lines: ['Two captains drive it from their phones. You hand each of them a link when it is made.'],
+    options: [
+      {
+        id: 'fixture',
+        label: 'For a scheduled match',
+        help: fixtures.length
+          ? 'Brings both teams and the series length across from the draw, and can file the maps back onto it afterwards.'
+          : 'Nothing in the schedule to pick yet.',
+        disabled: fixtures.length === 0,
+      },
+      {
+        id: 'manual',
+        label: 'Standalone',
+        help: 'Type the two team names yourself. For a showmatch, a scrim, or anything not in the draw.',
+      },
+    ],
+  });
+  if (!how) return;
+  openVeto(null, how);
+}
+
+/**
+ * @param {object|null} existing
+ * @param {'fixture'|'manual'} [how]  which way `newVeto` was answered. It only
+ *   decides whether the fixture picker is rendered - the control itself is
+ *   unchanged, so the answer stays changeable right up to Save.
+ */
+function openVeto(existing, how = 'manual') {
   if (modalOpen()) return;
 
   let dialog = null;
@@ -316,6 +356,7 @@ function openVeto(existing) {
    * never be able to say.
    */
   const fromFixture = el('select', null, { 'aria-label': 'From a fixture' });
+  const picking = !editing && how === 'fixture';
   if (!editing) {
     fromFixture.append(el('option', null, { value: '' }, '- standalone, type the teams below -'));
     for (const fixture of fixtures) {
@@ -365,7 +406,12 @@ function openVeto(existing) {
 
   body.append(
     modalTitle(editing ? 'Edit veto' : 'New veto', editing ? existing.name : null),
-    ...(editing ? [] : [field('From a fixture', fromFixture), help('Brings both teams and the series length across. Leave it standalone for a showmatch or a scrim.')]),
+    ...(picking
+      ? [
+          field('From a match', fromFixture),
+          help('Brings both teams and the series length across. Change it here if you picked the wrong one.'),
+        ]
+      : []),
     field('Name', name),
     field('Series', format),
     field('Team A', teamA),
@@ -394,7 +440,7 @@ function paint() {
   const mayEdit = tokens !== null;
 
   const add = el('button', 'btn btn-primary', { type: 'button' }, 'New veto');
-  add.addEventListener('click', () => openVeto(null));
+  add.addEventListener('click', () => void newVeto());
 
   host.replaceChildren(
     title('Map veto'),

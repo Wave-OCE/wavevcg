@@ -434,7 +434,7 @@ function dismiss() {
  * because a helper that wrote back onto what it was handed would make the
  * second call with the same array behave differently from the first.
  */
-function tabParts(tabs) {
+function tabParts(tabs, start) {
   const strip = el('nav', 'card-tabs rl-modal-tabs', { role: 'tablist', 'aria-label': 'Sections' });
   const panes = el('div', 'rl-modal-panes');
 
@@ -463,7 +463,10 @@ function tabParts(tabs) {
     }
   };
   for (const entry of built) entry.button.addEventListener('click', () => show(entry.id));
-  show(built[0].id);
+  // The caller may name the pane to open on - a chooser that asked "from a
+  // template?" and then landed the operator on the Stage tab would have made
+  // them go looking for the thing they just asked for.
+  show(built.some((entry) => entry.id === start) ? start : built[0].id);
 
   return [strip, panes];
 }
@@ -480,6 +483,7 @@ function tabParts(tabs) {
  * @param {Element}     [options.head]       stays above the strip and never
  *   scrolls: the title, and anything that names what is being edited.
  * @param {{id: string, label: string, body: Element}[]} [options.tabs]
+ * @param {string}      [options.tab]        which pane to open on.
  * @param {Element}     [options.foot]       the button row, likewise.
  * @param {() => boolean} [options.dirty]    is there unsaved work in here? See
  *   the note above - given one, Escape, the backdrop and `askClose` ask before
@@ -488,7 +492,7 @@ function tabParts(tabs) {
  * @param {() => void}  [options.onClose]    run once, after it is removed.
  * @returns {HTMLDialogElement|null} null if one was already open.
  */
-export function openModal({ className = '', body, head, tabs, foot, dirty, onClose } = {}) {
+export function openModal({ className = '', body, head, tabs, tab, foot, dirty, onClose } = {}) {
   if (modalOpen()) return null;
 
   const tabbed = Array.isArray(tabs) && tabs.length > 0;
@@ -502,7 +506,7 @@ export function openModal({ className = '', body, head, tabs, foot, dirty, onClo
     bar.append(head);
     parts.push(bar);
   }
-  if (tabbed) parts.push(...tabParts(tabs));
+  if (tabbed) parts.push(...tabParts(tabs, tab));
   if (body) parts.push(body);
   if (foot) parts.push(foot);
 
@@ -546,6 +550,72 @@ export function openModal({ className = '', body, head, tabs, foot, dirty, onClo
 
   dialog.showModal();
   return dialog;
+}
+
+/**
+ * WHICH WAY, asked before the form rather than inside it.
+ *
+ * Both things this program creates - a stage and a veto - can be made more than
+ * one way, and both put every way into the one form. The stage editor carried a
+ * template picker four sections down, so an operator who did not already know
+ * it was there laid a sixteen-team bracket out by hand; the veto dialog showed
+ * "from a fixture" as one field among six, which reads as an optional extra
+ * rather than as the other way of doing this.
+ *
+ * So the choice comes first and the form opens knowing the answer. That is also
+ * what lets the form open on the RIGHT PANE - see `tab` above - which is the
+ * half that makes this worth a second dialog rather than a nag.
+ *
+ * Resolves the chosen id, or null for every way out. Same contract as
+ * `confirmDanger`: there is no path that leaves the caller unanswered.
+ *
+ * @param {object} options
+ * @param {string} options.title
+ * @param {string[]} [options.lines]
+ * @param {{id: string, label: string, help?: string, disabled?: boolean}[]} options.options
+ * @returns {Promise<string|null>}
+ */
+export function chooserModal({ title, lines = [], options = [], safe = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    const body = el('div', 'rl-modal-body');
+    for (const line of lines) body.append(el('p', 'field-help', {}, line));
+
+    let answer = null;
+    const list = el('div', 'rl-choose');
+    for (const option of options) {
+      const button = el('button', 'rl-choose-option', { type: 'button', 'data-choice': option.id });
+      button.append(el('span', 'rl-choose-label', {}, option.label));
+      if (option.help) button.append(el('span', 'rl-choose-help', {}, option.help));
+      button.disabled = option.disabled === true;
+      button.addEventListener('click', () => {
+        answer = option.id;
+        dialog?.close();
+      });
+      list.append(button);
+    }
+    body.append(list);
+
+    const cancel = el('button', 'btn btn-ghost', { type: 'button' }, safe);
+    cancel.addEventListener('click', () => dialog?.close());
+
+    /*
+     * No `dirty`. There is no draft in here - every button IS the answer, and
+     * the backdrop asking "close this editor?" over a dialog holding nothing
+     * would be the nag the rule about dialogs with no guard exists to prevent.
+     */
+    const dialog = openModal({
+      className: 'rl-modal-choose',
+      head: el('h2', 'rl-modal-title', {}, title),
+      body,
+      foot: modalFoot({ cancel }),
+      onClose: () => resolve(answer),
+    });
+    if (!dialog) {
+      resolve(null);
+      return;
+    }
+    list.querySelector('button:not([disabled])')?.focus();
+  });
 }
 
 /**
